@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manufacturing Workflow Instructions</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+    <div class="container py-5">
+        <div class="card shadow-sm">
+            <div class="card-header">
+                <h3 class="mb-0">Manufacturing Workflow Guide</h3>
+            </div>
+            <div class="card-body">
+                <p class="lead">This page explains how the GammaVet manufacturing module stages orders, generates formulas from your existing product catalog, and produces the Excel/PDF handoffs that travel with the work.</p>
+                <h5>1. What you set up in “Create Manufacturing Order”</h5>
+                <ul>
+                    <li>Select a customer/provider. The list of formulas is filtered to the ones they already have, or you can build a new formula by picking catalog products for each component.</li>
+                    <li>Each component row now requires selecting a catalog product so traceability stays consistent with inventory.</li>
+                    <li>You can assign priorities, batch size, due date, and notes; every order gets a unique <code>MAN-yyyyMMdd-XXXXXX</code> number.</li>
+                </ul>
+                <h5>2. How the seven-stage workflow works</h5>
+                <ol>
+                    <li><strong>Sourcing &amp; Procurement.</strong> Confirm suppliers, request samples, and create POs. Document approved lead times.</li>
+                    <li><strong>Receipt &amp; Quality Check.</strong> Receive materials, verify quantities, log QA inspections, and release them to production.</li>
+                    <li><strong>Preparation &amp; Mixing.</strong> Blend the formula, record ratios/temperatures, and stage the blended mix for QA.</li>
+                    <li><strong>Quality Validation.</strong> Execute in-process tests, adjust parameters, and verify compliance before packaging.</li>
+                    <li><strong>Packaging &amp; Labeling.</strong> Package the batch, print labels, and stage it per delivery instructions.</li>
+                    <li><strong>Dispatch Prep.</strong> Ready the transportation, documents (customs, certificates), and special handling instructions.</li>
+                    <li><strong>Delivery &amp; Client Handover.</strong> Release the shipment, attach final delivery notes, and capture any outstanding follow-up.</li>
+                </ol>
+                <h5>3. Excel / PDF handoff documents</h5>
+                <p>Every time a step is saved, the module writes:</p>
+                <ul>
+                    <li>An <strong>Excel-compatible (.xls)</strong> snapshot containing the order number, provider, priority, instructions, and component table.</li>
+                    <li>A <strong>PDF</strong> rendered via TCPDF with the same details plus the step-specific reminders for the next team.</li>
+                </ul>
+                <p>Files are stored under <code>assets/uploads/manufacturing/{ORDER_NUMBER}/{STEP_KEY}/</code> and linked from the order detail page. Use the download buttons to hand over the latest files.</p>
+                <h5>4. Tips for users</h5>
+                <ul>
+                    <li>Work forwards through the steps. The next step will show as “pending” until the previous one is completed, ensuring linear accountability.</li>
+                    <li>Always attach notes before clicking “Save step”. That text appears in both documents and keeps the next hand-off informed.</li>
+                    <li>Use the “Workflow timeline” card on the order view to see which step is current, how many files exist per step, and the descriptions of each phase.</li>
+                </ul>
+                <div class="mt-4 text-muted small">
+                    Need more context? Go back to the manufacturing dashboard and click the <strong>Workflow instructions</strong> button for this guide, or contact the operations lead.
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

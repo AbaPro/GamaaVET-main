@@ -1,0 +1,30 @@
+Module,Report,Status,Notes
+System,Back button undoing actions,Done,Post/Redirect/Get flow keeps data committed; browser history never rolls anything back.
+System,Codes for raw materials except print/packing,Pending,Need SKU rules + exclusion criteria before implementing.
+System,White screen after actions,Pending,Unable to reproduce; need exact page/role to trace.
+System,Separate Factory vs Representative sales logins,Done,New factory_sales and representative_sales roles seeded with salesman permissions (20240104_ticket_attachments_and_permissions.sql).
+Sales,Order status permission,Done,Added sales.orders.update_status permission and enforced it in modules/sales/order_details.php.
+Sales,Order dropdown preview,Done,Bootstrap modal fed by ajax/get_order_summary.php.
+Sales,Date format Day/Month/Year,Done,Order list renders d/m/Y.
+Sales,Sort-by options,Done,Selector controls SQL ORDER BY.
+Sales,Arabic invoice output,Done,Invoices now print with aealarabiya font.
+Sales,Hide discount details when not used,Done,Discount block is conditional.
+Sales,Quotation contact linkage,Done,Already supported via ajax/get_customer_details.php.
+Sales,Customer order link broken,Done,Recent orders now point to modules/sales/order_details.php.
+Sales,Factory contact question,Info,Fields remain optional; provided for invoice context.
+Sales,Attach tax/commercial scans,Done,Documents tab + backend storage in customer_documents.
+Customers,Bulk upload customers,Done,Sample CSV (modules/customers/sample_customers.csv) + download button added.
+Products,Sort/Search list,Done,DataTables on products index.
+Products,View page edit bounce,Done,Standalone edit page introduced.
+Products,Description newline issue,Done,View normalizes literal CR/LF sequences.
+Products,Conditional price vs cost fields,Done,UI hides irrelevant inputs based on product type.
+Products,Manufacturing total cost per final product,Pending,Assembly flow still deducts components only.
+Purchasing,PO item search,Done,Product modal now supports quick search and the UI includes a search box in the item card.
+Purchasing,Warehouse destination in PO,Done,Warehouse location field captured on the PO form and stored (20240106_purchase_order_warehouse.sql).
+Purchasing,PO quick view dropdown,Done,PO IDs open an in-page preview on the PO list and vendor screen via ajax/get_po_summary.php.
+Purchasing,Purchasing officer status permission,Done,Added purchases.update_status permission and a purchasing_officer role so authorized users can update PO status.
+Vendors,City/Province/Postal optional,Done,UI + backend accept nulls.
+Vendors,Wallet transaction clarity & attachments,Done,Wallet form now includes clearer type descriptions and optional image attachments; history rows expose download links.
+Tickets,Attach images,Done,Ticket form now uploads images into ticket_attachments.
+Tickets,User status updates,Done,tickets.update_status permission lets delegated users change status/priority.
+Tickets,PO-specific request form,Pending,Awaiting requirements.

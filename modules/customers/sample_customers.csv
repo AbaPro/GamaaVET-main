@@ -1,0 +1,3 @@
+name,type,factory_id,email,phone,whatsapp_phone,tax_number,contact_name,contact_email,contact_phone,address_line1,address_line2,city,state,postal_code,country,is_default_address,wallet_balance
+ACME Vet Supplies,1,2,info@acmevet.com,+201000000001,+201100000001,123-456-789,John Doe,john.doe@acmevet.com,+201200000001,Industrial Zone 5,Warehouse 12,Cairo,Cairo,11562,Egypt,1,0
+Sunrise Clinics,2,,contact@sunriseclinics.com,+201000000002,+201100000002,987-654-321,Sara Ali,sara.ali@sunriseclinics.com,+201200000002,32 Nile Street,,Giza,Giza,12411,Egypt,1,25000

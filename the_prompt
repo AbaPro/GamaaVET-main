@@ -1,0 +1,22 @@
+with native php, mysqli, and bootstrap 5 nice modals, make me a system with the following specs
+- categories management: crud categories to be used for products, main categories and subcategories.
+- inventories management: inventories CRUD with inventory location, details, and with button generates a printable page of inventory products and quantities, 
+other important functions of the inventories, when adding a product to an inventory, should add a quantity, transfers between inventories with accept on the receiving side and log and history are very important to me,
+and an inventories overview dashboard with cards.
+
+- products management: CRUD products with csv bulk uploads, products could be primary product, final product, or a material product, the product will have the sub-category and also the category,
+make a button to make final products from the primary products, as the final products = primary product + other products (printable, bottles, caps, etc....).
+- Customers management: CRUD operation for customers, the customers could be representative's customer or factory's customer,
+every customer has a wallet, with transactions history and logged, 
+the customer have many contacts, a primary contact will be required with adding a new customer modal
+- Sales: 
+salesman, (or admin) sell final products to a customer, through an order, the order have (other than normal order data) have another id called internal id and it is a unique id.
+the order has statuses like (new, in-production, in-packing, delivering, delivered, returned, returned and refunded, partially-returned, partially-returned and refunded).
+order payments could be done from cash, money transfer, customer's wallet (even if with minus to be paid later), the payment could be partial payment or full payment, and the admin/accountant will chose one of the unpaid orders in the payment modal,
+invoice of the order with another internal invoice id,
+also salesman could generate a quotation for specific customer when accepted the salesman/admin could convert it into an order, and auto save the order number in the quotation for later queries and reporting.
+
+- Vendors: like customers, vendors have wallets, purchase orders, and partial or full payments, and quotations will be inserted from vendors by accountant/admin,
+vendors also have a primary contact, and another contacts management,
+
+--- finally make one shared header.php and footer.php 

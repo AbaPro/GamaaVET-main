@@ -1,0 +1,286 @@
+Permissions 
+
+Sales: 
+
+  Dashboard items (we need more options) 
+
+o  Orders pending 
+o  Over all orders  
+o  This months orders 
+o  Etc. 
+
+  Recent orders 
+
+o  Amount 
+
+  New Order 
+  View All 
+
+o  Total  
+o  Paid 
+o  Balance 
+o  Actions 
+
+ 
+Invoice 
+  View order  
+  SKU 
+  Product 
+  Unit price 
+  Total 
+  Returns (add returns) 
+  Payment history 
+  Order status 
+  Print invoice 
+  نايب 
+
+  Customer info 
+
+  Customer 
+  Contact person 
+  Contact phone 
+  Factory 
+
+  Order information 
+
+  Discount 
+  Shipping 
+
+  Customers (why is manage factories on this page) ? 
+
+o  Add Customers 
+o 
+ID 
+o  Name  
+
+o  Type 
+o  Email 
+o  Phone 
+o  Wallet balance 
+o  Actions 
+
+  Edit 
+  Contact 
+  Wallet 
+  WhatsApp portal 
+  Delete 
+  View 
+
+  Customer Info 
+
+o  Phone number 
+
+  Primary contact 
+
+o  Phone number 
+
+  Primary address 
+  Recent orders 
+
+o  Actions 
+
+  View 
+  New order 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Inventories 
+
+o  Add inventory 
+o  Transfer items 
+o  Actions 
+
+  Edit 
+  Delete 
+  View 
+
+  Low stock items 
+  SKU 
+  Product name 
+  Barcode 
+  Min stock 
+  Status 
+  Actions 
+  Print  
+  Add product 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Products to be divided into (raw materials management) and (Products) 
+
+  Bulk Upload 
+  Add Product 
+  SKU 
+  Product Name 
+  Unit price 
+  Cost price 
+  Actions 
+
+o  View 
+
+  Edit 
+  Product Name 
+  SKU 
+  Barcode 
+  Unit price 
+  Cost price 
+  Min stock level 
+
+o  Edit 
+o  Delete 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Purchasing 
+
+*Dashboard (to be discussed later) 
+
+  Recent Purchase orders 
+o  Actions 
+
+  View 
+  Receive 
+
+  New PO 
+  View All 
+
+o  Actions 
+
+  Payment 
+
+  Vendors 
+
+o  Add Vendor 
+o 
+ID 
+o  Name  
+o  Type 
+o  Email 
+o  Phone 
+o  Wallet balance 
+o  Actions 
+
+  Edit 
+  Contact 
+  Wallet (need to be added) 
+  WhatsApp portal(need to be added) 
+  Delete(need to be added) 
+  View 
+
+  Vendor Info 
+
+o  Phone number 
+
+  Primary contact 
+
+o  Phone number 
+
+  Primary address 
+  New PO 
+  Recent orders 
+
+o  Actions 
+
+  View 
+
+ 
+ 
+ 
+ 
+Users 
+
+  USERS AS A WHOLE  
+
+Finance  
+
+  Customer wallet 
+
+o  Phone 
+o  Actions 
+
+  View wallet 
+
+  Customer bills and payments 
+
+o  Payment 
+
+  Safes 
+
+o  Add safe 
+
+  Bank Accounts 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+o  Add Bank account 
+
+  Personal Accounts 
+
+o  Add personal account (need to be added) 
+
+  Transfers  
+
+o  New transfer  
+
+  PO payments 
+
+o  Payment 
+
+  Vendor wallet  
+
+

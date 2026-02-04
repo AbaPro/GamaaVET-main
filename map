@@ -1,0 +1,76 @@
+/inventory-system/
+├── assets/
+│   ├── css/
+│   │   └── style.css
+│   ├── js/
+│   │   └── custom.js
+│   └── uploads/
+│       └── products/
+├── config/
+│   └── database.php
+├── includes/
+│   ├── auth.php
+│   ├── functions.php
+│   ├── header.php
+│   └── footer.php
+├── modules/
+│   ├── categories/
+│   │   ├── index.php
+│   │   ├── create.php
+│   │   ├── edit.php
+│   │   └── delete.php
+│   ├── products/
+│   │   ├── index.php
+│   │   ├── create.php
+│   │   ├── edit.php
+│   │   ├── delete.php
+│   │   ├── upload.php
+│   │   └── assemble.php
+│   ├── inventories/
+│   │   ├── index.php
+│   │   ├── create.php
+│   │   ├── edit.php
+│   │   ├── delete.php
+│   │   ├── view.php
+│   │   ├── transfer.php
+│   │   ├── accept_transfer.php
+│   │   └── print.php
+│   ├── customers/
+│   │   ├── index.php
+│   │   ├── create.php
+│   │   ├── edit.php
+│   │   ├── delete.php
+│   │   ├── view.php
+│   │   ├── wallet.php
+│   │   └── contacts.php
+│   ├── vendors/
+│   │   ├── index.php
+│   │   ├── create.php
+│   │   ├── edit.php
+│   │   ├── delete.php
+│   │   ├── view.php
+│   │   ├── wallet.php
+│   │   └── contacts.php
+│   ├── sales/
+│   │   ├── orders/
+│   │   │   ├── index.php
+│   │   │   ├── create.php
+│   │   │   ├── view.php
+│   │   │   ├── payment.php
+│   │   │   └── invoice.php
+│   │   └── quotations/
+│   │       ├── index.php
+│   │       ├── create.php
+│   │       ├── view.php
+│   │       └── convert.php
+│   └── purchases/
+│       ├── orders/
+│       │   ├── index.php
+│       │   ├── create.php
+│       │   ├── view.php
+│       │   └── payment.php
+│       └── quotations/
+│           ├── index.php
+│           └── create.php
+├── dashboard.php
+└── index.php
