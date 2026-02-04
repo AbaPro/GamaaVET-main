@@ -1,6 +1,47 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+require_once '../../config/database.php';
+
+// Verify database connection
+if (!isset($conn) || !$conn instanceof mysqli || $conn->connect_error) {
+    die("Database connection failed");
+}
+
+// Helpers to generate unique SKU/barcode
+function generateUniqueSku(mysqli $conn): string {
+    $maxAttempts = 20;
+    for ($i = 0; $i < $maxAttempts; $i++) {
+        $candidate = 'SKU-' . date('ymd') . '-' . generateRandomString(6);
+        $stmt = $conn->prepare("SELECT id FROM products WHERE sku = ?");
+        $stmt->bind_param("s", $candidate);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $exists = $res && $res->num_rows > 0;
+        $stmt->close();
+        if (!$exists) {
+            return $candidate;
+        }
+    }
+    throw new Exception("Unable to generate unique SKU. Please try again.");
+}
+
+function generateUniqueBarcode(mysqli $conn): string {
+    $maxAttempts = 20;
+    for ($i = 0; $i < $maxAttempts; $i++) {
+        $candidate = (string)random_int(100000000000, 999999999999);
+        $stmt = $conn->prepare("SELECT id FROM products WHERE barcode = ?");
+        $stmt->bind_param("s", $candidate);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $exists = $res && $res->num_rows > 0;
+        $stmt->close();
+        if (!$exists) {
+            return $candidate;
+        }
+    }
+    throw new Exception("Unable to generate unique barcode. Please try again.");
+}
 
 if (!hasPermission('products.bulk_upload')) {
     setAlert('danger', 'You do not have permission to access this page.');
@@ -26,8 +67,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
         $file = fopen($file_path, 'r');
         $header = fgetcsv($file); // Get header row
         
-        // Check required columns
-        $required_columns = ['name', 'sku', 'type', 'category_id', 'unit_price'];
+        // Check required columns (sku and barcode are optional - will be auto-generated)
+        $required_columns = ['name', 'type', 'category_id', 'unit_price'];
         $missing_columns = array_diff($required_columns, $header);
         
         if (!empty($missing_columns)) {
@@ -53,31 +94,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
                 
                 // Prepare data
                 $name = sanitize($data['name']);
-                $sku = sanitize($data['sku']);
-                $barcode = isset($data['barcode']) ? sanitize($data['barcode']) : NULL;
+                $sku = isset($data['sku']) && $data['sku'] !== '' ? sanitize($data['sku']) : '';
+                $barcode = isset($data['barcode']) && $data['barcode'] !== '' ? sanitize($data['barcode']) : '';
                 $type = sanitize($data['type']);
-                $category_id = sanitize($data['category_id']);
-                $subcategory_id = isset($data['subcategory_id']) ? sanitize($data['subcategory_id']) : NULL;
+                $category_id = (int)$data['category_id'];
+                $subcategory_id = isset($data['subcategory_id']) && $data['subcategory_id'] !== '' ? (int)$data['subcategory_id'] : NULL;
                 $customer_id = isset($data['customer_id']) && $data['customer_id'] !== '' ? (int)$data['customer_id'] : NULL;
-                $unit_price = sanitize($data['unit_price']);
-                $cost_price = isset($data['cost_price']) ? sanitize($data['cost_price']) : NULL;
-                $min_stock_level = isset($data['min_stock_level']) ? sanitize($data['min_stock_level']) : 0;
-                $description = isset($data['description']) ? sanitize($data['description']) : NULL;
+                $unit_price = (float)$data['unit_price'];
+                $cost_price = isset($data['cost_price']) && $data['cost_price'] !== '' ? (float)$data['cost_price'] : NULL;
+                $min_stock_level = isset($data['min_stock_level']) && $data['min_stock_level'] !== '' ? (int)$data['min_stock_level'] : 0;
+                $description = isset($data['description']) ? sanitize($data['description']) : '';
                 
-                // Check if SKU already exists
-                $check_sql = "SELECT id FROM products WHERE sku = ?";
-                $check_stmt = $conn->prepare($check_sql);
-                $check_stmt->bind_param("s", $sku);
-                $check_stmt->execute();
-                $check_result = $check_stmt->get_result();
-                
-                if ($check_result->num_rows > 0) {
-                    $error_count++;
-                    $errors[] = "SKU $sku already exists - $name";
+                // Generate SKU if not provided
+                if ($sku === '') {
+                    $sku = generateUniqueSku($conn);
+                } else {
+                    // Check if SKU already exists
+                    $check_sql = "SELECT id FROM products WHERE sku = ?";
+                    $check_stmt = $conn->prepare($check_sql);
+                    $check_stmt->bind_param("s", $sku);
+                    $check_stmt->execute();
+                    $check_result = $check_stmt->get_result();
+                    
+                    if ($check_result->num_rows > 0) {
+                        $error_count++;
+                        $errors[] = "SKU $sku already exists - $name";
+                        $check_stmt->close();
+                        continue;
+                    }
                     $check_stmt->close();
-                    continue;
                 }
-                $check_stmt->close();
+                
+                // Generate barcode if not provided
+                if ($barcode === '') {
+                    $barcode = generateUniqueBarcode($conn);
+                }
                 
                 // Insert product
                 $insert_sql = "INSERT INTO products 
@@ -123,18 +174,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
         redirect('upload.php');
     }
 }
-?>
-
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <h2>Bulk Product Upload</h2>
-    <a href="index.php" class="btn btn-secondary">Back to Products</a>
-</div>
-
-<div class="card">
-    <div class="card-body">
-        <div class="alert alert-info">
-            <h5 class="alert-heading">CSV File Instructions</h5>
+?><i class="fas fa-info-circle me-2"></i>CSV File Instructions</h5>
             <p>Upload a CSV file with product data. The file must include the following columns:</p>
+            <ul>
+                <li><strong>name</strong> - Product name (required)</li>
+                <li><strong>type</strong> - Product type: <code>primary</code>, <code>final</code>, or <code>material</code> (required)</li>
+                <li><strong>category_id</strong> - ID of main category (required)</li>
+                <li><strong>unit_price</strong> - Selling price (required)</li>
+            </ul>
+            <p><strong>Optional columns:</strong></p>
+            <ul class="mb-0">
+                <li><strong>sku</strong> - Unique SKU (auto-generated if empty)</li>
+                <li><strong>barcode</strong> - Product barcode (auto-generated if empty)</li>
+                <li><strong>subcategory_id</strong> - ID of subcategory</li>
+                <li><strong>customer_id</strong> - Customer ID (for customer-specific products)</li>
+                <li><strong>cost_price</strong> - Cost price</li>
+                <li><strong>min_stock_level</strong> - Minimum stock alert level</li>
+                <li><strong>description</strong> - Product description</li>
+            </ul>
+            <hr>
+            <div class="alert alert-success mb-0">
+                <i class="fas fa-magic me-2"></i><strong>Auto-Generation:</strong> SKU and barcode will be automatically generated if left empty in the CSV file.
+            </div
             <ul>
                 <li><strong>name</strong> - Product name (required)</li>
                 <li><strong>sku</strong> - Unique SKU (required)</li>
