@@ -82,9 +82,9 @@ require_once '../../includes/header.php';
               </div>
               <?php foreach ($permList as $p): ?>
                 <div class="form-check">
-                  <input class=\"form-check-input js-perm\" type=\"checkbox\" data-module=\"<?= htmlspecialchars($module) ?>\" id=\"perm_<?= (int)$p['id'] ?>" name="permissions[]" value="<?= (int)$p['id'] ?>" <?= in_array((int)$p['id'], $assignedIds, true) ? 'checked' : '' ?>>
+                  <input class="form-check-input js-perm" type="checkbox" data-module="<?= htmlspecialchars($module) ?>" id="perm_<?= (int)$p['id'] ?>" name="permissions[]" value="<?= (int)$p['id'] ?>" <?= in_array((int)$p['id'], $assignedIds, true) ? 'checked' : '' ?>>
                   <label class="form-check-label" for="perm_<?= (int)$p['id'] ?>">
-                    <code><?= htmlspecialchars($p['key']) ?></code><?= htmlspecialchars($p['name']) ?>
+                    <code><?= htmlspecialchars($p['key']) ?></code> <?= htmlspecialchars($p['name']) ?>
                   </label>
                 </div>
               <?php endforeach; ?>

@@ -381,6 +381,11 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
         <div class="list-group list-group-flush">
             <?php foreach ($stepDefinitions as $stepKey => $definition): ?>
                 <?php
+                // Check permission for this specific step
+                $stepPermissionKey = 'manufacturing.view_step_' . $stepKey;
+                if (!hasPermission($stepPermissionKey)) {
+                    continue; // Skip this step if user doesn't have permission
+                }
                 $stepData = $stepsByKey[$stepKey] ?? null;
                 $stepStatus = $stepData['status'] ?? 'pending';
                 $docCountForStep = $stepData ? count($orderDocuments[$stepData['id']] ?? []) : 0;
@@ -410,7 +415,14 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
     <div class="card-body">
         <div class="accordion" id="manufacturingSteps">
             <?php foreach ($steps as $index => $stepRow): ?>
-                <?php $documents = $orderDocuments[$stepRow['id']] ?? []; ?>
+                <?php 
+                    // Check permission for this specific step
+                    $stepPermissionKey = 'manufacturing.view_step_' . $stepRow['step_key'];
+                    if (!hasPermission($stepPermissionKey)) {
+                        continue; // Skip this step if user doesn't have permission
+                    }
+                    $documents = $orderDocuments[$stepRow['id']] ?? []; 
+                ?>
                 <div class="accordion-item">
                     <h2 class="accordion-header" id="stepHeading<?= $stepRow['id']; ?>">
                         <button class="accordion-button <?= $index === 0 ? '' : 'collapsed'; ?>" type="button" data-bs-toggle="collapse" data-bs-target="#stepCollapse<?= $stepRow['id']; ?>" aria-expanded="<?= $index === 0 ? 'true' : 'false'; ?>">

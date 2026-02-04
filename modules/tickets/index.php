@@ -57,21 +57,17 @@ require_once '../../includes/header.php';
         </tr>
       </thead>
       <tbody>
-        <?php if (empty($tickets)): ?>
-          <tr><td colspan="7" class="text-center text-muted py-4">No tickets</td></tr>
-        <?php else: ?>
-          <?php foreach ($tickets as $t): ?>
-            <tr>
-              <td><?= (int)$t['id'] ?></td>
-              <td><?= htmlspecialchars($t['title']) ?></td>
-              <td><span class="badge bg-secondary text-capitalize"><?= htmlspecialchars($t['status']) ?></span></td>
-              <td><span class="badge bg-<?= $t['priority']==='urgent'?'danger':($t['priority']==='high'?'warning':'info') ?> text-capitalize"><?= htmlspecialchars($t['priority']) ?></span></td>
-              <td><?= htmlspecialchars($t['assigned_role'] ?? '—') ?></td>
-              <td><?= formatDateTime($t['created_at']) ?></td>
-              <td><a href="view.php?id=<?= (int)$t['id'] ?>" class="btn btn-sm btn-outline-primary">Open</a></td>
-            </tr>
-          <?php endforeach; ?>
-        <?php endif; ?>
+        <?php foreach ($tickets as $t): ?>
+          <tr>
+            <td><?= (int)$t['id'] ?></td>
+            <td><?= htmlspecialchars($t['title']) ?></td>
+            <td><span class="badge bg-secondary text-capitalize"><?= htmlspecialchars($t['status']) ?></span></td>
+            <td><span class="badge bg-<?= $t['priority']==='urgent'?'danger':($t['priority']==='high'?'warning':'info') ?> text-capitalize"><?= htmlspecialchars($t['priority']) ?></span></td>
+            <td><?= htmlspecialchars($t['assigned_role'] ?? '—') ?></td>
+            <td><?= formatDateTime($t['created_at']) ?></td>
+            <td><a href="view.php?id=<?= (int)$t['id'] ?>" class="btn btn-sm btn-outline-primary">Open</a></td>
+          </tr>
+        <?php endforeach; ?>
       </tbody>
     </table>
   </div>
