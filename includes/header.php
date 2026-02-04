@@ -314,10 +314,10 @@
                     <?php if (isLoggedIn()): ?>
                         <?php $notifCount = function_exists('getUnreadNotificationsCount') ? getUnreadNotificationsCount() : 0; ?>
                         <?php if (hasPermission('notifications.view')): ?>
-                            <li class="nav-item me-2" id="notifBell" style="<?= $notifCount > 0 ? '' : 'display: none;' ?>">
+                            <li class="nav-item me-2" id="notifBell">
                                 <a class="nav-link position-relative" href="<?= BASE_URL ?>modules/notifications/index.php">
                                     <i class="fas fa-bell"></i>
-                                    <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger" id="notifBadge">
+                                    <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger <?= $notifCount > 0 ? '' : 'd-none' ?>" id="notifBadge">
                                         <?= (int)$notifCount ?>
                                     </span>
                                 </a>
@@ -373,11 +373,11 @@
                     fetch('<?= BASE_URL ?>modules/notifications/unread_count.php').then(r => r.json()).then(d => {
                         const c = parseInt((d && d.count) || 0, 10);
                         if (bell && badge) {
+                            badge.textContent = String(c);
                             if (c > 0) {
-                                bell.style.display = '';
-                                badge.textContent = String(c);
+                                badge.classList.remove('d-none');
                             } else {
-                                bell.style.display = 'none';
+                                badge.classList.add('d-none');
                             }
                         }
                         if (c > last) {
