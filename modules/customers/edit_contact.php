@@ -106,19 +106,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <form action="edit_contact.php?id=<?php echo $contact_id; ?>&customer_id=<?php echo $customer_id; ?>" method="POST">
             <div class="mb-3">
                 <label for="name" class="form-label">Name*</label>
-                <input type="text" class="form-control" id="name" name="name" value="<?php echo htmlspecialchars($contact['name']); ?>" required>
+                <input type="text" class="form-control" id="name" name="name" value="<?php echo e($contact['name']); ?>" required>
             </div>
             <div class="mb-3">
                 <label for="email" class="form-label">Email</label>
-                <input type="email" class="form-control" id="email" name="email" value="<?php echo $contact['email'] ? htmlspecialchars($contact['email']) : ''; ?>">
+                <input type="email" class="form-control" id="email" name="email" value="<?php echo $contact['email'] ? e($contact['email']) : ''; ?>">
             </div>
             <div class="mb-3">
                 <label for="phone" class="form-label">Phone*</label>
-                <input type="text" class="form-control" id="phone" name="phone" value="<?php echo htmlspecialchars($contact['phone']); ?>" required>
+                <input type="text" class="form-control" id="phone" name="phone" value="<?php echo e($contact['phone']); ?>" required>
             </div>
             <div class="mb-3">
                 <label for="position" class="form-label">Position</label>
-                <input type="text" class="form-control" id="position" name="position" value="<?php echo $contact['position'] ? htmlspecialchars($contact['position']) : ''; ?>">
+                <input type="text" class="form-control" id="position" name="position" value="<?php echo $contact['position'] ? e($contact['position']) : ''; ?>">
             </div>
             <div class="mb-3 form-check">
                 <input type="checkbox" class="form-check-input" id="is_primary" name="is_primary" <?php echo $contact['is_primary'] ? 'checked' : ''; ?>>

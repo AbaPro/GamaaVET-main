@@ -92,7 +92,7 @@ require_once '../../includes/header.php';
     <?php if (!empty($_SESSION['portal_password_plain'])): ?>
         <div class="alert alert-warning">
             <strong>New Portal Password:</strong>
-            <span class="text-monospace"><?= htmlspecialchars($_SESSION['portal_password_plain']) ?></span>
+            <span class="text-monospace"><?= e($_SESSION['portal_password_plain']) ?></span>
             <p class="mb-0">Share this password with the customer. It will not be shown again.</p>
         </div>
         <?php unset($_SESSION['portal_password_plain']); ?>
@@ -105,14 +105,14 @@ require_once '../../includes/header.php';
                     <h5 class="mb-0">Portal Status</h5>
                 </div>
                 <div class="card-body">
-                    <p><strong>Customer:</strong> <?= htmlspecialchars($customer['name']); ?></p>
+                    <p><strong>Customer:</strong> <?= e($customer['name']); ?></p>
                     <p>
                         <strong>Password Required:</strong>
                         <span class="badge <?= $customer['has_password'] ? 'bg-success' : 'bg-secondary'; ?>">
                             <?= $customer['has_password'] ? 'Enabled' : 'Disabled'; ?>
                         </span>
                     </p>
-                    <p><strong>Password Hint:</strong> <?= $customer['portal_password_hint'] ? htmlspecialchars($customer['portal_password_hint']) : '—'; ?></p>
+                    <p><strong>Password Hint:</strong> <?= $customer['portal_password_hint'] ? e($customer['portal_password_hint']) : '—'; ?></p>
                     <p><strong>Last Set:</strong> <?= $customer['portal_password_updated_at'] ? date('M d, Y H:i', strtotime($customer['portal_password_updated_at'])) : 'Never'; ?></p>
                     <p><strong>Last Portal Access:</strong> <?= $customer['portal_last_access_at'] ? date('M d, Y H:i', strtotime($customer['portal_last_access_at'])) : 'Never'; ?></p>
                     <p><strong>Token Expires:</strong> <?= $customer['portal_token_expires'] ? date('M d, Y H:i', strtotime($customer['portal_token_expires'])) : 'Not generated'; ?></p>
@@ -143,7 +143,7 @@ require_once '../../includes/header.php';
                                 name="portal_password_hint"
                                 id="portal_password_hint"
                                 class="form-control"
-                                value="<?= htmlspecialchars($customer['portal_password_hint'] ?? '') ?>"
+                                value="<?= e($customer['portal_password_hint'] ?? '') ?>"
                                 maxlength="120">
                         </div>
                         <button type="submit" class="btn btn-primary">Save Password</button>

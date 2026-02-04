@@ -17,7 +17,7 @@ $page_title = 'Inventory Details';
 require_once '../../includes/header.php';
 
 // Get inventory info
-$inventory_sql = "SELECT * FROM inventories WHERE id = ?";
+$inventory_sql = "SELECT i.*, l.name AS location_name, l.address AS location_address FROM inventories i LEFT JOIN locations l ON l.id = i.location_id WHERE i.id = ?";
 $inventory_stmt = $conn->prepare($inventory_sql);
 $inventory_stmt->bind_param("i", $inventory_id);
 $inventory_stmt->execute();
@@ -45,7 +45,7 @@ $products_result = $products_stmt->get_result();
 
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2>
-        <?php echo htmlspecialchars($inventory['name']); ?>
+        <?php echo e($inventory['name']); ?>
         <span class="badge bg-<?php echo $inventory['is_active'] ? 'success' : 'secondary'; ?>">
             <?php echo $inventory['is_active'] ? 'Active' : 'Inactive'; ?>
         </span>
@@ -65,8 +65,8 @@ $products_result = $products_stmt->get_result();
         <div class="card">
             <div class="card-body">
                 <h5 class="card-title">Inventory Information</h5>
-                <p><strong>Location:</strong> <?php echo htmlspecialchars($inventory['location']); ?></p>
-                <p><strong>Description:</strong> <?php echo htmlspecialchars($inventory['description']); ?></p>
+                <p><strong>Location:</strong> <?php echo $inventory['location_name'] ? e($inventory['location_name']) . ' - ' . e($inventory['location_address']) : '<span class="text-muted">Not set</span>'; ?></p>
+                <p><strong>Description:</strong> <?php echo e($inventory['description']); ?></p>
                 <p><strong>Created:</strong> <?php echo date('M d, Y H:i', strtotime($inventory['created_at'])); ?></p>
             </div>
         </div>

@@ -15,9 +15,18 @@ if ($productResult) {
     }
 }
 
+$locations = [];
+$locationsResult = $conn->query("SELECT id, name, address FROM locations WHERE is_active = 1 ORDER BY name");
+if ($locationsResult) {
+    while ($locationRow = $locationsResult->fetch_assoc()) {
+        $locations[] = $locationRow;
+    }
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $customerId = isset($_POST['customer_id']) ? (int)$_POST['customer_id'] : 0;
     $selectedFormulaId = isset($_POST['formula_id']) ? (int)$_POST['formula_id'] : 0;
+    $locationId = isset($_POST['location_id']) ? (int)$_POST['location_id'] : 0;
     $priority = $_POST['priority'] ?? 'normal';
     $batchSize = isset($_POST['batch_size']) ? floatval($_POST['batch_size']) : 0;
     $dueDate = $_POST['due_date'] ?? null;
@@ -30,6 +39,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($customerId <= 0) {
         setAlert('danger', 'Please select the customer/provider for this manufacturing order.');
+    } elseif ($locationId <= 0) {
+        setAlert('danger', 'Please select a location for this manufacturing order.');
     } else {
         try {
             $pdo->beginTransaction();
@@ -94,13 +105,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $createdBy = $_SESSION['user_id'] ?? null;
             $orderStmt = $pdo->prepare("
                 INSERT INTO manufacturing_orders 
-                    (order_number, customer_id, formula_id, batch_size, due_date, priority, notes, created_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (order_number, customer_id, formula_id, location_id, batch_size, due_date, priority, notes, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ");
             $orderStmt->execute([
                 $orderNumber,
                 $customerId,
                 $formulaId,
+                $locationId,
                 $batchSize,
                 $dueDate ?: null,
                 $priority,
@@ -168,18 +180,29 @@ $selectedFormulaId = $old['formula_id'] ?? '';
         <div class="card-header">Order Fundamentals</div>
         <div class="card-body">
             <div class="row g-3">
-                <div class="col-md-4">
+                <div class="col-md-3">
                     <label class="form-label">Provider / Customer</label>
                     <select class="form-select" name="customer_id" id="customer_id" required>
                         <option value="">Select provider</option>
                         <?php foreach ($customers as $customer): ?>
                             <option value="<?php echo $customer['id']; ?>" <?php echo $selectedProvider == $customer['id'] ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($customer['name']); ?>
+                                <?php echo e($customer['name']); ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-3">
+                    <label class="form-label">Location</label>
+                    <select class="form-select" name="location_id" required>
+                        <option value="">Select location</option>
+                        <?php foreach ($locations as $location): ?>
+                            <option value="<?php echo $location['id']; ?>" <?php echo (isset($old['location_id']) && $old['location_id'] == $location['id']) ? 'selected' : ''; ?>>
+                                <?php echo e($location['name']); ?> - <?php echo e($location['address']); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="col-md-3">
                     <label class="form-label">Priority</label>
                     <select class="form-select" name="priority">
                         <?php foreach ($priorities as $value => $label): ?>
@@ -189,19 +212,19 @@ $selectedFormulaId = $old['formula_id'] ?? '';
                         <?php endforeach; ?>
                     </select>
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-3">
                     <label class="form-label">Due date</label>
-                    <input type="date" class="form-control" name="due_date" value="<?php echo htmlspecialchars($old['due_date'] ?? ''); ?>">
+                    <input type="date" class="form-control" name="due_date" value="<?php echo e($old['due_date'] ?? ''); ?>">
                 </div>
             </div>
             <div class="row g-3 mt-3">
                 <div class="col-md-6">
                     <label class="form-label">Batch size</label>
-                    <input step="0.01" min="0" type="number" class="form-control" name="batch_size" value="<?php echo htmlspecialchars($old['batch_size'] ?? ''); ?>" placeholder="Total units to produce">
+                    <input step="0.01" min="0" type="number" class="form-control" name="batch_size" value="<?php echo e($old['batch_size'] ?? ''); ?>" placeholder="Total units to produce">
                 </div>
                 <div class="col-md-6">
                     <label class="form-label">Order notes</label>
-                    <textarea class="form-control" name="notes" rows="2"><?php echo htmlspecialchars($old['notes'] ?? ''); ?></textarea>
+                    <textarea class="form-control" name="notes" rows="2"><?php echo e($old['notes'] ?? ''); ?></textarea>
                 </div>
             </div>
         </div>

@@ -9,9 +9,14 @@ if (!hasPermission('inventories.create')) {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $name = sanitize($_POST['name']);
-    $location = sanitize($_POST['location']);
+    $locationId = isset($_POST['location_id']) ? (int)$_POST['location_id'] : 0;
     $description = sanitize($_POST['description']);
     $is_active = isset($_POST['is_active']) ? 1 : 0;
+    
+    if ($locationId <= 0) {
+        setAlert('danger', 'Please select a location.');
+        redirect('index.php');
+    }
     
     // Check if inventory already exists
     $check_sql = "SELECT id FROM inventories WHERE name = ?";
@@ -28,9 +33,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $check_stmt->close();
     
     // Insert new inventory
-    $insert_sql = "INSERT INTO inventories (name, location, description, is_active) VALUES (?, ?, ?, ?)";
+    $insert_sql = "INSERT INTO inventories (name, location_id, description, is_active) VALUES (?, ?, ?, ?)";
     $insert_stmt = $conn->prepare($insert_sql);
-    $insert_stmt->bind_param("sssi", $name, $location, $description, $is_active);
+    $insert_stmt->bind_param("sisi", $name, $locationId, $description, $is_active);
     
     if ($insert_stmt->execute()) {
         $inventory_id = $insert_stmt->insert_id;

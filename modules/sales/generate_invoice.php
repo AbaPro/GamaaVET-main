@@ -66,6 +66,10 @@ $discountBasisLabel = $discountBasisMap[$order['discount_basis']] ?? ucwords(str
 $shippingLabel = $order['shipping_cost_type'] === 'manual' ? 'Manual' : 'No Shipping';
 $freeSampleCount = (int)$order['free_sample_count'];
 
+// Clean output buffer and suppress warnings before PDF generation
+if (ob_get_length()) ob_clean();
+error_reporting(E_ERROR | E_PARSE);
+
 // Include TCPDF library
 require_once '../../tcpdf/tcpdf.php';
 
@@ -145,9 +149,9 @@ $pdf->Cell(0, 5, date('F j, Y', strtotime($order['order_date'])), 0, 1);
 $pdf->Cell(50, 5, 'Customer:', 0, 0);
 $pdf->Cell(0, 5, $order['customer_name'], 0, 1);
 $pdf->Cell(50, 5, 'Tax Number:', 0, 0);
-$pdf->Cell(0, 5, $order['tax_number'], 0, 1);
+$pdf->Cell(0, 5, $order['tax_number'] ?? '', 0, 1);
 $pdf->Cell(50, 5, 'Address:', 0, 0);
-$pdf->MultiCell(0, 5, $order['address'], 0, 1);
+$pdf->MultiCell(0, 5, $order['address'] ?? '', 0, 1);
 $pdf->Cell(50, 5, 'Contact:', 0, 0);
 $contactLine = $order['contact_name'];
 if ($canViewInvoiceContactPhone && !empty($order['contact_phone'])) {
@@ -243,7 +247,7 @@ if (!empty($returns)) {
 // Notes
 $pdf->Ln(10);
 $pdf->SetFont($primaryFont, 'I', 9);
-$pdf->MultiCell(0, 5, 'Notes: ' . $order['notes']);
+$pdf->MultiCell(0, 5, 'Notes: ' . ($order['notes'] ?? ''));
 
 // Footer
 $pdf->SetY(-30);

@@ -121,7 +121,8 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
     $notes = nl2br(htmlspecialchars($notes ?: $orderStep['notes'] ?? 'No notes yet.'));
     $stepLabel = htmlspecialchars($statusLabel);
 
-    $html = '<style>body{font-family:"DejaVu Sans",Arial,sans-serif;font-size:12px;}table{width:100%;border-collapse:collapse;margin-bottom:12px;}td,th{border:1px solid #ddd;padding:8px;}th{background:#f4f4f4;font-weight:600;}</style>';
+    // Updated CSS with better Arabic font support
+    $html = '<style>body{font-family:"aealarabiya","Arial Unicode MS",Arial,sans-serif;font-size:12px;direction:ltr;}table{width:100%;border-collapse:collapse;margin-bottom:12px;}td,th{border:1px solid #ddd;padding:8px;text-align:left;}th{background:#f4f4f4;font-weight:600;}</style>';
     $html .= "<h3>Manufacturing Handoff / {$stepLabel}</h3>";
     $html .= '<table><tbody>';
     $html .= "<tr><th>Order</th><td>{$orderNumber}</td><th>Provider</th><td>{$customerName}</td></tr>";
@@ -198,6 +199,13 @@ function manufacturing_create_pdf_document($order, $stepKey, $htmlContent) {
     $pdf->setPrintHeader(false);
     $pdf->setPrintFooter(false);
     $pdf->SetMargins(15, 15, 15);
+    
+    // Set font to support Arabic characters
+    $pdf->SetFont('aealarabiya', '', 11);
+    
+    // Enable RTL (Right-to-Left) support for Arabic
+    $pdf->setRTL(false); // Set to true only if entire document is RTL
+    
     $pdf->AddPage();
     $pdf->writeHTML($htmlContent, true, false, true, false, '');
     $pdf->Output($filePath, 'F');
@@ -240,19 +248,25 @@ function manufacturing_get_documents_by_step($conn, $stepId) {
 }
 
 function manufacturing_determine_order_status_from_steps(array $steps) {
-    $stepKeys = array_keys(manufacturing_get_step_definitions());
-    foreach ($stepKeys as $stepKey) {
-        foreach ($steps as $step) {
-            if ($step['step_key'] !== $stepKey) {
-                continue;
-            }
-            if ($step['status'] !== 'completed') {
-                return $stepKey;
-            }
-            break;
+    $allCompleted = true;
+    $anyInProgress = false;
+    
+    foreach ($steps as $step) {
+        if ($step['status'] === 'in_progress') {
+            $anyInProgress = true;
+        }
+        if ($step['status'] !== 'completed') {
+            $allCompleted = false;
         }
     }
-    return 'completed';
+    
+    if ($allCompleted) {
+        return 'completed';
+    } elseif ($anyInProgress) {
+        return 'in_progress';
+    } else {
+        return 'pending';
+    }
 }
 
 function manufacturing_get_next_step_label(array $steps) {

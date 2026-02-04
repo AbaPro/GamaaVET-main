@@ -10,10 +10,12 @@ if ($orderId <= 0) {
 }
 
 $orderStmt = $conn->prepare("
-    SELECT mo.*, c.name AS customer_name, f.name AS formula_name, f.description AS formula_description, f.components_json
+    SELECT mo.*, c.name AS customer_name, f.name AS formula_name, f.description AS formula_description, f.components_json,
+           l.name AS location_name, l.address AS location_address
     FROM manufacturing_orders mo
     JOIN customers c ON c.id = mo.customer_id
     JOIN manufacturing_formulas f ON f.id = mo.formula_id
+    LEFT JOIN locations l ON l.id = mo.location_id
     WHERE mo.id = ?
     LIMIT 1
 ");
@@ -33,11 +35,87 @@ if (!is_array($formulaComponents)) {
     $formulaComponents = [];
 }
 
+// Initialize sourcing components if they don't exist yet
+$checkSourcingStmt = $conn->prepare("SELECT COUNT(*) as count FROM manufacturing_sourcing_components WHERE manufacturing_order_id = ?");
+$checkSourcingStmt->bind_param("i", $orderId);
+$checkSourcingStmt->execute();
+$sourcingCheckResult = $checkSourcingStmt->get_result();
+$sourcingCheckRow = $sourcingCheckResult->fetch_assoc();
+$checkSourcingStmt->close();
+
+if ($sourcingCheckRow['count'] == 0 && !empty($formulaComponents)) {
+    // Insert sourcing components for this order
+    $insertSourcingStmt = $conn->prepare("
+        INSERT INTO manufacturing_sourcing_components 
+        (manufacturing_order_id, formula_component_index, product_id, component_name, required_quantity, unit, available_quantity)
+        VALUES (?, ?, ?, ?, ?, ?, 0)
+    ");
+    
+    foreach ($formulaComponents as $index => $component) {
+        $productId = $component['product_id'] ?? null;
+        $componentName = $component['name'] ?? '';
+        $requiredQty = $component['quantity'] ?? 0;
+        $unit = $component['unit'] ?? '';
+        
+        $insertSourcingStmt->bind_param("iiisds", $orderId, $index, $productId, $componentName, $requiredQty, $unit);
+        $insertSourcingStmt->execute();
+    }
+    $insertSourcingStmt->close();
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $stepKey = $_POST['step_key'] ?? '';
     $action = $_POST['action'] ?? 'update';
     $statusInput = $_POST['status'] ?? '';
     $notesInput = trim($_POST['notes'] ?? '');
+
+    // Store component notes for sourcing step (always save notes regardless of status)
+    if ($stepKey === 'sourcing') {
+        $componentNotes = $_POST['component_notes'] ?? [];
+        if (is_array($componentNotes)) {
+            foreach ($componentNotes as $compId => $compNote) {
+                $updateNoteStmt = $conn->prepare("UPDATE manufacturing_sourcing_components SET notes = ? WHERE id = ? AND manufacturing_order_id = ?");
+                $updateNoteStmt->bind_param("sii", $compNote, $compId, $orderId);
+                $updateNoteStmt->execute();
+                $updateNoteStmt->close();
+            }
+        }
+    }
+
+    // Special validation for sourcing step when completing
+    if ($stepKey === 'sourcing' && $statusInput === 'completed') {
+        // Check if all required quantities are available
+        // Only check products (components with product_id), skip manual components
+        $sourcingStmt = $conn->prepare("
+            SELECT msc.id, msc.component_name, msc.product_id, msc.required_quantity, msc.unit,
+                   p.barcode, COALESCE(SUM(ip.quantity), 0) AS available_qty
+            FROM manufacturing_sourcing_components msc
+            LEFT JOIN products p ON p.id = msc.product_id
+            LEFT JOIN inventories inv ON inv.location_id = ?
+            LEFT JOIN inventory_products ip ON ip.product_id = msc.product_id AND ip.inventory_id = inv.id
+            WHERE msc.manufacturing_order_id = ? AND msc.product_id IS NOT NULL
+            GROUP BY msc.id, msc.component_name, msc.product_id, msc.required_quantity, msc.unit, p.barcode
+        ");
+        $sourcingStmt->bind_param("ii", $order['location_id'], $orderId);
+        $sourcingStmt->execute();
+        $sourcingResult = $sourcingStmt->get_result();
+        
+        $insufficientQty = false;
+        $insufficientItems = [];
+        while ($comp = $sourcingResult->fetch_assoc()) {
+            $availableQty = $comp['available_qty'] ?? 0;
+            if ($availableQty < $comp['required_quantity']) {
+                $insufficientQty = true;
+                $insufficientItems[] = $comp['component_name'] . ' (need: ' . $comp['required_quantity'] . ' ' . $comp['unit'] . ', have: ' . $availableQty . ')';
+            }
+        }
+        $sourcingStmt->close();
+        
+        if ($insufficientQty) {
+            setAlert('danger', 'Cannot complete sourcing: Insufficient quantities in location. Missing: ' . implode(', ', $insufficientItems));
+            redirect('order.php?id=' . $orderId);
+        }
+    }
 
     $stepStmt = $pdo->prepare("
         SELECT * FROM manufacturing_order_steps 
@@ -53,7 +131,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect('order.php?id=' . $orderId);
     }
 
+    // Check if previous step is completed (sequential workflow enforcement)
+    if ($action !== 'regenerate' && ($statusInput === 'in_progress' || $statusInput === 'completed')) {
+        $stepDefinitions = manufacturing_get_step_definitions();
+        $stepKeys = array_keys($stepDefinitions);
+        $currentStepIndex = array_search($stepKey, $stepKeys);
+        
+        if ($currentStepIndex > 0) {
+            // Get previous step
+            $previousStepKey = $stepKeys[$currentStepIndex - 1];
+            $prevStepStmt = $conn->prepare("SELECT status FROM manufacturing_order_steps WHERE manufacturing_order_id = ? AND step_key = ?");
+            $prevStepStmt->bind_param("is", $orderId, $previousStepKey);
+            $prevStepStmt->execute();
+            $prevStepResult = $prevStepStmt->get_result();
+            $prevStep = $prevStepResult->fetch_assoc();
+            $prevStepStmt->close();
+            
+            if ($prevStep && $prevStep['status'] !== 'completed') {
+                setAlert('danger', 'Cannot start this step. Previous step "' . manufacturing_get_step_label($previousStepKey) . '" must be completed first.');
+                redirect('order.php?id=' . $orderId);
+            }
+        }
+    }
+
     $allowedStatuses = ['pending', 'in_progress', 'completed'];
+    $statusInput = trim($statusInput);
     $statusToSave = in_array($statusInput, $allowedStatuses, true) ? $statusInput : $stepRow['status'];
     if ($action === 'regenerate') {
         $statusToSave = $stepRow['status'];
@@ -200,6 +302,9 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
         <span class="badge <?= $orderBadge['class']; ?> text-uppercase">
             <?= $orderBadge['label']; ?>
         </span>
+        <a href="edit.php?id=<?= $orderId; ?>" class="btn btn-outline-primary">
+            <i class="fas fa-edit me-1"></i> Edit
+        </a>
         <a href="index.php" class="btn btn-outline-secondary">
             <i class="fas fa-arrow-left me-1"></i> Back to dashboard
         </a>
@@ -212,6 +317,7 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
             <div class="card-header">Order snapshot</div>
             <div class="card-body">
                 <p class="mb-1"><strong>Priority:</strong> <?= ucfirst(htmlspecialchars($order['priority'])); ?></p>
+                <p class="mb-1"><strong>Location:</strong> <?= $order['location_name'] ? htmlspecialchars($order['location_name']) . ' - ' . htmlspecialchars($order['location_address'])  : '<span class="text-muted">Not set</span>'; ?></p>
                 <p class="mb-1"><strong>Due Date:</strong> <?= $order['due_date'] ? htmlspecialchars($order['due_date']) : '<span class="text-muted">Not set</span>'; ?></p>
                 <p class="mb-1"><strong>Batch size:</strong> <?= htmlspecialchars($order['batch_size']); ?></p>
                 <p class="mb-1"><strong>Notes:</strong><br><?= nl2br(htmlspecialchars($order['notes'] ?? 'No notes provided.')); ?></p>
@@ -315,23 +421,129 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                     <div id="stepCollapse<?= $stepRow['id']; ?>" class="accordion-collapse collapse <?= $index === 0 ? 'show' : ''; ?>" aria-labelledby="stepHeading<?= $stepRow['id']; ?>" data-bs-parent="#manufacturingSteps">
                         <div class="accordion-body">
                             <p class="text-muted small mb-3"><?= manufacturing_get_step_instruction($stepRow['step_key']); ?></p>
+                            
                             <form method="post">
+                                <?php if ($stepRow['step_key'] === 'sourcing'): ?>
+                                    <!-- Sourcing Components Table -->
+                                    <?php
+                                    $sourcingStmt = $conn->prepare("
+                                        SELECT msc.id, msc.component_name, msc.product_id, msc.required_quantity, msc.unit, msc.notes,
+                                               p.barcode, COALESCE(SUM(ip.quantity), 0) AS available_qty
+                                        FROM manufacturing_sourcing_components msc
+                                        LEFT JOIN products p ON p.id = msc.product_id
+                                        LEFT JOIN inventories inv ON inv.location_id = ?
+                                        LEFT JOIN inventory_products ip ON ip.product_id = msc.product_id AND ip.inventory_id = inv.id
+                                        WHERE msc.manufacturing_order_id = ?
+                                        GROUP BY msc.id, msc.component_name, msc.product_id, msc.required_quantity, msc.unit, msc.notes, p.barcode
+                                        ORDER BY msc.formula_component_index
+                                    ");
+                                    $sourcingStmt->bind_param("ii", $order['location_id'], $orderId);
+                                    $sourcingStmt->execute();
+                                    $sourcingResult = $sourcingStmt->get_result();
+                                    $sourcingComponents = [];
+                                    while ($sc = $sourcingResult->fetch_assoc()) {
+                                        $sourcingComponents[] = $sc;
+                                    }
+                                    $sourcingStmt->close();
+                                    ?>
+                                    <div class="table-responsive mb-3">
+                                        <table class="table table-bordered table-sm">
+                                            <thead class="table-light">
+                                                <tr>
+                                                    <th>Item</th>
+                                                    <th>Barcode</th>
+                                                    <th>Required Qty</th>
+                                                    <th>Unit</th>
+                                                    <th>Available in Location</th>
+                                                    <th style="background-color: #fff3cd;">Status</th>
+                                                    <th>Notes</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <?php foreach ($sourcingComponents as $sc): ?>
+                                                    <?php 
+                                                    $availableQty = $sc['available_qty'] ?? 0;
+                                                    $requiredQty = $sc['required_quantity'];
+                                                    $isValid = $availableQty >= $requiredQty;
+                                                    $statusClass = $isValid ? 'table-success' : 'table-danger';
+                                                    $statusText = $isValid ? '✓ OK' : '✗ Insufficient';
+                                                    ?>
+                                                    <tr>
+                                                        <td><?= htmlspecialchars($sc['component_name']); ?></td>
+                                                        <td><?= $sc['barcode'] ? htmlspecialchars($sc['barcode']) : '<span class="text-muted">-</span>'; ?></td>
+                                                        <td><?= htmlspecialchars($sc['required_quantity']); ?></td>
+                                                        <td><?= htmlspecialchars($sc['unit']); ?></td>
+                                                        <td><?= htmlspecialchars($availableQty); ?></td>
+                                                        <td class="<?= $statusClass; ?> text-center fw-bold"><?= $statusText; ?></td>
+                                                        <td>
+                                                            <input type="text" class="form-control form-control-sm" 
+                                                                   name="component_notes[<?= $sc['id']; ?>]" 
+                                                                   value="<?= htmlspecialchars($sc['notes'] ?? ''); ?>"
+                                                                   placeholder="Add notes...">
+                                                        </td>
+                                                    </tr>
+                                                <?php endforeach; ?>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <?php if (!empty($sourcingComponents)): ?>
+                                        <div class="alert alert-info small mb-3">
+                                            <i class="fas fa-info-circle me-2"></i>
+                                            <strong>Sourcing Requirements:</strong> All items must show "✓ OK" status in the location before you can mark this step as completed.
+                                        </div>
+                                    <?php endif; ?>
+                                <?php endif; ?>
+                            
                                 <input type="hidden" name="order_id" value="<?= $order['id']; ?>">
                                 <input type="hidden" name="step_key" value="<?= htmlspecialchars($stepRow['step_key']); ?>">
                                 <div class="row g-3 mb-3">
                                     <div class="col-md-4">
                                         <label class="form-label">Step status</label>
-                                        <select class="form-select" name="status">
+                                        <?php
+                                        // Check if previous step is completed
+                                        $stepDefinitions = manufacturing_get_step_definitions();
+                                        $stepKeys = array_keys($stepDefinitions);
+                                        $currentStepIndex = array_search($stepRow['step_key'], $stepKeys);
+                                        $canProgress = true;
+                                        $blockMessage = '';
+                                        
+                                        if ($currentStepIndex > 0) {
+                                            $previousStepKey = $stepKeys[$currentStepIndex - 1];
+                                            $prevCheckStmt = $conn->prepare("SELECT status FROM manufacturing_order_steps WHERE manufacturing_order_id = ? AND step_key = ?");
+                                            $prevCheckStmt->bind_param("is", $orderId, $previousStepKey);
+                                            $prevCheckStmt->execute();
+                                            $prevCheckResult = $prevCheckStmt->get_result();
+                                            $prevCheckStep = $prevCheckResult->fetch_assoc();
+                                            $prevCheckStmt->close();
+                                            
+                                            if ($prevCheckStep && $prevCheckStep['status'] !== 'completed') {
+                                                $canProgress = false;
+                                                $blockMessage = 'Previous step "' . manufacturing_get_step_label($previousStepKey) . '" must be completed first.';
+                                            }
+                                        }
+                                        ?>
+                                        <select class="form-select" name="status" <?= !$canProgress && $stepRow['status'] === 'pending' ? 'disabled' : ''; ?>>
                                             <?php foreach (['pending', 'in_progress', 'completed'] as $statusOption): ?>
-                                                <option value="<?= $statusOption; ?>" <?= $stepRow['status'] === $statusOption ? 'selected' : ''; ?>>
+                                                <?php
+                                                // Disable in_progress and completed if can't progress
+                                                $isDisabled = !$canProgress && $stepRow['status'] === 'pending' && ($statusOption === 'in_progress' || $statusOption === 'completed');
+                                                ?>
+                                                <option value="<?= $statusOption; ?>" 
+                                                    <?= $stepRow['status'] === $statusOption ? 'selected' : ''; ?>
+                                                    <?= $isDisabled ? 'disabled' : ''; ?>>
                                                     <?= ucfirst(str_replace('_', ' ', $statusOption)); ?>
                                                 </option>
                                             <?php endforeach; ?>
                                         </select>
+                                        <?php if (!$canProgress && $stepRow['status'] === 'pending'): ?>
+                                            <div class="form-text text-warning">
+                                                <i class="fas fa-lock me-1"></i><?= $blockMessage; ?>
+                                            </div>
+                                        <?php endif; ?>
                                     </div>
                                     <div class="col-md-8">
                                         <label class="form-label">Notes for Excel/PDF handoff</label>
-                                        <textarea name="notes" class="form-control" rows="3" placeholder="Detail what should travel to the next team."><?= htmlspecialchars($stepRow['notes']); ?></textarea>
+                                        <textarea name="notes" class="form-control" rows="3" placeholder="Detail what should travel to the next team."><?= e($stepRow['notes']); ?></textarea>
                                     </div>
                                 </div>
                                 <div class="d-flex gap-2">

@@ -84,19 +84,19 @@ require_once '../../includes/header.php';
             <?php if ($factories && $factories->num_rows): ?>
                 <?php while ($factory = $factories->fetch_assoc()): ?>
                     <tr>
-                        <td><?= htmlspecialchars($factory['name']); ?></td>
-                        <td><?= htmlspecialchars($factory['contact_person']); ?></td>
-                        <td><?= htmlspecialchars($factory['contact_phone']); ?></td>
-                        <td><?= htmlspecialchars($factory['whatsapp_number']); ?></td>
-                        <td><?= htmlspecialchars($factory['notes']); ?></td>
+                        <td><?= e($factory['name']); ?></td>
+                        <td><?= e($factory['contact_person']); ?></td>
+                        <td><?= e($factory['contact_phone']); ?></td>
+                        <td><?= e($factory['whatsapp_number']); ?></td>
+                        <td><?= e($factory['notes']); ?></td>
                         <td>
                             <button class="btn btn-sm btn-outline-primary edit-factory"
                                     data-id="<?= $factory['id']; ?>"
-                                    data-name="<?= htmlspecialchars($factory['name']); ?>"
-                                    data-contact="<?= htmlspecialchars($factory['contact_person']); ?>"
-                                    data-phone="<?= htmlspecialchars($factory['contact_phone']); ?>"
-                                    data-whatsapp="<?= htmlspecialchars($factory['whatsapp_number']); ?>"
-                                    data-notes="<?= htmlspecialchars($factory['notes']); ?>">
+                                    data-name="<?= e($factory['name']); ?>"
+                                    data-contact="<?= e($factory['contact_person']); ?>"
+                                    data-phone="<?= e($factory['contact_phone']); ?>"
+                                    data-whatsapp="<?= e($factory['whatsapp_number']); ?>"
+                                    data-notes="<?= e($factory['notes']); ?>">
                                 <i class="fas fa-edit"></i>
                             </button>
                             <a href="factories.php?delete=<?= $factory['id']; ?>" class="btn btn-sm btn-outline-danger"

@@ -189,6 +189,9 @@ if (!empty($stepIds)) {
                                     <a href="order.php?id=<?= $order['id']; ?>" class="btn btn-sm btn-outline-primary">
                                         <i class="fas fa-eye me-1"></i> View
                                     </a>
+                                    <a href="edit.php?id=<?= $order['id']; ?>" class="btn btn-sm btn-outline-warning">
+                                        <i class="fas fa-edit me-1"></i> Edit
+                                    </a>
                                 </td>
                             </tr>
                         <?php endforeach; ?>

@@ -7,6 +7,11 @@ function sanitize($data) {
     return htmlspecialchars(strip_tags($conn->real_escape_string(trim($data))));
 }
 
+// Safe HTML escape helper (handles null values)
+function e($value) {
+    return htmlspecialchars((string)($value ?? ''), ENT_QUOTES, 'UTF-8');
+}
+
 // Function to generate random string
 function generateRandomString($length = 10) {
     $characters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';

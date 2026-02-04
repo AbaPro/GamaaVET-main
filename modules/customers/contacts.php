@@ -159,7 +159,7 @@ require_once '../../includes/header.php';
 
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2>
-        Contacts for: <?php echo htmlspecialchars($customer['name']); ?>
+        Contacts for: <?php echo e($customer['name']); ?>
     </h2>
     <a href="view.php?id=<?php echo $customer_id; ?>" class="btn btn-secondary">Back to Customer</a>
 </div>
@@ -220,10 +220,10 @@ require_once '../../includes/header.php';
                     <?php if ($contacts_result->num_rows > 0): ?>
                         <?php while ($contact = $contacts_result->fetch_assoc()): ?>
                             <tr>
-                                <td><?php echo htmlspecialchars($contact['name']); ?></td>
-                                <td><?php echo $contact['position'] ? htmlspecialchars($contact['position']) : '-'; ?></td>
-                                <td><?php echo $contact['email'] ? htmlspecialchars($contact['email']) : '-'; ?></td>
-                                <td><?php echo htmlspecialchars($contact['phone']); ?></td>
+                                <td><?php echo e($contact['name']); ?></td>
+                                <td><?php echo $contact['position'] ? e($contact['position']) : '-'; ?></td>
+                                <td><?php echo $contact['email'] ? e($contact['email']) : '-'; ?></td>
+                                <td><?php echo e($contact['phone']); ?></td>
                                 <td>
                                     <?php if ($contact['is_primary']): ?>
                                         <span class="badge bg-success">Primary</span>

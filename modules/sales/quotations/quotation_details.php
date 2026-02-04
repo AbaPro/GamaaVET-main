@@ -1,6 +1,5 @@
 <?php
 require_once '../../../includes/auth.php';
-require_once '../../../includes/header.php';
 require_once '../../../config/database.php';
 
 // Permission check
@@ -12,6 +11,22 @@ if (!hasPermission('quotations.manage')) {
 
 // Get quotation ID
 $quotation_id = $_GET['id'] ?? 0;
+
+// Handle status update BEFORE any output
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_status'])) {
+    $new_status = $_POST['status'];
+    
+    try {
+        $stmt = $pdo->prepare("UPDATE quotations SET status = ? WHERE id = ?");
+        $stmt->execute([$new_status, $quotation_id]);
+        
+        $_SESSION['success'] = "Quotation status updated successfully!";
+        header("Location: quotation_details.php?id=" . $quotation_id);
+        exit();
+    } catch (PDOException $e) {
+        $_SESSION['error'] = "Error updating quotation status: " . $e->getMessage();
+    }
+}
 
 // Fetch quotation details
 $stmt = $pdo->prepare("
@@ -43,21 +58,8 @@ $stmt->execute([$quotation_id]);
 $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $canViewFinalPrices = canViewProductPrice('final');
 
-// Handle status update
-if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_status'])) {
-    $new_status = $_POST['status'];
-    
-    try {
-        $stmt = $pdo->prepare("UPDATE quotations SET status = ? WHERE id = ?");
-        $stmt->execute([$new_status, $quotation_id]);
-        
-        $_SESSION['success'] = "Quotation status updated successfully!";
-        header("Location: quotation_details.php?id=" . $quotation_id);
-        exit();
-    } catch (PDOException $e) {
-        $_SESSION['error'] = "Error updating quotation status: " . $e->getMessage();
-    }
-}
+// Include header AFTER all header() redirects
+require_once '../../../includes/header.php';
 ?>
 
 <div class="container mt-4">

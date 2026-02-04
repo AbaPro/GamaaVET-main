@@ -101,6 +101,9 @@ if ($factories_result) {
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2>Customers</h2>
     <div class="d-flex gap-2 flex-wrap">
+        <a href="types.php" class="btn btn-outline-secondary">
+            <i class="fas fa-tags"></i> Manage Customer Types
+        </a>
         <a href="factories.php" class="btn btn-outline-secondary">
             <i class="fas fa-industry"></i> Manage Factories
         </a>
@@ -134,15 +137,15 @@ if ($factories_result) {
                         <?php while ($row = $result->fetch_assoc()): ?>
                             <tr>
                                 <td><?php echo $row['id']; ?></td>
-                                <td><?php echo htmlspecialchars($row['name']); ?></td>
+                                <td><?php echo e($row['name']); ?></td>
                                 <td>
                                     <span class="badge bg-<?php echo $row['type'] == 1 ? 'info' : 'primary'; ?>">
                                         <?php echo ucfirst($row['type_name']); ?>
                                     </span>
                                 </td>
-                                <td><?php echo !empty($row['factory_name']) ? htmlspecialchars($row['factory_name']) : '<span class="text-muted">N/A</span>'; ?></td>
-                                <td><?php echo htmlspecialchars($row['email']); ?></td>
-                                <td><?php echo htmlspecialchars($row['phone']); ?></td>
+                                <td><?php echo !empty($row['factory_name']) ? e($row['factory_name']) : '<span class="text-muted">N/A</span>'; ?></td>
+                                <td><?php echo e($row['email']); ?></td>
+                                <td><?php echo e($row['phone']); ?></td>
                                 <td><?php echo number_format($row['wallet_balance'], 2); ?></td>
                                 <td>
                                     <div class="dropdown">
@@ -159,8 +162,8 @@ if ($factories_result) {
                                                 <button type="button"
                                                         class="dropdown-item send-portal-link"
                                                         data-id="<?php echo $row['id']; ?>"
-                                                        data-phone="<?php echo htmlspecialchars(!empty($row['whatsapp_phone']) ? $row['whatsapp_phone'] : $row['phone']); ?>"
-                                                        data-name="<?php echo htmlspecialchars($row['name']); ?>">
+                                                        data-phone="<?php echo e(!empty($row['whatsapp_phone']) ? $row['whatsapp_phone'] : $row['phone']); ?>"
+                                                        data-name="<?php echo e($row['name']); ?>">
                                                     <i class="fab fa-whatsapp"></i> WhatsApp Portal Link
                                                 </button>
                                             </li>
@@ -171,14 +174,13 @@ if ($factories_result) {
                                 </td>
                             </tr>
                         <?php endwhile; ?>
-                    <?php else: ?>
-                        <tr>
-                            <td colspan="8" class="text-center">No customers found</td>
-                        </tr>
                     <?php endif; ?>
                 </tbody>
             </table>
         </div>
+        <?php if ($result->num_rows === 0): ?>
+            <div class="text-center text-muted py-3">No customers found</div>
+        <?php endif; ?>
     </div>
 </div>
 
@@ -232,7 +234,7 @@ if ($factories_result) {
                                     <select class="form-select" id="factory_id" name="factory_id">
                                         <option value="">-- Not Assigned --</option>
                                         <?php foreach ($factories_data as $factory): ?>
-                                            <option value="<?= $factory['id']; ?>"><?= htmlspecialchars($factory['name']); ?></option>
+                                            <option value="<?= $factory['id']; ?>"><?= e($factory['name']); ?></option>
                                         <?php endforeach; ?>
                                     </select>
                                     <small class="text-muted">Controls which factory appears on invoices.</small>
@@ -385,7 +387,7 @@ if ($factories_result) {
                                     <select class="form-select" id="edit_factory_id" name="factory_id">
                                         <option value="">-- Not Assigned --</option>
                                         <?php foreach ($factories_data as $factory): ?>
-                                            <option value="<?= $factory['id']; ?>"><?= htmlspecialchars($factory['name']); ?></option>
+                                            <option value="<?= $factory['id']; ?>"><?= e($factory['name']); ?></option>
                                         <?php endforeach; ?>
                                     </select>
                                 </div>

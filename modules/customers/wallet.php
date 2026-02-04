@@ -92,7 +92,7 @@ require_once '../../includes/header.php';
 
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2>
-        Wallet for: <?php echo htmlspecialchars($customer['name']); ?>
+        Wallet for: <?php echo e($customer['name']); ?>
         <span class="badge bg-<?php echo $customer['wallet_balance'] >= 0 ? 'success' : 'danger'; ?>">
             Balance: <?php echo number_format($customer['wallet_balance'], 2); ?>
         </span>
@@ -159,8 +159,8 @@ require_once '../../includes/header.php';
                                     </span>
                                 </td>
                                 <td><?php echo number_format($transaction['amount'], 2); ?></td>
-                                <td><?php echo $transaction['notes'] ? htmlspecialchars($transaction['notes']) : '-'; ?></td>
-                                <td><?php echo $transaction['created_by_name'] ? htmlspecialchars($transaction['created_by_name']) : 'System'; ?></td>
+                                <td><?php echo $transaction['notes'] ? e($transaction['notes']) : '-'; ?></td>
+                                <td><?php echo $transaction['created_by_name'] ? e($transaction['created_by_name']) : 'System'; ?></td>
                             </tr>
                         <?php endwhile; ?>
                     <?php else: ?>

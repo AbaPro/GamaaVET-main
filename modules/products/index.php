@@ -279,14 +279,13 @@ $productsTableColspan = 8 + ($showUnitPriceColumn ? 1 : 0) + ($showCostPriceColu
                                 </td>
                             </tr>
                         <?php endforeach; ?>
-                    <?php else: ?>
-                        <tr>
-                            <td colspan="<?php echo $productsTableColspan; ?>" class="text-center">No products found</td>
-                        </tr>
                     <?php endif; ?>
                 </tbody>
             </table>
         </div>
+        <?php if (count($products) === 0): ?>
+            <div class="text-center text-muted py-3">No products found</div>
+        <?php endif; ?>
     </div>
 </div>
 
@@ -307,13 +306,15 @@ $productsTableColspan = 8 + ($showUnitPriceColumn ? 1 : 0) + ($showCostPriceColu
                         </div>
                         <div class="col-md-6 mb-3">
                             <label for="sku" class="form-label">SKU</label>
-                            <input type="text" class="form-control" id="sku" name="sku" required>
+                            <input type="text" class="form-control" id="sku" name="sku" placeholder="Auto-generated" readonly>
+                            <small class="text-muted">SKU is generated automatically.</small>
                         </div>
                     </div>
                     <div class="row">
                         <div class="col-md-6 mb-3">
                             <label for="barcode" class="form-label">Barcode</label>
-                            <input type="text" class="form-control" id="barcode" name="barcode">
+                            <input type="text" class="form-control" id="barcode" name="barcode" placeholder="Auto-generated" readonly>
+                            <small class="text-muted">Barcode is generated automatically.</small>
                         </div>
                         <div class="col-md-6 mb-3">
                             <label for="type" class="form-label">Product Type</label>
@@ -499,6 +500,27 @@ $productsTableColspan = 8 + ($showUnitPriceColumn ? 1 : 0) + ($showCostPriceColu
 <?php require_once '../../includes/footer.php'; ?>
 
 <script>
+    const generateSkuPreview = () => {
+        const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        let randomPart = '';
+        for (let i = 0; i < 6; i++) {
+            randomPart += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        const now = new Date();
+        const yy = String(now.getFullYear()).slice(-2);
+        const mm = String(now.getMonth() + 1).padStart(2, '0');
+        const dd = String(now.getDate()).padStart(2, '0');
+        return `SKU-${yy}${mm}${dd}-${randomPart}`;
+    };
+
+    const generateBarcodePreview = () => {
+        let result = '';
+        for (let i = 0; i < 12; i++) {
+            result += Math.floor(Math.random() * 10).toString();
+        }
+        return result;
+    };
+
     const toggleProductPricingGroups = (selectEl) => {
         const type = selectEl.value;
         const form = selectEl.closest('form');
@@ -554,6 +576,26 @@ $productsTableColspan = 8 + ($showUnitPriceColumn ? 1 : 0) + ($showCostPriceColu
 
         initProductPricingControls();
         initSearchableSelects();
+
+        const addProductModal = document.getElementById('addProductModal');
+        if (addProductModal) {
+            addProductModal.addEventListener('shown.bs.modal', () => {
+                const skuInput = document.getElementById('sku');
+                const barcodeInput = document.getElementById('barcode');
+                if (skuInput && !skuInput.value) {
+                    skuInput.value = generateSkuPreview();
+                }
+                if (barcodeInput && !barcodeInput.value) {
+                    barcodeInput.value = generateBarcodePreview();
+                }
+            });
+            addProductModal.addEventListener('hidden.bs.modal', () => {
+                const skuInput = document.getElementById('sku');
+                const barcodeInput = document.getElementById('barcode');
+                if (skuInput) skuInput.value = '';
+                if (barcodeInput) barcodeInput.value = '';
+            });
+        }
 
         // Load subcategories when category changes
         $('#category_id').change(function() {

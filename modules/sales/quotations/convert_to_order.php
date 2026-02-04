@@ -1,6 +1,5 @@
 <?php
 require_once '../../../includes/auth.php';
-require_once '../../../includes/header.php';
 require_once '../../../config/database.php';
 
 // Permission check
@@ -13,35 +12,34 @@ if (!hasPermission('quotations.manage')) {
 // Get quotation ID
 $quotation_id = $_GET['id'] ?? 0;
 
-// Fetch quotation details
-$stmt = $pdo->prepare("
-    SELECT q.*, c.name AS customer_name, c.factory_id
-    FROM quotations q
-    JOIN customers c ON q.customer_id = c.id
-    WHERE q.id = ? AND q.status = 'accepted' AND q.order_id IS NULL
-");
-$stmt->execute([$quotation_id]);
-$quotation = $stmt->fetch(PDO::FETCH_ASSOC);
-
-if (!$quotation) {
-    $_SESSION['error'] = "Quotation not found or cannot be converted";
-    header("Location: quotation_list.php");
-    exit();
-}
-
-// Fetch quotation items
-$stmt = $pdo->prepare("
-    SELECT qi.*, p.name AS product_name, p.sku, p.barcode, p.type
-    FROM quotation_items qi
-    JOIN products p ON qi.product_id = p.id
-    WHERE qi.quotation_id = ?
-");
-$stmt->execute([$quotation_id]);
-$items = $stmt->fetchAll(PDO::FETCH_ASSOC);
-$canViewFinalPrices = canViewProductPrice('final');
-
-// Handle conversion to order
+// Handle conversion to order BEFORE any output
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+    // Fetch quotation details for conversion
+    $stmt = $pdo->prepare("
+        SELECT q.*, c.name AS customer_name, c.factory_id
+        FROM quotations q
+        JOIN customers c ON q.customer_id = c.id
+        WHERE q.id = ? AND q.status = 'accepted' AND q.order_id IS NULL
+    ");
+    $stmt->execute([$quotation_id]);
+    $quotation = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if (!$quotation) {
+        $_SESSION['error'] = "Quotation not found or cannot be converted";
+        header("Location: quotation_list.php");
+        exit();
+    }
+    
+    // Fetch quotation items for conversion
+    $stmt = $pdo->prepare("
+        SELECT qi.*, p.type
+        FROM quotation_items qi
+        JOIN products p ON qi.product_id = p.id
+        WHERE qi.quotation_id = ?
+    ");
+    $stmt->execute([$quotation_id]);
+    $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
     try {
         $pdo->beginTransaction();
         
@@ -124,6 +122,36 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         exit();
     }
 }
+
+// Fetch quotation details for display
+$stmt = $pdo->prepare("
+    SELECT q.*, c.name AS customer_name, c.factory_id
+    FROM quotations q
+    JOIN customers c ON q.customer_id = c.id
+    WHERE q.id = ? AND q.status = 'accepted' AND q.order_id IS NULL
+");
+$stmt->execute([$quotation_id]);
+$quotation = $stmt->fetch(PDO::FETCH_ASSOC);
+
+if (!$quotation) {
+    $_SESSION['error'] = "Quotation not found or cannot be converted";
+    header("Location: quotation_list.php");
+    exit();
+}
+
+// Fetch quotation items for display
+$stmt = $pdo->prepare("
+    SELECT qi.*, p.name AS product_name, p.sku, p.barcode, p.type
+    FROM quotation_items qi
+    JOIN products p ON qi.product_id = p.id
+    WHERE qi.quotation_id = ?
+");
+$stmt->execute([$quotation_id]);
+$items = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$canViewFinalPrices = canViewProductPrice('final');
+
+// Include header AFTER all header() redirects
+require_once '../../../includes/header.php';
 ?>
 
 <div class="container mt-4">

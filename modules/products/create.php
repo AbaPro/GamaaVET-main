@@ -17,6 +17,41 @@ if (!isset($conn) || !$conn instanceof mysqli || $conn->connect_error) {
     die("Database connection failed");
 }
 
+// Helpers to generate unique SKU/barcode
+function generateUniqueSku(mysqli $conn): string {
+    $maxAttempts = 20;
+    for ($i = 0; $i < $maxAttempts; $i++) {
+        $candidate = 'SKU-' . date('ymd') . '-' . generateRandomString(6);
+        $stmt = $conn->prepare("SELECT id FROM products WHERE sku = ?");
+        $stmt->bind_param("s", $candidate);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $exists = $res && $res->num_rows > 0;
+        $stmt->close();
+        if (!$exists) {
+            return $candidate;
+        }
+    }
+    throw new Exception("Unable to generate unique SKU. Please try again.");
+}
+
+function generateUniqueBarcode(mysqli $conn): string {
+    $maxAttempts = 20;
+    for ($i = 0; $i < $maxAttempts; $i++) {
+        $candidate = (string)random_int(100000000000, 999999999999);
+        $stmt = $conn->prepare("SELECT id FROM products WHERE barcode = ?");
+        $stmt->bind_param("s", $candidate);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $exists = $res && $res->num_rows > 0;
+        $stmt->close();
+        if (!$exists) {
+            return $candidate;
+        }
+    }
+    throw new Exception("Unable to generate unique barcode. Please try again.");
+}
+
 // Permission check
 if (!hasPermission('products.create')) {
     setAlert('danger', 'You do not have permission to access this page.');
@@ -27,7 +62,7 @@ if (!hasPermission('products.create')) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         // Validate required fields
-        $required = ['name', 'sku', 'type', 'category_id', 'unit_price'];
+        $required = ['name', 'type', 'category_id', 'unit_price'];
         foreach ($required as $field) {
             if (empty($_POST[$field])) {
                 throw new Exception("Required field '$field' is missing");
@@ -36,7 +71,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // Sanitize inputs
         $name = sanitize($_POST['name']);
-        $sku = sanitize($_POST['sku']);
+        $sku = sanitize($_POST['sku'] ?? '');
         $barcode = sanitize($_POST['barcode'] ?? '');
         $type = sanitize($_POST['type']);
         $category_id = (int)$_POST['category_id'];
@@ -47,29 +82,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $min_stock_level = !empty($_POST['min_stock_level']) ? (int)$_POST['min_stock_level'] : 0;
         $description = sanitize($_POST['description'] ?? '');
 
-        // Check SKU uniqueness
-        $check_sql = "SELECT id FROM products WHERE sku = ?";
-        $check_stmt = $conn->prepare($check_sql);
-        if (!$check_stmt) {
-            throw new Exception("Prepare failed: " . $conn->error);
+        if ($sku === '') {
+            $sku = generateUniqueSku($conn);
+        } else {
+            $check_sql = "SELECT id FROM products WHERE sku = ?";
+            $check_stmt = $conn->prepare($check_sql);
+            if (!$check_stmt) {
+                throw new Exception("Prepare failed: " . $conn->error);
+            }
+            $check_stmt->bind_param("s", $sku);
+            $check_stmt->execute();
+            $check_result = $check_stmt->get_result();
+            if ($check_result->num_rows > 0) {
+                throw new Exception("Product with this SKU already exists");
+            }
+            $check_stmt->close();
         }
-        
-        $check_stmt->bind_param("s", $sku);
-        $check_stmt->execute();
-        $check_result = $check_stmt->get_result();
-        
-        if ($check_result->num_rows > 0) {
-            throw new Exception("Product with this SKU already exists");
+
+        if ($barcode === '') {
+            $barcode = generateUniqueBarcode($conn);
         }
-        $check_stmt->close();
 
         // Handle file upload
         $image_name = NULL;
         if (isset($_FILES['image']) && $_FILES['image']['error'] === UPLOAD_ERR_OK) {
-            $upload_dir = BASE_URL . '/assets/uploads/products/';
+            $upload_dir = __DIR__ . '/../../assets/uploads/products/';
             
             // Create directory if it doesn't exist
-            if (!file_exists($upload_dir)) {
+            if (!is_dir($upload_dir)) {
                 if (!mkdir($upload_dir, 0755, true)) {
                     throw new Exception("Failed to create upload directory");
                 }

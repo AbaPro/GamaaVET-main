@@ -68,7 +68,7 @@ $orders_result = $orders_stmt->get_result();
 
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2>
-        Customer: <?php echo htmlspecialchars($customer['name']); ?>
+        Customer: <?php echo e($customer['name']); ?>
         <span class="badge bg-<?php echo $customer['type'] == 1 ? 'info' : 'primary'; ?>">
             <?php echo ucfirst($customer['type_name']); ?>
         </span>
@@ -85,9 +85,9 @@ $orders_result = $orders_stmt->get_result();
                 <h5 class="card-title mb-0">Customer Information</h5>
             </div>
             <div class="card-body">
-                <p><strong>Email:</strong> <?php echo $customer['email'] ? htmlspecialchars($customer['email']) : '-'; ?></p>
-                <p><strong>Phone:</strong> <?php echo htmlspecialchars($customer['phone']); ?></p>
-                <p><strong>Tax Number:</strong> <?php echo $customer['tax_number'] ? htmlspecialchars($customer['tax_number']) : '-'; ?></p>
+                <p><strong>Email:</strong> <?php echo $customer['email'] ? e($customer['email']) : '-'; ?></p>
+                <p><strong>Phone:</strong> <?php echo e($customer['phone']); ?></p>
+                <p><strong>Tax Number:</strong> <?php echo $customer['tax_number'] ? e($customer['tax_number']) : '-'; ?></p>
                 <p><strong>Wallet Balance:</strong> <?php echo number_format($customer['wallet_balance'], 2); ?></p>
                 <p><strong>Created:</strong> <?php echo date('M d, Y H:i', strtotime($customer['created_at'])); ?></p>
                 <p><strong>Last Updated:</strong> <?php echo date('M d, Y H:i', strtotime($customer['updated_at'])); ?></p>
@@ -101,10 +101,10 @@ $orders_result = $orders_stmt->get_result();
             </div>
             <div class="card-body">
                 <?php if ($primary_contact): ?>
-                    <p><strong>Name:</strong> <?php echo htmlspecialchars($primary_contact['name']); ?></p>
-                    <p><strong>Position:</strong> <?php echo $primary_contact['position'] ? htmlspecialchars($primary_contact['position']) : '-'; ?></p>
-                    <p><strong>Email:</strong> <?php echo $primary_contact['email'] ? htmlspecialchars($primary_contact['email']) : '-'; ?></p>
-                    <p><strong>Phone:</strong> <?php echo htmlspecialchars($primary_contact['phone']); ?></p>
+                    <p><strong>Name:</strong> <?php echo e($primary_contact['name']); ?></p>
+                    <p><strong>Position:</strong> <?php echo $primary_contact['position'] ? e($primary_contact['position']) : '-'; ?></p>
+                    <p><strong>Email:</strong> <?php echo $primary_contact['email'] ? e($primary_contact['email']) : '-'; ?></p>
+                    <p><strong>Phone:</strong> <?php echo e($primary_contact['phone']); ?></p>
                 <?php else: ?>
                     <p class="text-muted">No primary contact found</p>
                 <?php endif; ?>
@@ -121,16 +121,16 @@ $orders_result = $orders_stmt->get_result();
             </div>
             <div class="card-body">
                 <?php if ($primary_address): ?>
-                    <p><?php echo htmlspecialchars($primary_address['address_line1']); ?></p>
+                    <p><?php echo e($primary_address['address_line1']); ?></p>
                     <?php if ($primary_address['address_line2']): ?>
-                        <p><?php echo htmlspecialchars($primary_address['address_line2']); ?></p>
+                        <p><?php echo e($primary_address['address_line2']); ?></p>
                     <?php endif; ?>
                     <p>
-                        <?php echo htmlspecialchars($primary_address['city']); ?>, 
-                        <?php echo htmlspecialchars($primary_address['state']); ?> 
-                        <?php echo htmlspecialchars($primary_address['postal_code']); ?>
+                        <?php echo e($primary_address['city']); ?>, 
+                        <?php echo e($primary_address['state']); ?> 
+                        <?php echo e($primary_address['postal_code']); ?>
                     </p>
-                    <p><?php echo htmlspecialchars($primary_address['country']); ?></p>
+                    <p><?php echo e($primary_address['country']); ?></p>
                     <?php if ($primary_address['is_default']): ?>
                         <span class="badge bg-success">Default Address</span>
                     <?php endif; ?>
@@ -168,7 +168,7 @@ $orders_result = $orders_stmt->get_result();
                             <?php if ($orders_result->num_rows > 0): ?>
                                 <?php while ($order = $orders_result->fetch_assoc()): ?>
                                     <tr>
-                                        <td><?php echo htmlspecialchars($order['internal_id']); ?></td>
+                                        <td><?php echo e($order['internal_id']); ?></td>
                                         <td><?php echo date('M d, Y', strtotime($order['order_date'])); ?></td>
                                         <td><?php echo number_format($order['total_amount'], 2); ?></td>
                                         <td><?php echo number_format($order['paid_amount'], 2); ?></td>
