@@ -187,9 +187,11 @@ function getCategoryById($id) {
 
 function getInventoryQuantitiesForProduct($product_id) {
     global $conn;
-    $stmt = $conn->prepare("SELECT ip.quantity, i.name as inventory_name, i.location 
+    $stmt = $conn->prepare("SELECT ip.quantity, i.name as inventory_name, 
+                           CONCAT(l.name, ' - ', l.address) as location 
                            FROM inventory_products ip 
                            JOIN inventories i ON ip.inventory_id = i.id 
+                           LEFT JOIN locations l ON i.location_id = l.id
                            WHERE ip.product_id = ?");
     $stmt->bind_param("i", $product_id);
     $stmt->execute();

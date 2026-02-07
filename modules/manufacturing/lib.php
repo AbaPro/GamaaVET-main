@@ -112,7 +112,7 @@ function manufacturing_convert_to_relative_path($fullPath) {
     return $fullPath;
 }
 
-function manufacturing_build_step_document_html($order, $orderStep, $formula, $components, $notes, $statusLabel) {
+function manufacturing_build_step_document_html($order, $orderStep, $formula, $components, $notes, $statusLabel, $conn = null) {
     $orderNumber = htmlspecialchars($order['order_number'] ?? 'UNKNOWN');
     $customerName = htmlspecialchars($order['customer_name'] ?? 'Unknown provider');
     $formulaName = htmlspecialchars($formula['name'] ?? 'Custom formula');
@@ -120,9 +120,10 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
     $dueDate = $order['due_date'] ? htmlspecialchars($order['due_date']) : 'TBD';
     $notes = nl2br(htmlspecialchars($notes ?: $orderStep['notes'] ?? 'No notes yet.'));
     $stepLabel = htmlspecialchars($statusLabel);
+    $stepKey = $orderStep['step_key'];
 
     // Updated CSS with better Arabic font support
-    $html = '<style>body{font-family:"aealarabiya","Arial Unicode MS",Arial,sans-serif;font-size:12px;direction:ltr;}table{width:100%;border-collapse:collapse;margin-bottom:12px;}td,th{border:1px solid #ddd;padding:8px;text-align:left;}th{background:#f4f4f4;font-weight:600;}</style>';
+    $html = '<style>body{font-family:"aealarabiya","Arial Unicode MS",Arial,sans-serif;font-size:12px;direction:ltr;}table{width:100%;border-collapse:collapse;margin-bottom:12px;}td,th{border:1px solid #ddd;padding:8px;text-align:left;}th{background:#f4f4f4;font-weight:600;}.status-approved{background:#d4edda;color:#155724;}.status-rejected{background:#f8d7da;color:#721c24;}.status-pending{background:#fff3cd;color:#856404;}</style>';
     $html .= "<h3>Manufacturing Handoff / {$stepLabel}</h3>";
     $html .= '<table><tbody>';
     $html .= "<tr><th>Order</th><td>{$orderNumber}</td><th>Provider</th><td>{$customerName}</td></tr>";
@@ -133,6 +134,383 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
 
     $html .= '<p><strong>Step Notes / Preparation Log</strong><br>' . $notes . '</p>';
     $html .= '<p><strong>Step Handover Reminder</strong><br>' . htmlspecialchars(manufacturing_get_step_handover_note($orderStep['step_key'])) . '</p>';
+
+    // Add Receipt Quality Check data for receipt step
+    if ($stepKey === 'receipt' && $conn) {
+        $receiptStmt = $conn->prepare("
+            SELECT msc.component_name, msc.required_quantity, msc.unit, msc.receipt_status, msc.receipt_notes, p.barcode
+            FROM manufacturing_sourcing_components msc
+            LEFT JOIN products p ON p.id = msc.product_id
+            WHERE msc.manufacturing_order_id = ?
+            ORDER BY msc.formula_component_index
+        ");
+        $receiptStmt->bind_param("i", $order['id']);
+        $receiptStmt->execute();
+        $receiptResult = $receiptStmt->get_result();
+        
+        if ($receiptResult->num_rows > 0) {
+            $html .= '<h4>Quality Check Results</h4>';
+            $html .= '<table><thead><tr><th>Material</th><th>Barcode</th><th>Expected Qty</th><th>Unit</th><th>QA Status</th><th>QA Notes</th></tr></thead><tbody>';
+            while ($rc = $receiptResult->fetch_assoc()) {
+                $status = $rc['receipt_status'] ?? 'pending';
+                $statusClass = '';
+                $statusText = ucfirst($status);
+                if ($status === 'approved') {
+                    $statusClass = 'class="status-approved"';
+                    $statusText = '✓ Approved';
+                } elseif ($status === 'rejected') {
+                    $statusClass = 'class="status-rejected"';
+                    $statusText = '✗ Rejected';
+                } else {
+                    $statusClass = 'class="status-pending"';
+                    $statusText = '⏳ Pending';
+                }
+                
+                $html .= '<tr>';
+                $html .= '<td>' . htmlspecialchars($rc['component_name']) . '</td>';
+                $html .= '<td>' . htmlspecialchars($rc['barcode'] ?? '-') . '</td>';
+                $html .= '<td>' . htmlspecialchars($rc['required_quantity']) . '</td>';
+                $html .= '<td>' . htmlspecialchars($rc['unit']) . '</td>';
+                $html .= '<td ' . $statusClass . '>' . $statusText . '</td>';
+                $html .= '<td>' . htmlspecialchars($rc['receipt_notes'] ?? '-') . '</td>';
+                $html .= '</tr>';
+            }
+            $html .= '</tbody></table>';
+        }
+        $receiptStmt->close();
+    }
+
+    // Add Preparation Measurements for preparation step
+    if ($stepKey === 'preparation' && $conn) {
+        $prepStmt = $conn->prepare("
+            SELECT field_name, field_value
+            FROM manufacturing_preparation_measurements
+            WHERE manufacturing_order_id = ?
+            ORDER BY field_order
+        ");
+        $prepStmt->bind_param("i", $order['id']);
+        $prepStmt->execute();
+        $prepResult = $prepStmt->get_result();
+        
+        if ($prepResult->num_rows > 0) {
+            $html .= '<h4>Mixing Process Measurements</h4>';
+            $html .= '<table><thead><tr><th>Measurement</th><th>Value</th></tr></thead><tbody>';
+            while ($pm = $prepResult->fetch_assoc()) {
+                $html .= '<tr>';
+                $html .= '<td><strong>' . htmlspecialchars($pm['field_name']) . '</strong></td>';
+                $html .= '<td>' . htmlspecialchars($pm['field_value']) . '</td>';
+                $html .= '</tr>';
+            }
+            $html .= '</tbody></table>';
+        }
+        $prepStmt->close();
+    }
+
+    // Add Quality Validation Checklist for quality step
+    if ($stepKey === 'quality' && $conn) {
+        $qualityStmt = $conn->prepare("
+            SELECT section_name, item_text, status, notes
+            FROM manufacturing_quality_checklist
+            WHERE manufacturing_order_id = ?
+            ORDER BY item_order
+        ");
+        $qualityStmt->bind_param("i", $order['id']);
+        $qualityStmt->execute();
+        $qualityResult = $qualityStmt->get_result();
+        
+        if ($qualityResult->num_rows > 0) {
+            $html .= '<div style="direction:rtl;text-align:right;">';
+            $html .= '<h4 style="direction:rtl;text-align:right;">Quality Validation Checklist</h4>';
+            
+            // Group by section
+            $currentSection = '';
+            $html .= '<table style="direction:rtl;"><thead><tr><th style="text-align:right;">البند</th><th style="text-align:center;">Status</th><th style="text-align:right;">Notes</th></tr></thead><tbody>';
+            
+            while ($qi = $qualityResult->fetch_assoc()) {
+                // Add section header if changed
+                if ($currentSection !== $qi['section_name']) {
+                    $currentSection = $qi['section_name'];
+                    $html .= '<tr style="background:#e9ecef;"><td colspan="3" style="text-align:right;"><strong>' . htmlspecialchars($currentSection) . '</strong></td></tr>';
+                }
+                
+                $status = $qi['status'] ?? 'pending';
+                $statusClass = '';
+                $statusText = ucfirst($status);
+                if ($status === 'approved') {
+                    $statusClass = 'class="status-approved"';
+                    $statusText = 'YES - Approved';
+                } elseif ($status === 'rejected') {
+                    $statusClass = 'class="status-rejected"';
+                    $statusText = 'NO - Rejected';
+                } else {
+                    $statusClass = 'class="status-pending"';
+                    $statusText = 'Pending';
+                }
+                
+                $html .= '<tr>';
+                $html .= '<td style="text-align:right;">' . htmlspecialchars($qi['item_text']) . '</td>';
+                $html .= '<td style="text-align:center;" ' . $statusClass . '>' . $statusText . '</td>';
+                $html .= '<td style="text-align:right;">' . htmlspecialchars($qi['notes'] ?? '-') . '</td>';
+                $html .= '</tr>';
+            }
+            $html .= '</tbody></table>';
+            $html .= '</div>';
+        }
+        $qualityStmt->close();
+    }
+
+    // Add Packaging & Labeling Checklist for packaging step
+    if ($stepKey === 'packaging' && $conn) {
+        $packagingStmt = $conn->prepare("
+            SELECT section_name, item_key, item_text, item_type, item_value
+            FROM manufacturing_packaging_checklist
+            WHERE manufacturing_order_id = ?
+            ORDER BY item_order
+        ");
+        $packagingStmt->bind_param("i", $order['id']);
+        $packagingStmt->execute();
+        $packagingResult = $packagingStmt->get_result();
+        
+        if ($packagingResult->num_rows > 0) {
+            $html .= '<div style="direction:rtl;text-align:right;">';
+            $html .= '<h4 style="direction:rtl;text-align:right;">Packaging & Labeling Tracking</h4>';
+            
+            // Group by section
+            $packagingData = [
+                'before' => [],
+                'during' => [],
+                'after' => []
+            ];
+            while ($pi = $packagingResult->fetch_assoc()) {
+                $packagingData[$pi['section_name']][] = $pi;
+            }
+            
+            // Before Operation (Line Clearance)
+            if (!empty($packagingData['before'])) {
+                $html .= '<h5 style="direction:rtl;text-align:right;margin-top:15px;">قبل التشغيل (Line Clearance)</h5>';
+                $html .= '<table style="direction:rtl;"><tbody>';
+                foreach ($packagingData['before'] as $item) {
+                    $checked = ($item['item_value'] === 'checked') ? '<strong>YES</strong>' : 'NO';
+                    $html .= '<tr>';
+                    $html .= '<td style="text-align:right;width:70%;">' . htmlspecialchars($item['item_text']) . '</td>';
+                    $html .= '<td style="text-align:center;width:30%;">' . $checked . '</td>';
+                    $html .= '</tr>';
+                }
+                $html .= '</tbody></table>';
+            }
+            
+            // During Packaging
+            if (!empty($packagingData['during'])) {
+                $html .= '<h5 style="direction:rtl;text-align:right;margin-top:15px;">أثناء التعبئة</h5>';
+                $html .= '<table style="direction:rtl;"><tbody>';
+                foreach ($packagingData['during'] as $item) {
+                    $checked = ($item['item_value'] === 'checked') ? '<strong>YES</strong>' : 'NO';
+                    $html .= '<tr>';
+                    $html .= '<td style="text-align:right;width:70%;">' . htmlspecialchars($item['item_text']) . '</td>';
+                    $html .= '<td style="text-align:center;width:30%;">' . $checked . '</td>';
+                    $html .= '</tr>';
+                }
+                $html .= '</tbody></table>';
+            }
+            
+            // After Packaging
+            if (!empty($packagingData['after'])) {
+                $html .= '<h5 style="direction:rtl;text-align:right;margin-top:15px;">بعد التعبئة</h5>';
+                $html .= '<table style="direction:rtl;"><tbody>';
+                
+                // Final counts
+                $finalProductCount = '';
+                $cartonCount = '';
+                $unitsPerCarton = '';
+                $printsIssued = '';
+                $printsUsed = '';
+                $printsReturned = '';
+                $printsReturnedToStock = '';
+                $breakageRecorded = '';
+                $breakageCount = '';
+                $breakageNotes = '';
+                
+                foreach ($packagingData['after'] as $item) {
+                    if ($item['item_key'] === 'final_product_count') $finalProductCount = $item['item_value'];
+                    if ($item['item_key'] === 'carton_count') $cartonCount = $item['item_value'];
+                    if ($item['item_key'] === 'units_per_carton') $unitsPerCarton = $item['item_value'];
+                    if ($item['item_key'] === 'prints_issued') $printsIssued = $item['item_value'];
+                    if ($item['item_key'] === 'prints_used') $printsUsed = $item['item_value'];
+                    if ($item['item_key'] === 'prints_returned') $printsReturned = $item['item_value'];
+                    if ($item['item_key'] === 'prints_returned_to_stock') $printsReturnedToStock = ($item['item_value'] === 'checked') ? '<strong>YES</strong>' : 'NO';
+                    if ($item['item_key'] === 'breakage_recorded') $breakageRecorded = ($item['item_value'] === 'checked') ? '<strong>YES</strong>' : 'NO';
+                    if ($item['item_key'] === 'breakage_count') $breakageCount = $item['item_value'];
+                    if ($item['item_key'] === 'breakage_notes') $breakageNotes = $item['item_value'];
+                }
+                
+                $html .= '<tr><td style="text-align:right;"><strong>عدد المنتج النهائي:</strong></td><td>' . htmlspecialchars($finalProductCount ?: '_____') . '</td></tr>';
+                $html .= '<tr><td style="text-align:right;"><strong>عدد الكراتين:</strong></td><td>' . htmlspecialchars($cartonCount ?: '_____') . '</td></tr>';
+                $html .= '<tr><td style="text-align:right;"><strong>وحدات/كرتونة:</strong></td><td>' . htmlspecialchars($unitsPerCarton ?: '_____') . '</td></tr>';
+                $html .= '<tr><td style="text-align:right;"><strong>مطابقة المطبوعات:</strong></td><td>مصروف ' . htmlspecialchars($printsIssued ?: '___') . ' / مستخدم ' . htmlspecialchars($printsUsed ?: '___') . ' / راجع ' . htmlspecialchars($printsReturned ?: '___') . '</td></tr>';
+                $html .= '<tr><td style="text-align:right;"><strong>إعادة المطبوعات للمخزن:</strong></td><td>' . $printsReturnedToStock . '</td></tr>';
+                $html .= '<tr><td style="text-align:right;"><strong>أي كسر تم تسجيله:</strong></td><td>' . $breakageRecorded . ' العدد: ' . htmlspecialchars($breakageCount ?: '___') . '</td></tr>';
+                $html .= '<tr><td style="text-align:right;"><strong>ملاحظات الكسر:</strong></td><td>' . htmlspecialchars($breakageNotes ?: '-') . '</td></tr>';
+                
+                $html .= '</tbody></table>';
+                
+                // Material Tracking Table
+                $html .= '<h5 style="direction:rtl;text-align:right;margin-top:15px;">تتبع المواد</h5>';
+                $html .= '<table style="direction:rtl;"><thead><tr style="background:#e9ecef;">';
+                $html .= '<th style="text-align:right;">المادة</th>';
+                $html .= '<th style="text-align:center;">مصروف</th>';
+                $html .= '<th style="text-align:center;">مستخدم</th>';
+                $html .= '<th style="text-align:center;">راجع</th>';
+                $html .= '<th style="text-align:center;">الهالك</th>';
+                $html .= '</tr></thead><tbody>';
+                
+                $materials = [
+                    'boxes' => 'العلب',
+                    'stickers' => 'الاستيكر',
+                    'leaflets' => 'نشره'
+                ];
+                
+                foreach ($materials as $matKey => $matLabel) {
+                    $issued = '';
+                    $used = '';
+                    $returned = '';
+                    $waste = '';
+                    
+                    foreach ($packagingData['after'] as $item) {
+                        if ($item['item_key'] === $matKey . '_issued') $issued = $item['item_value'];
+                        if ($item['item_key'] === $matKey . '_used') $used = $item['item_value'];
+                        if ($item['item_key'] === $matKey . '_returned') $returned = $item['item_value'];
+                        if ($item['item_key'] === $matKey . '_waste') $waste = $item['item_value'];
+                    }
+                    
+                    $html .= '<tr>';
+                    $html .= '<td style="text-align:right;"><strong>' . $matLabel . '</strong></td>';
+                    $html .= '<td style="text-align:center;">' . htmlspecialchars($issued ?: '0') . '</td>';
+                    $html .= '<td style="text-align:center;">' . htmlspecialchars($used ?: '0') . '</td>';
+                    $html .= '<td style="text-align:center;">' . htmlspecialchars($returned ?: '0') . '</td>';
+                    $html .= '<td style="text-align:center;">' . htmlspecialchars($waste ?: '0') . '</td>';
+                    $html .= '</tr>';
+                }
+                
+                $html .= '</tbody></table>';
+            }
+            
+            $html .= '</div>';
+        }
+        $packagingStmt->close();
+    }
+
+    // Dispatch Prep data
+    if ($stepKey === 'dispatch') {
+        $orderId = $order['id'];
+        $dispatchStmt = $conn->prepare("
+            SELECT section_name, item_key, item_text, item_type, item_value
+            FROM manufacturing_dispatch_checklist
+            WHERE manufacturing_order_id = ?
+            ORDER BY item_order
+        ");
+        $dispatchStmt->bind_param("i", $orderId);
+        $dispatchStmt->execute();
+        $dispatchResult = $dispatchStmt->get_result();
+        $dispatchData = ['details' => [], 'before_loading' => []];
+        while ($row = $dispatchResult->fetch_assoc()) {
+            $dispatchData[$row['section_name']][] = $row;
+        }
+        
+        if (!empty($dispatchData['details']) || !empty($dispatchData['before_loading'])) {
+            $html .= '<div style="direction:rtl; text-align:right; margin-top:20px;">';
+            $html .= '<h4 style="color:#0d6efd;">تفاصيل الشحن والتحميل (Dispatch Prep)</h4>';
+            
+            // Dispatch Details
+            if (!empty($dispatchData['details'])) {
+                $html .= '<h5 style="margin-top:15px;">تفاصيل الشحن (Dispatch Details)</h5>';
+                $html .= '<table border="1" cellpadding="5" style="width:100%; border-collapse:collapse; margin-bottom:15px;">';
+                $html .= '<tbody>';
+                foreach ($dispatchData['details'] as $item) {
+                    $val = htmlspecialchars($item['item_value'] ?: '______');
+                    $html .= '<tr>';
+                    $html .= '<td style="width:50%; text-align:right;"><strong>' . htmlspecialchars($item['item_text']) . '</strong></td>';
+                    $html .= '<td style="width:50%; text-align:center;">' . $val . '</td>';
+                    $html .= '</tr>';
+                }
+                $html .= '</tbody></table>';
+            }
+            
+            // Before Loading
+            if (!empty($dispatchData['before_loading'])) {
+                $html .= '<h5 style="margin-top:15px;">قبل التحميل (Before Loading)</h5>';
+                $html .= '<table border="1" cellpadding="5" style="width:100%; border-collapse:collapse; margin-bottom:15px;">';
+                $html .= '<tbody>';
+                foreach ($dispatchData['before_loading'] as $item) {
+                    $checked = ($item['item_value'] === 'checked') ? '<strong>YES</strong>' : 'NO';
+                    $html .= '<tr>';
+                    $html .= '<td style="width:80%; text-align:right;">' . htmlspecialchars($item['item_text']) . '</td>';
+                    $html .= '<td style="width:20%; text-align:center;">' . $checked . '</td>';
+                    $html .= '</tr>';
+                }
+                $html .= '</tbody></table>';
+            }
+            
+            $html .= '</div>';
+        }
+        $dispatchStmt->close();
+    }
+
+    // Delivery data
+    if ($stepKey === 'delivering') {
+        $orderId = $order['id'];
+        $deliveryStmt = $conn->prepare("
+            SELECT recipient_name, recipient_phone, delivery_datetime, customer_notes, photo_path
+            FROM manufacturing_delivery_info
+            WHERE manufacturing_order_id = ?
+        ");
+        $deliveryStmt->bind_param("i", $orderId);
+        $deliveryStmt->execute();
+        $deliveryResult = $deliveryStmt->get_result();
+        $deliveryInfo = $deliveryResult->fetch_assoc();
+        
+        if ($deliveryInfo) {
+            $html .= '<div style="direction:rtl; text-align:right; margin-top:20px;">';
+            $html .= '<h4 style="color:#0d6efd;">التسليم (Delivery Information)</h4>';
+            
+            $html .= '<table border="1" cellpadding="5" style="width:100%; border-collapse:collapse; margin-bottom:15px;">';
+            $html .= '<tbody>';
+            
+            $recipientName = htmlspecialchars($deliveryInfo['recipient_name'] ?: '__________');
+            $html .= '<tr>';
+            $html .= '<td style="width:40%; text-align:right;"><strong>اسم المستلم (Recipient Name)</strong></td>';
+            $html .= '<td style="width:60%; text-align:center;">' . $recipientName . '</td>';
+            $html .= '</tr>';
+            
+            $recipientPhone = htmlspecialchars($deliveryInfo['recipient_phone'] ?: '__________');
+            $html .= '<tr>';
+            $html .= '<td style="text-align:right;"><strong>رقم تليفون (Phone Number)</strong></td>';
+            $html .= '<td style="text-align:center;">' . $recipientPhone . '</td>';
+            $html .= '</tr>';
+            
+            $deliveryDatetime = $deliveryInfo['delivery_datetime'] ? htmlspecialchars($deliveryInfo['delivery_datetime']) : '__________';
+            $html .= '<tr>';
+            $html .= '<td style="text-align:right;"><strong>تاريخ ووقت التسليم (Delivery Date & Time)</strong></td>';
+            $html .= '<td style="text-align:center;">' . $deliveryDatetime . '</td>';
+            $html .= '</tr>';
+            
+            $customerNotes = htmlspecialchars($deliveryInfo['customer_notes'] ?: 'لا توجد ملاحظات');
+            $html .= '<tr>';
+            $html .= '<td style="text-align:right;"><strong>ملاحظات العميل (Customer Notes)</strong></td>';
+            $html .= '<td style="text-align:right; padding:10px;">' . nl2br($customerNotes) . '</td>';
+            $html .= '</tr>';
+            
+            if (!empty($deliveryInfo['photo_path'])) {
+                $html .= '<tr>';
+                $html .= '<td style="text-align:right;"><strong>صورة التسليم (Delivery Photo)</strong></td>';
+                $html .= '<td style="text-align:center;">Photo attached: ' . htmlspecialchars(basename($deliveryInfo['photo_path'])) . '</td>';
+                $html .= '</tr>';
+            }
+            
+            $html .= '</tbody></table>';
+            $html .= '</div>';
+        }
+        $deliveryStmt->close();
+    }
 
     $html .= '<table><thead><tr><th>Component</th><th>Quantity / Ratio</th><th>Unit</th><th>Notes</th></tr></thead><tbody>';
     if (is_array($components) && count($components) > 0) {
@@ -154,7 +532,7 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
 function manufacturing_generate_step_documents($conn, $order, $orderStep, $formula, $components, $notes, $generatedBy = null) {
     $stepKey = $orderStep['step_key'];
     $statusLabel = manufacturing_get_step_label($stepKey);
-    $documentHtml = manufacturing_build_step_document_html($order, $orderStep, $formula, $components, $notes, $statusLabel);
+    $documentHtml = manufacturing_build_step_document_html($order, $orderStep, $formula, $components, $notes, $statusLabel, $conn);
 
     // Excel-like handoff
     $excelPayload = manufacturing_create_excel_document($order, $stepKey, $documentHtml);

@@ -124,16 +124,6 @@ if ($viewMode === 'statement') {
 // Add a page for the detailed invoice
 $pdf->AddPage();
 
-// Company information
-$pdf->SetFont($primaryFont, 'B', 12);
-$pdf->Cell(0, 0, 'Your Company Name', 0, 1);
-$pdf->SetFont($primaryFont, '', 10);
-$pdf->Cell(0, 5, '123 Business Street', 0, 1);
-$pdf->Cell(0, 5, 'City, State, ZIP', 0, 1);
-$pdf->Cell(0, 5, 'Phone: (123) 456-7890', 0, 1);
-$pdf->Cell(0, 5, 'Email: info@yourcompany.com', 0, 1);
-$pdf->Cell(0, 5, 'Tax ID: 123456789', 0, 1);
-
 // Invoice title
 $pdf->SetFont($primaryFont, 'B', 16);
 $pdf->Ln(10);

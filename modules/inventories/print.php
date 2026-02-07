@@ -15,7 +15,7 @@ if (!isset($_GET['id']) || !is_numeric($_GET['id'])) {
 $inventory_id = sanitize($_GET['id']);
 
 // Get inventory info
-$inventory_sql = "SELECT * FROM inventories WHERE id = ?";
+$inventory_sql = "SELECT i.*, l.name AS location_name, l.address AS location_address FROM inventories i LEFT JOIN locations l ON l.id = i.location_id WHERE i.id = ?";
 $inventory_stmt = $conn->prepare($inventory_sql);
 $inventory_stmt->bind_param("i", $inventory_id);
 $inventory_stmt->execute();
@@ -69,7 +69,7 @@ header('Content-Type: text/html; charset=utf-8');
     <div class="header">
         <h1>Inventory Report</h1>
         <h2><?php echo htmlspecialchars($inventory['name']); ?></h2>
-        <p>Location: <?php echo htmlspecialchars($inventory['location']); ?></p>
+        <p>Location: <?php echo $inventory['location_name'] ? htmlspecialchars($inventory['location_name']) . ' - ' . htmlspecialchars($inventory['location_address']) : 'Not set'; ?></p>
         <p>Printed on: <?php echo date('M d, Y H:i'); ?></p>
     </div>
     

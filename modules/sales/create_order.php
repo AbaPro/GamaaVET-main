@@ -1,6 +1,5 @@
 <?php
 require_once '../../includes/auth.php';
-require_once '../../includes/header.php';
 require_once '../../config/database.php';
 
 // Permission check
@@ -163,6 +162,8 @@ $products = $pdo->query("
     WHERE p.type = 'final'
     ORDER BY p.name
 ")->fetchAll(PDO::FETCH_ASSOC);
+
+require_once '../../includes/header.php';
 ?>
 
 <div class="container mt-4">

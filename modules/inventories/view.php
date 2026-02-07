@@ -169,13 +169,38 @@ $products_result = $products_stmt->get_result();
                 </div>
                 <div class="modal-body">
                     <div class="mb-3">
+                        <label for="filter_type" class="form-label">Product Type</label>
+                        <select class="form-select" id="filter_type">
+                            <option value="">All types</option>
+                            <option value="primary">Primary</option>
+                            <option value="final">Final</option>
+                            <option value="material">Material</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="filter_customer" class="form-label">Customer</label>
+                        <select class="form-select" id="filter_customer">
+                            <option value="">All customers</option>
+                            <?php
+                            $customers_result = $conn->query("SELECT id, name FROM customers ORDER BY name");
+                            if ($customers_result) {
+                                while ($customer = $customers_result->fetch_assoc()) {
+                                    echo '<option value="' . (int)$customer['id'] . '">' . htmlspecialchars($customer['name']) . '</option>';
+                                }
+                            }
+                            ?>
+                        </select>
+                    </div>
+                    <div class="mb-3">
                         <label for="product_id" class="form-label">Product</label>
                         <select class="form-select" id="product_id" name="product_id" required>
                             <option value="">-- Select Product --</option>
                             <?php
-                            $all_products = $conn->query("SELECT id, name, sku FROM products ORDER BY name");
+                            $all_products = $conn->query("SELECT id, name, sku, type, customer_id FROM products ORDER BY name");
                             while ($prod = $all_products->fetch_assoc()) {
-                                echo '<option value="' . $prod['id'] . '">' . htmlspecialchars($prod['name']) . ' (' . htmlspecialchars($prod['sku']) . ')</option>';
+                                $type = isset($prod['type']) ? htmlspecialchars($prod['type']) : '';
+                                $customer_id = isset($prod['customer_id']) ? (int)$prod['customer_id'] : 0;
+                                echo '<option value="' . $prod['id'] . '" data-type="' . $type . '" data-customer-id="' . $customer_id . '">' . htmlspecialchars($prod['name']) . ' (' . htmlspecialchars($prod['sku']) . ')</option>';
                             }
                             ?>
                         </select>
@@ -228,6 +253,42 @@ $products_result = $products_stmt->get_result();
 
 <script>
 $(document).ready(function() {
+    var allProductOptions = $('#product_id option').map(function() {
+        return {
+            value: $(this).val(),
+            text: $(this).text(),
+            type: $(this).data('type') || '',
+            customerId: $(this).data('customer-id') ? String($(this).data('customer-id')) : ''
+        };
+    }).get();
+
+    function applyProductFilters() {
+        var selectedType = $('#filter_type').val();
+        var selectedCustomer = $('#filter_customer').val();
+        var $productSelect = $('#product_id');
+
+        $productSelect.empty();
+        $productSelect.append(new Option('-- Select Product --', ''));
+
+        allProductOptions.forEach(function(option) {
+            if (!option.value) {
+                return;
+            }
+
+            var typeMatch = selectedType === '' || option.type === selectedType;
+            var customerMatch = selectedCustomer === '' || option.customerId === selectedCustomer;
+
+            if (typeMatch && customerMatch) {
+                var newOption = new Option(option.text, option.value);
+                $(newOption).attr('data-type', option.type);
+                $(newOption).attr('data-customer-id', option.customerId);
+                $productSelect.append(newOption);
+            }
+        });
+
+        $productSelect.val('');
+    }
+
     // Handle edit button click
     $('.edit-product').click(function() {
         var id = $(this).data('id');
@@ -239,6 +300,14 @@ $(document).ready(function() {
         $('#edit_quantity').val(quantity);
         
         $('#editProductModal').modal('show');
+    });
+
+    $('#filter_type, #filter_customer').on('change', applyProductFilters);
+
+    $('#addProductModal').on('show.bs.modal', function() {
+        $('#filter_type').val('');
+        $('#filter_customer').val('');
+        applyProductFilters();
     });
 });
 </script>
