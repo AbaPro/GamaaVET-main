@@ -247,11 +247,11 @@
 
                     <?php endif; ?>
                     <?php if (isLoggedIn()): ?>
-                        <!-- <li class="nav-item">
+                        <li class="nav-item">
                         <a class="nav-link" href="<?= BASE_URL ?>modules/analysis/">
                             <i class="fas fa-chart-line me-1"></i> Analysis
                         </a>
-                    </li> -->
+                    </li>
                     <?php endif; ?>
                     <!-- Tickets -->
                         <?php if (hasPermission('tickets.manage') || hasPermission('tickets.create') || hasPermission('tickets.view')): ?>
