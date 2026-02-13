@@ -147,7 +147,7 @@ $orders_result = $orders_stmt->get_result();
         <div class="card">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <h5 class="card-title mb-0">Recent Purchase Orders</h5>
-                <a href="../purchases/orders/create.php?vendor_id=<?php echo $vendor_id; ?>" class="btn btn-sm btn-primary">
+                <a href="../purchases/create_po.php?vendor_id=<?php echo $vendor_id; ?>" class="btn btn-sm btn-primary">
                     <i class="fas fa-plus"></i> New PO
                 </a>
             </div>

@@ -10,6 +10,8 @@ if (!hasPermission('customers.view')) {
 $page_title = 'Customers Management';
 require_once '../../includes/header.php';
 
+$login_region = $_SESSION['login_region'] ?? 'factory';
+
 // Handle delete request
 if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
     $id = sanitize($_GET['delete']);
@@ -82,12 +84,28 @@ if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
 }
 
 // Fetch all customers with their types and factories
-$sql = "SELECT c.*, ct.name AS type_name, f.name AS factory_name 
-        FROM customers c 
-        JOIN customer_types ct ON c.type = ct.id 
-        LEFT JOIN factories f ON c.factory_id = f.id
-        ORDER BY c.name";
-$result = $conn->query($sql);
+if ($login_region === 'factory') {
+    $sql = "SELECT c.*, ct.name AS type_name, f.name AS factory_name 
+            FROM customers c 
+            JOIN customer_types ct ON c.type = ct.id 
+            LEFT JOIN factories f ON c.factory_id = f.id
+            WHERE c.direct_sale IS NULL
+            ORDER BY c.name";
+} else {
+    $sql = "SELECT c.*, ct.name AS type_name, f.name AS factory_name 
+            FROM customers c 
+            JOIN customer_types ct ON c.type = ct.id 
+            LEFT JOIN factories f ON c.factory_id = f.id
+            WHERE c.direct_sale = ?
+            ORDER BY c.name";
+}
+
+$stmt = $conn->prepare($sql);
+if ($login_region !== 'factory') {
+    $stmt->bind_param("s", $login_region);
+}
+$stmt->execute();
+$result = $stmt->get_result();
 
 $factories_data = [];
 $factories_result = $conn->query("SELECT id, name FROM factories ORDER BY name");
@@ -128,6 +146,9 @@ if ($factories_result) {
                         <th>Factory</th>
                         <th>Email</th>
                         <th>Phone</th>
+                        <?php if ($login_region !== 'factory'): ?>
+                            <th>Region</th>
+                        <?php endif; ?>
                         <th>Wallet Balance</th>
                         <th>Actions</th>
                     </tr>
@@ -146,6 +167,9 @@ if ($factories_result) {
                                 <td><?php echo !empty($row['factory_name']) ? e($row['factory_name']) : '<span class="text-muted">N/A</span>'; ?></td>
                                 <td><?php echo e($row['email']); ?></td>
                                 <td><?php echo e($row['phone']); ?></td>
+                                <?php if ($login_region !== 'factory'): ?>
+                                    <td><?php echo e($row['region'] ?: 'N/A'); ?></td>
+                                <?php endif; ?>
                                 <td><?php echo number_format($row['wallet_balance'], 2); ?></td>
                                 <td>
                                     <div class="dropdown">
@@ -252,6 +276,30 @@ if ($factories_result) {
                                 <div class="col-md-6 mb-3">
                                     <label for="phone" class="form-label">Phone*</label>
                                     <input type="text" class="form-control" id="phone" name="phone" required>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <?php if ($login_region !== 'factory'): ?>
+                                <div class="col-md-6 mb-3">
+                                    <label for="region" class="form-label">Region</label>
+                                    <select class="form-select" id="region" name="region">
+                                        <option value="">-- None --</option>
+                                        <?php
+                                        $regions_query = $conn->query("SELECT name FROM regions ORDER BY name ASC");
+                                        while ($r = $regions_query->fetch_assoc()) {
+                                            echo '<option value="' . htmlspecialchars($r['name']) . '">' . htmlspecialchars($r['name']) . '</option>';
+                                        }
+                                        ?>
+                                    </select>
+                                </div>
+                                <?php endif; ?>
+                                <div class="col-md-6 mb-3">
+                                    <label for="direct_sale" class="form-label">Direct Sale</label>
+                                    <select class="form-select" id="direct_sale" name="direct_sale">
+                                        <option value="">-- None (Factory) --</option>
+                                        <option value="curva" <?= ($login_region === 'curva') ? 'selected' : '' ?>>Curva</option>
+                                        <option value="primer" <?= ($login_region === 'primer') ? 'selected' : '' ?>>Primer</option>
+                                    </select>
                                 </div>
                             </div>
                             <div class="row">
@@ -407,6 +455,30 @@ if ($factories_result) {
                                 </div>
                             </div>
                             <div class="row">
+                                <?php if ($login_region !== 'factory'): ?>
+                                <div class="col-md-6 mb-3">
+                                    <label for="edit_region" class="form-label">Region</label>
+                                    <select class="form-select" id="edit_region" name="region">
+                                        <option value="">-- None --</option>
+                                        <?php
+                                        $regions_query = $conn->query("SELECT name FROM regions ORDER BY name ASC");
+                                        while ($r = $regions_query->fetch_assoc()) {
+                                            echo '<option value="' . htmlspecialchars($r['name']) . '">' . htmlspecialchars($r['name']) . '</option>';
+                                        }
+                                        ?>
+                                    </select>
+                                </div>
+                                <?php endif; ?>
+                                <div class="col-md-6 mb-3">
+                                    <label for="edit_direct_sale" class="form-label">Direct Sale</label>
+                                    <select class="form-select" id="edit_direct_sale" name="direct_sale">
+                                        <option value="">-- None (Factory) --</option>
+                                        <option value="curva">Curva</option>
+                                        <option value="primer">Primer</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="row">
                                 <div class="col-md-6 mb-3">
                                     <label for="edit_tax_number" class="form-label">Tax Number</label>
                                     <input type="text" class="form-control" id="edit_tax_number" name="tax_number">
@@ -465,6 +537,8 @@ $(document).ready(function() {
                     $('#edit_whatsapp_phone').val(response.customer.whatsapp_phone);
                     $('#edit_tax_number').val(response.customer.tax_number);
                     $('#edit_wallet_balance').val(response.customer.wallet_balance);
+                    $('#edit_region').val(response.customer.region);
+                    $('#edit_direct_sale').val(response.customer.direct_sale);
                     
                     $('#editCustomerModal').modal('show');
                 } else {

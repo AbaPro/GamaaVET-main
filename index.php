@@ -53,6 +53,14 @@ require_once ROOT_PATH . '/includes/header.php';
                             <label for="password" class="form-label">Password</label>
                             <input type="password" class="form-control" id="password" name="password" required>
                         </div>
+                        <div class="mb-3">
+                            <label for="region" class="form-label">Login To</label>
+                            <select class="form-select" id="region" name="region">
+                                <option value="factory">Factory</option>
+                                <option value="curva">Direct Sale - Curva</option>
+                                <option value="primer">Direct Sale - Primer</option>
+                            </select>
+                        </div>
                         <div class="d-grid">
                             <button type="submit" name="login" class="btn btn-primary">Login</button>
                         </div>

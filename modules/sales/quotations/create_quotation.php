@@ -267,9 +267,35 @@ $(document).ready(function() {
         } else {
             $("#contact_id").prop('disabled', true).html('<option value="">Select Customer First</option>');
         }
-    });// Add item button
+    });
+
+    // Initialize DataTables for product selection
+    var productsTable;
+    if ($.fn.DataTable && !$.fn.DataTable.isDataTable('#productsTable')) {
+        productsTable = $('#productsTable').DataTable({
+            responsive: true,
+            pageLength: 10,
+            language: {
+                search: "",
+                searchPlaceholder: "Search products..."
+            }
+        });
+        
+        // Move search box to a better position if needed or just style it
+        $('.dataTables_filter input').addClass('form-control form-control-sm');
+    }
+
+    // Add item button
     $('#addItemBtn').click(function() {
         $('#productModal').modal('show');
+    });
+
+    // Focus search when modal opens
+    $('#productModal').on('shown.bs.modal', function () {
+        $(this).find('.dataTables_filter input').focus();
+        if (productsTable) {
+            productsTable.columns.adjust().draw();
+        }
     });
     
     // Product selection

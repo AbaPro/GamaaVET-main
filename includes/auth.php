@@ -1,5 +1,7 @@
 <?php
-session_start();
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 require_once __DIR__ . '/functions.php';
 
 // Check if user is trying to login
@@ -7,9 +9,9 @@ if (isset($_POST['login'])) {
     $username = sanitize($_POST['username']);
     $password = $_POST['password'];
 
-    $sql = "SELECT u.*, r.id AS joined_role_id, r.slug AS role_slug FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.username = ? AND u.is_active = 1";
+    $sql = "SELECT u.*, r.id AS joined_role_id, r.slug AS role_slug FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE (u.username = ? OR u.email = ?) AND u.is_active = 1";
     $stmt = $conn->prepare($sql);
-    $stmt->bind_param("s", $username);
+    $stmt->bind_param("ss", $username, $username);
     $stmt->execute();
     $result = $stmt->get_result();
     
@@ -35,6 +37,22 @@ if (isset($_POST['login'])) {
             if (function_exists('loadUserAccessToSession')) {
                 loadUserAccessToSession($_SESSION['user_id']);
             }
+
+            // Region Permission Check
+            $selected_region = $_POST['region'] ?? 'factory';
+            if ($selected_region !== 'factory') {
+                $perm_key = "region." . $selected_region;
+                // Since hasPermission checks $_SESSION['permissions'], we can use it here
+                if (!hasPermission($perm_key)) {
+                    session_unset();
+                    session_destroy();
+                    session_start();
+                    setAlert('danger', "You do not have permission to access the " . ucfirst($selected_region) . " section.");
+                    redirect('index.php');
+                    exit;
+                }
+            }
+            $_SESSION['login_region'] = $selected_region;
             
             // Update last login
             $update_sql = "UPDATE users SET last_login = NOW() WHERE id = ?";

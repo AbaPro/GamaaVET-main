@@ -1,4 +1,9 @@
 <?php
+// Define ROOT_PATH if not already defined
+if (!defined('ROOT_PATH')) {
+    define('ROOT_PATH', dirname(__DIR__));
+}
+
 // Allow overriding the defaults using config/local.php (ignored by git)
 $localConfigPath = __DIR__ . '/local.php';
 if (file_exists($localConfigPath)) {

@@ -72,6 +72,7 @@ require_once '../../../includes/header.php';
             <h4>Quotation #<?= $quotation['id'] ?></h4>
             <div>
                 <a href="quotation_list.php" class="btn btn-sm btn-secondary">Back to List</a>
+                <a href="generate_quotation_pdf.php?id=<?= $quotation_id ?>" class="btn btn-sm btn-primary" target="_blank">Export PDF</a>
                 <?php if ($quotation['status'] == 'accepted' && !$quotation['order_id']) : ?>
                     <a href="convert_to_order.php?id=<?= $quotation_id ?>" class="btn btn-sm btn-success">Convert to Order</a>
                 <?php endif; ?>

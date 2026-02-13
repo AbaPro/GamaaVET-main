@@ -28,14 +28,34 @@
 </head>
 
 <body>
+    <?php
+    $login_region = $_SESSION['login_region'] ?? 'factory';
+    $navbar_bg = 'bg-primary';
+    $brand_logo = 'logo.png';
+    $brand_name = 'GammaVet';
+
+    if ($login_region === 'curva') {
+        $navbar_bg = 'bg-success'; // Green for Curva
+        $brand_logo = 'logo_curva.png';
+        $brand_name = 'GammaVet - Curva';
+    } elseif ($login_region === 'primer') {
+        $navbar_bg = 'bg-warning text-dark'; // Yellow/Orange for Primer
+        $brand_logo = 'logo_primer.png';
+        $brand_name = 'GammaVet - Primer';
+    }
+
+    if (!file_exists(ROOT_PATH . '/' . $brand_logo)) {
+        $brand_logo = 'logo.png';
+    }
+    ?>
     <!-- Navigation -->
-    <nav class="navbar navbar-expand-lg navbar-dark bg-primary shadow-sm">
+    <nav class="navbar navbar-expand-lg navbar-dark <?= $navbar_bg ?> shadow-sm">
         <div class="container-fluid px-4">
 
             <!-- Brand -->
             <a class="navbar-brand d-flex align-items-center gap-2 fw-semibold" href="<?= BASE_URL ?>dashboard.php">
-                <img src="<?= BASE_URL ?>logo.png" alt="GammaVet" width="32" height="32">
-                <span>GammaVet</span>
+                <img src="<?= BASE_URL ?><?= $brand_logo ?>" alt="<?= $brand_name ?>" width="32" height="32">
+                <span><?= $brand_name ?></span>
             </a>
 
             <!-- Toggler -->
@@ -56,11 +76,13 @@
                         }
                         ?>
 
-                        <li class="nav-item">
-                            <a class="nav-link" href="<?= BASE_URL ?>dashboard.php">
-                                <i class="fas fa-gauge-high me-1"></i> Dashboard
-                            </a>
-                        </li>
+                        <?php if ($login_region === 'factory'): ?>
+                            <li class="nav-item">
+                                <a class="nav-link" href="<?= BASE_URL ?>dashboard.php">
+                                    <i class="fas fa-gauge-high me-1"></i> Dashboard
+                                </a>
+                            </li>
+                        <?php endif; ?>
 
                         <!-- Sales -->
                         <?php $canSales = hasPermission('sales.orders.view_all') || hasPermission('sales.orders.create') || hasPermission('quotations.manage') || hasPermission('customers.view'); ?>
@@ -134,13 +156,20 @@
                                             </a>
                                         </li>
                                     <?php endif; ?>
+                                    <?php if (hasPermission('regions.manage')): ?>
+                                        <li>
+                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/regions/">
+                                                <i class="fas fa-globe me-2"></i> Regions
+                                            </a>
+                                        </li>
+                                    <?php endif; ?>
                                 </ul>
                             </li>
                         <?php endif; ?>
 
                         <!-- Products -->
                         <?php $canProducts = hasPermission('products.view') || hasPermission('products.create') || hasPermission('products.bulk_upload') || hasPermission('categories.manage'); ?>
-                        <?php if ($canProducts): ?>
+                        <?php if ($canProducts && $login_region === 'factory'): ?>
                             <li class="nav-item dropdown">
                                 <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
                                     <i class="fas fa-boxes-stacked me-1"></i> Products
@@ -196,7 +225,7 @@
 
                         <!-- Purchases -->
                         <?php $canPurchases = hasPermission('purchases.view_all') || hasPermission('purchases.create') || hasPermission('vendors.view'); ?>
-                        <?php if ($canPurchases): ?>
+                        <?php if ($canPurchases && $login_region === 'factory'): ?>
                             <li class="nav-item dropdown">
                                 <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
                                     <i class="fas fa-basket-shopping me-1"></i> Purchases
@@ -226,19 +255,21 @@
                                             </a>
                                         </li>
                                     <?php endif; ?>
-                        </ul>
-                    </li>
-                <?php endif; ?>
+                                </ul>
+                            </li>
+                        <?php endif; ?>
 
-                        <li class="nav-item">
-                            <a class="nav-link" href="<?= BASE_URL ?>modules/manufacturing/">
-                                <i class="fas fa-industry me-1"></i> Manufacturing
-                            </a>
-                        </li>
+                        <?php if ($login_region === 'factory'): ?>
+                            <li class="nav-item">
+                                <a class="nav-link" href="<?= BASE_URL ?>modules/manufacturing/">
+                                    <i class="fas fa-industry me-1"></i> Manufacturing
+                                </a>
+                            </li>
+                        <?php endif; ?>
 
-                    <!-- Users -->
-                    <?php if (hasPermission('users.manage')): ?>
-                        <li class="nav-item">
+                        <!-- Users -->
+                        <?php if (hasPermission('users.manage') && $login_region === 'factory'): ?>
+                            <li class="nav-item">
                                 <a class="nav-link" href="<?= BASE_URL ?>modules/users/">
                                     <i class="fas fa-users me-1"></i> Users
                                 </a>
@@ -246,66 +277,66 @@
                         <?php endif; ?>
 
                     <?php endif; ?>
-                    <?php if (isLoggedIn()): ?>
+                    <?php if (isLoggedIn() && $login_region === 'factory'): ?>
                         <li class="nav-item">
-                        <a class="nav-link" href="<?= BASE_URL ?>modules/analysis/">
-                            <i class="fas fa-chart-line me-1"></i> Analysis
-                        </a>
-                    </li>
+                            <a class="nav-link" href="<?= BASE_URL ?>modules/analysis/">
+                                <i class="fas fa-chart-line me-1"></i> Analysis
+                            </a>
+                        </li>
                     <?php endif; ?>
                     <!-- Tickets -->
-                        <?php if (hasPermission('tickets.manage') || hasPermission('tickets.create') || hasPermission('tickets.view')): ?>
-                            <li class="nav-item">
-                                <a class="nav-link" href="<?= BASE_URL ?>modules/tickets/">
-                                    <i class="fas fa-ticket-alt me-1"></i> Tickets
-                                </a>
-                            </li>
-                        <?php endif; ?>
+                    <?php if ((hasPermission('tickets.manage') || hasPermission('tickets.create') || hasPermission('tickets.view')) && $login_region === 'factory'): ?>
+                        <li class="nav-item">
+                            <a class="nav-link" href="<?= BASE_URL ?>modules/tickets/">
+                                <i class="fas fa-ticket-alt me-1"></i> Tickets
+                            </a>
+                        </li>
+                    <?php endif; ?>
 
-                        <!-- Finance -->
-                        <?php
-                        $canFinance = hasPermission('finance.customer_wallet.view')
-                            || hasPermission('finance.customer_payment.process')
-                            || hasPermission('finance.safes.create')
-                            || hasPermission('finance.bank_accounts.create')
-                            || hasPermission('finance.personal_accounts.create')
-                            || hasPermission('finance.transfers.create')
-                            || hasPermission('finance.po_payment.process')
-                            || hasPermission('finance.vendor_wallet.view');
-                        ?>
-                        <?php if ($canFinance): ?>
-                            <li class="nav-item dropdown">
-                                <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
-                                    <i class="fas fa-coins me-1"></i> Finance
-                                </a>
-                                <ul class="dropdown-menu">
-                                    <?php if (hasPermission('finance.customer_wallet.view')): ?>
-                                        <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/customers.php"><i class="fas fa-wallet me-2"></i> Customer Wallets</a></li>
-                                    <?php endif; ?>
-                                    <?php if (hasPermission('finance.customer_payment.process')): ?>
-                                        <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/bills.php"><i class="fas fa-file-invoice-dollar me-2"></i> Bills & Payments</a></li>
-                                    <?php endif; ?>
-                                    <?php if (hasPermission('finance.safes.create')): ?>
-                                        <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/safes.php"><i class="fas fa-vault me-2"></i> Safes</a></li>
-                                    <?php endif; ?>
-                                    <?php if (hasPermission('finance.bank_accounts.create')): ?>
-                                        <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/banks.php"><i class="fas fa-university me-2"></i> Bank Accounts</a></li>
-                                    <?php endif; ?>
-                                    <?php if (hasPermission('finance.personal_accounts.create')): ?>
-                                        <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/personal.php"><i class="fas fa-user-shield me-2"></i> Personal Accounts</a></li>
-                                    <?php endif; ?>
-                                    <?php if (hasPermission('finance.transfers.create')): ?>
-                                        <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/transfers.php"><i class="fas fa-right-left me-2"></i> Transfers</a></li>
-                                    <?php endif; ?>
-                                    <?php if (hasPermission('finance.po_payment.process')): ?>
-                                        <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/po.php"><i class="fas fa-file-contract me-2"></i> PO Payments</a></li>
-                                    <?php endif; ?>
-                                    <?php if (hasPermission('finance.vendor_wallet.view')): ?>
-                                        <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/vendors.php"><i class="fas fa-truck-field me-2"></i> Vendor Wallets</a></li>
-                                    <?php endif; ?>
-                                </ul>
-                            </li>
-                        <?php endif; ?>
+                    <!-- Finance -->
+                    <?php
+                    $canFinance = hasPermission('finance.customer_wallet.view')
+                        || hasPermission('finance.customer_payment.process')
+                        || hasPermission('finance.safes.create')
+                        || hasPermission('finance.bank_accounts.create')
+                        || hasPermission('finance.personal_accounts.create')
+                        || hasPermission('finance.transfers.create')
+                        || hasPermission('finance.po_payment.process')
+                        || hasPermission('finance.vendor_wallet.view');
+                    ?>
+                    <?php if ($canFinance): ?>
+                        <li class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
+                                <i class="fas fa-coins me-1"></i> Finance
+                            </a>
+                            <ul class="dropdown-menu">
+                                <?php if (hasPermission('finance.customer_wallet.view')): ?>
+                                    <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/customers.php"><i class="fas fa-wallet me-2"></i> Customer Wallets</a></li>
+                                <?php endif; ?>
+                                <?php if (hasPermission('finance.customer_payment.process')): ?>
+                                    <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/bills.php"><i class="fas fa-file-invoice-dollar me-2"></i> Bills & Payments</a></li>
+                                <?php endif; ?>
+                                <?php if (hasPermission('finance.safes.create')): ?>
+                                    <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/safes.php"><i class="fas fa-vault me-2"></i> Safes</a></li>
+                                <?php endif; ?>
+                                <?php if (hasPermission('finance.bank_accounts.create')): ?>
+                                    <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/banks.php"><i class="fas fa-university me-2"></i> Bank Accounts</a></li>
+                                <?php endif; ?>
+                                <?php if (hasPermission('finance.personal_accounts.create')): ?>
+                                    <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/personal.php"><i class="fas fa-user-shield me-2"></i> Personal Accounts</a></li>
+                                <?php endif; ?>
+                                <?php if (hasPermission('finance.transfers.create')): ?>
+                                    <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/transfers.php"><i class="fas fa-right-left me-2"></i> Transfers</a></li>
+                                <?php endif; ?>
+                                <?php if (hasPermission('finance.po_payment.process')): ?>
+                                    <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/po.php"><i class="fas fa-file-contract me-2"></i> PO Payments</a></li>
+                                <?php endif; ?>
+                                <?php if (hasPermission('finance.vendor_wallet.view')): ?>
+                                    <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/vendors.php"><i class="fas fa-truck-field me-2"></i> Vendor Wallets</a></li>
+                                <?php endif; ?>
+                            </ul>
+                        </li>
+                    <?php endif; ?>
 
                 </ul>
 
@@ -313,7 +344,7 @@
                 <ul class="navbar-nav ms-auto">
                     <?php if (isLoggedIn()): ?>
                         <?php $notifCount = function_exists('getUnreadNotificationsCount') ? getUnreadNotificationsCount() : 0; ?>
-                        <?php if (hasPermission('notifications.view')): ?>
+                        <?php if (hasPermission('notifications.view') && $login_region === 'factory'): ?>
                             <li class="nav-item me-2" id="notifBell">
                                 <a class="nav-link position-relative" href="<?= BASE_URL ?>modules/notifications/index.php">
                                     <i class="fas fa-bell"></i>
@@ -348,7 +379,7 @@
         </div>
     </nav>
     <!-- Notification toast + poller -->
-    <?php if (isLoggedIn() && hasPermission('notifications.view')): ?>
+    <?php if (isLoggedIn() && hasPermission('notifications.view') && $login_region === 'factory'): ?>
         <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 1080">
             <div id="notifToast" class="toast align-items-center text-bg-primary border-0" role="alert" aria-live="assertive" aria-atomic="true">
                 <div class="d-flex">
@@ -396,7 +427,7 @@
         </script>
     <?php endif; ?>
     <!-- Floating Ticket Button (permission-gated) -->
-    <?php if (isLoggedIn() && (hasPermission('tickets.create') || hasPermission('tickets.manage'))): ?>
+    <?php if (isLoggedIn() && (hasPermission('tickets.create') || hasPermission('tickets.manage')) && $login_region === 'factory'): ?>
         <style>
             #ticket-fab {
                 position: fixed;

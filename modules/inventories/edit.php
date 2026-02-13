@@ -12,6 +12,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $name = sanitize($_POST['name']);
     $locationId = isset($_POST['location_id']) ? (int)$_POST['location_id'] : 0;
     $description = sanitize($_POST['description']);
+    $region = !empty($_POST['region']) ? sanitize($_POST['region']) : NULL;
+    
+    // Direct Sale enforcement based on session
+    $login_region = $_SESSION['login_region'] ?? 'factory';
+    if ($login_region === 'factory') {
+        $direct_sale = NULL;
+    } else {
+        $direct_sale = $login_region;
+    }
+    
     $is_active = isset($_POST['is_active']) ? 1 : 0;
     
     if ($locationId <= 0) {
@@ -34,9 +44,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $check_stmt->close();
     
     // Update inventory
-    $update_sql = "UPDATE inventories SET name = ?, location_id = ?, description = ?, is_active = ? WHERE id = ?";
+    $update_sql = "UPDATE inventories SET name = ?, location_id = ?, description = ?, is_active = ?, region = ?, direct_sale = ? WHERE id = ?";
     $update_stmt = $conn->prepare($update_sql);
-    $update_stmt->bind_param("sisii", $name, $locationId, $description, $is_active, $id);
+    $update_stmt->bind_param("sisissi", $name, $locationId, $description, $is_active, $region, $direct_sale, $id);
     
     if ($update_stmt->execute()) {
         setAlert('success', 'Inventory updated successfully.');

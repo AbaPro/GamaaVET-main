@@ -168,32 +168,47 @@ $products_result = $products_stmt->get_result();
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    <div class="mb-3">
-                        <label for="filter_type" class="form-label">Product Type</label>
-                        <select class="form-select" id="filter_type">
-                            <option value="">All types</option>
-                            <option value="primary">Primary</option>
-                            <option value="final">Final</option>
-                            <option value="material">Material</option>
-                        </select>
+                    <!-- Filter Bar -->
+                    <div class="bg-light p-3 rounded mb-4">
+                        <h6 class="text-muted mb-3"><i class="fas fa-filter me-2"></i>Quick Filters</h6>
+                        <div class="row g-2">
+                            <div class="col-md-6">
+                                <label for="filter_type" class="form-label small">Product Type</label>
+                                <select class="form-select form-select-sm" id="filter_type">
+                                    <option value="">All types</option>
+                                    <option value="primary">Primary</option>
+                                    <option value="final">Final</option>
+                                    <option value="material">Material</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="filter_customer" class="form-label small">Customer</label>
+                                <select class="form-select form-select-sm" id="filter_customer">
+                                    <option value="">All customers</option>
+                                    <?php
+                                    $customers_result = $conn->query("SELECT id, name FROM customers ORDER BY name");
+                                    if ($customers_result) {
+                                        while ($customer = $customers_result->fetch_assoc()) {
+                                            echo '<option value="' . (int)$customer['id'] . '">' . htmlspecialchars($customer['name']) . '</option>';
+                                        }
+                                    }
+                                    ?>
+                                </select>
+                            </div>
+                        </div>
                     </div>
+
                     <div class="mb-3">
-                        <label for="filter_customer" class="form-label">Customer</label>
-                        <select class="form-select" id="filter_customer">
-                            <option value="">All customers</option>
-                            <?php
-                            $customers_result = $conn->query("SELECT id, name FROM customers ORDER BY name");
-                            if ($customers_result) {
-                                while ($customer = $customers_result->fetch_assoc()) {
-                                    echo '<option value="' . (int)$customer['id'] . '">' . htmlspecialchars($customer['name']) . '</option>';
-                                }
-                            }
-                            ?>
-                        </select>
+                        <label for="product_search" class="form-label">Search Product</label>
+                        <div class="input-group">
+                            <span class="input-group-text bg-white"><i class="fas fa-search text-muted"></i></span>
+                            <input type="text" class="form-control" id="product_search" placeholder="Type name or SKU to search...">
+                        </div>
                     </div>
+
                     <div class="mb-3">
-                        <label for="product_id" class="form-label">Product</label>
-                        <select class="form-select" id="product_id" name="product_id" required>
+                        <label for="product_id" class="form-label">Select Product</label>
+                        <select class="form-select" id="product_id" name="product_id" required size="5" style="height: auto;">
                             <option value="">-- Select Product --</option>
                             <?php
                             $all_products = $conn->query("SELECT id, name, sku, type, customer_id FROM products ORDER BY name");
@@ -204,6 +219,7 @@ $products_result = $products_stmt->get_result();
                             }
                             ?>
                         </select>
+                        <div id="product_count" class="form-text mt-1 text-end">0 products found</div>
                     </div>
                     <div class="mb-3">
                         <label for="quantity" class="form-label">Quantity</label>
@@ -265,11 +281,13 @@ $(document).ready(function() {
     function applyProductFilters() {
         var selectedType = $('#filter_type').val();
         var selectedCustomer = $('#filter_customer').val();
+        var searchQuery = $('#product_search').val().toLowerCase();
         var $productSelect = $('#product_id');
 
         $productSelect.empty();
         $productSelect.append(new Option('-- Select Product --', ''));
 
+        var foundCount = 0;
         allProductOptions.forEach(function(option) {
             if (!option.value) {
                 return;
@@ -277,15 +295,18 @@ $(document).ready(function() {
 
             var typeMatch = selectedType === '' || option.type === selectedType;
             var customerMatch = selectedCustomer === '' || option.customerId === selectedCustomer;
+            var searchMatch = searchQuery === '' || option.text.toLowerCase().indexOf(searchQuery) !== -1;
 
-            if (typeMatch && customerMatch) {
+            if (typeMatch && customerMatch && searchMatch) {
                 var newOption = new Option(option.text, option.value);
                 $(newOption).attr('data-type', option.type);
                 $(newOption).attr('data-customer-id', option.customerId);
                 $productSelect.append(newOption);
+                foundCount++;
             }
         });
 
+        $('#product_count').text(foundCount + ' products found');
         $productSelect.val('');
     }
 
@@ -302,12 +323,14 @@ $(document).ready(function() {
         $('#editProductModal').modal('show');
     });
 
-    $('#filter_type, #filter_customer').on('change', applyProductFilters);
+    $('#filter_type, #filter_customer, #product_search').on('change keyup', applyProductFilters);
 
     $('#addProductModal').on('show.bs.modal', function() {
         $('#filter_type').val('');
         $('#filter_customer').val('');
+        $('#product_search').val('');
         applyProductFilters();
+        setTimeout(() => $('#product_search').focus(), 500);
     });
 });
 </script>

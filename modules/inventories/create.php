@@ -11,6 +11,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $name = sanitize($_POST['name']);
     $locationId = isset($_POST['location_id']) ? (int)$_POST['location_id'] : 0;
     $description = sanitize($_POST['description']);
+    $region = !empty($_POST['region']) ? sanitize($_POST['region']) : NULL;
+    
+    // Direct Sale enforcement based on session
+    $login_region = $_SESSION['login_region'] ?? 'factory';
+    if ($login_region === 'factory') {
+        $direct_sale = NULL;
+    } else {
+        $direct_sale = $login_region;
+    }
+    
     $is_active = isset($_POST['is_active']) ? 1 : 0;
     
     if ($locationId <= 0) {
@@ -33,9 +43,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $check_stmt->close();
     
     // Insert new inventory
-    $insert_sql = "INSERT INTO inventories (name, location_id, description, is_active) VALUES (?, ?, ?, ?)";
+    $insert_sql = "INSERT INTO inventories (name, location_id, description, is_active, region, direct_sale) VALUES (?, ?, ?, ?, ?, ?)";
     $insert_stmt = $conn->prepare($insert_sql);
-    $insert_stmt->bind_param("sisi", $name, $locationId, $description, $is_active);
+    $insert_stmt->bind_param("sisiss", $name, $locationId, $description, $is_active, $region, $direct_sale);
     
     if ($insert_stmt->execute()) {
         $inventory_id = $insert_stmt->insert_id;

@@ -49,15 +49,18 @@ function createUser($data) {
     }
     if ($role_slug === null) { $role_slug = 'salesman'; }
 
-    $stmt = $conn->prepare("INSERT INTO users (username, password, name, email, role, role_id, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)");
-    $stmt->bind_param("sssssii",
+    $region = !empty($data['region']) ? $data['region'] : NULL;
+
+    $stmt = $conn->prepare("INSERT INTO users (username, password, name, email, role, role_id, is_active, region) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+    $stmt->bind_param("sssssiis",
         $data['username'],
         $hashed_password,
         $data['name'],
         $data['email'],
         $role_slug,
         $role_id,
-        $is_active
+        $is_active,
+        $region
     );
 
     return $stmt->execute();
@@ -84,6 +87,8 @@ function updateUser($id, $data) {
         $role_slug = $data['role'];
     }
 
+    $region = !empty($data['region']) ? $data['region'] : NULL;
+
     // Check if password is being updated
     if (!empty($data['password'])) {
         if ($data['password'] !== $data['confirm_password']) {
@@ -91,8 +96,8 @@ function updateUser($id, $data) {
         }
         $hashed_password = password_hash($data['password'], PASSWORD_DEFAULT);
         
-        $stmt = $conn->prepare("UPDATE users SET username = ?, password = ?, name = ?, email = ?, role = ?, role_id = ?, is_active = ? WHERE id = ?");
-        $stmt->bind_param("sssssiii", 
+        $stmt = $conn->prepare("UPDATE users SET username = ?, password = ?, name = ?, email = ?, role = ?, role_id = ?, is_active = ?, region = ? WHERE id = ?");
+        $stmt->bind_param("sssssiiis", 
             $data['username'],
             $hashed_password,
             $data['name'],
@@ -100,17 +105,19 @@ function updateUser($id, $data) {
             $role_slug,
             $role_id,
             $is_active,
+            $region,
             $id
         );
     } else {
-        $stmt = $conn->prepare("UPDATE users SET username = ?, name = ?, email = ?, role = ?, role_id = ?, is_active = ? WHERE id = ?");
-        $stmt->bind_param("ssssiii", 
+        $stmt = $conn->prepare("UPDATE users SET username = ?, name = ?, email = ?, role = ?, role_id = ?, is_active = ?, region = ? WHERE id = ?");
+        $stmt->bind_param("sssssiis", 
             $data['username'],
             $data['name'],
             $data['email'],
             $role_slug,
             $role_id,
             $is_active,
+            $region,
             $id
         );
     }

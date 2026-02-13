@@ -339,22 +339,24 @@ require_once '../../includes/header.php';
                                 <td colspan="4" class="text-end"><strong>Items Subtotal:</strong></td>
                                 <td><?= $canViewFinalPrices ? number_format($itemsSubtotal, 2) : '<span class="text-muted">Hidden</span>' ?></td>
                             </tr>
+                            <?php if ($discountAmount > 0): ?>
                             <tr>
                                 <td colspan="4" class="text-end"><strong>Discount:</strong></td>
                                 <td class="text-danger"><?= $canViewFinalPrices ? '-' . number_format($discountAmount, 2) : '<span class="text-muted">Hidden</span>' ?></td>
                             </tr>
+                            <?php endif; ?>
+                            <?php if ($shippingAmount > 0): ?>
                             <tr>
                                 <td colspan="4" class="text-end"><strong>Shipping:</strong></td>
                                 <td>
                                     <?php if ($canViewFinalPrices): ?>
-                                        <?= $order['shipping_cost_type'] === 'manual'
-                                            ? number_format($shippingAmount, 2) . ' (Manual)'
-                                            : '0.00 (No Shipping)' ?>
+                                        <?= number_format($shippingAmount, 2) . ' (Manual)' ?>
                                     <?php else: ?>
                                         <span class="text-muted">Hidden</span>
                                     <?php endif; ?>
                                 </td>
                             </tr>
+                            <?php endif; ?>
                             <tr>
                                 <td colspan="4" class="text-end"><strong>Total:</strong></td>
                                 <td><?= $canViewFinalPrices ? number_format($order['total_amount'], 2) : '<span class="text-muted">Hidden</span>' ?></td>

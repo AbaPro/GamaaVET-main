@@ -28,7 +28,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $city = !empty($_POST['city']) ? sanitize($_POST['city']) : NULL;
     $state = !empty($_POST['state']) ? sanitize($_POST['state']) : NULL;
     $postal_code = !empty($_POST['postal_code']) ? sanitize($_POST['postal_code']) : NULL;
-    $country = sanitize($_POST['country']);
+    $country = !empty($_POST['country']) ? sanitize($_POST['country']) : NULL;
     $is_default_address = isset($_POST['is_default_address']) ? 1 : 0;
     
     // Start transaction

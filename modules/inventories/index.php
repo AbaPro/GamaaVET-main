@@ -51,8 +51,20 @@ if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
 }
 
 // Fetch all inventories
-$sql = "SELECT * FROM inventories ORDER BY name";
-$result = $conn->query($sql);
+$login_region = $_SESSION['login_region'] ?? 'factory';
+
+if ($login_region === 'factory') {
+    $sql = "SELECT * FROM inventories WHERE direct_sale IS NULL ORDER BY name";
+} else {
+    $sql = "SELECT * FROM inventories WHERE direct_sale = ? ORDER BY name";
+}
+
+$stmt = $conn->prepare($sql);
+if ($login_region !== 'factory') {
+    $stmt->bind_param("s", $login_region);
+}
+$stmt->execute();
+$result = $stmt->get_result();
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -79,6 +91,9 @@ $result = $conn->query($sql);
                         <th>ID</th>
                         <th>Name</th>
                         <th>Location</th>
+                        <?php if ($login_region !== 'factory'): ?>
+                            <th>Region</th>
+                        <?php endif; ?>
                         <th>Status</th>
                         <th>Actions</th>
                     </tr>
@@ -90,6 +105,9 @@ $result = $conn->query($sql);
                                 <td><?php echo $row['id']; ?></td>
                                 <td><?php echo htmlspecialchars($row['name']); ?></td>
                                 <td><?php echo isset($locations[$row['location_id']]) ? htmlspecialchars($locations[$row['location_id']]['name']) : 'N/A'; ?></td>
+                                <?php if ($login_region !== 'factory'): ?>
+                                    <td><?php echo htmlspecialchars($row['region'] ?: 'N/A'); ?></td>
+                                <?php endif; ?>
                                 <td>
                                     <span class="badge bg-<?php echo $row['is_active'] ? 'success' : 'secondary'; ?>">
                                         <?php echo $row['is_active'] ? 'Active' : 'Inactive'; ?>
@@ -104,6 +122,8 @@ $result = $conn->query($sql);
                                             data-name="<?php echo htmlspecialchars($row['name']); ?>"
                                             data-location-id="<?php echo $row['location_id']; ?>"
                                             data-description="<?php echo htmlspecialchars($row['description']); ?>"
+                                            data-region="<?php echo htmlspecialchars($row['region'] ?? ''); ?>"
+                                            data-direct_sale="<?php echo htmlspecialchars($row['direct_sale'] ?? ''); ?>"
                                             data-active="<?php echo $row['is_active']; ?>">
                                         <i class="fas fa-edit"></i> Edit
                                     </button>
@@ -152,6 +172,29 @@ $result = $conn->query($sql);
                         <label for="description" class="form-label">Description</label>
                         <textarea class="form-control" id="description" name="description" rows="3"></textarea>
                     </div>
+                    <?php if ($login_region !== 'factory'): ?>
+                    <div class="mb-3">
+                        <label for="region" class="form-label">Region</label>
+                        <select class="form-select" id="region" name="region">
+                            <option value="">-- None --</option>
+                            <?php
+                            $regions_query = $conn->query("SELECT name FROM regions ORDER BY name ASC");
+                            while ($r = $regions_query->fetch_assoc()) {
+                                echo '<option value="' . htmlspecialchars($r['name']) . '">' . htmlspecialchars($r['name']) . '</option>';
+                            }
+                            ?>
+                        </select>
+                    </div>
+                    <?php endif; ?>
+                    <div class="mb-3">
+                        <?php if ($login_region === 'factory'): ?>
+                            <input type="hidden" name="direct_sale" value="">
+                        <?php else: ?>
+                            <label for="direct_sale" class="form-label">Direct Sale</label>
+                            <input type="text" class="form-control" value="<?= ucfirst($login_region) ?>" readonly>
+                            <input type="hidden" name="direct_sale" value="<?= $login_region ?>">
+                        <?php endif; ?>
+                    </div>
                     <div class="mb-3 form-check">
                         <input type="checkbox" class="form-check-input" id="is_active" name="is_active" checked>
                         <label class="form-check-label" for="is_active">Active</label>
@@ -194,6 +237,29 @@ $result = $conn->query($sql);
                         <label for="edit_description" class="form-label">Description</label>
                         <textarea class="form-control" id="edit_description" name="description" rows="3"></textarea>
                     </div>
+                    <?php if ($login_region !== 'factory'): ?>
+                    <div class="mb-3">
+                        <label for="edit_region" class="form-label">Region</label>
+                        <select class="form-select" id="edit_region" name="region">
+                            <option value="">-- None --</option>
+                            <?php
+                            $regions_query = $conn->query("SELECT name FROM regions ORDER BY name ASC");
+                            while ($r = $regions_query->fetch_assoc()) {
+                                echo '<option value="' . htmlspecialchars($r['name']) . '">' . htmlspecialchars($r['name']) . '</option>';
+                            }
+                            ?>
+                        </select>
+                    </div>
+                    <?php endif; ?>
+                    <div class="mb-3">
+                        <?php if ($login_region === 'factory'): ?>
+                            <input type="hidden" name="direct_sale" id="edit_direct_sale" value="">
+                        <?php else: ?>
+                            <label for="edit_direct_sale" class="form-label">Direct Sale</label>
+                            <input type="text" class="form-control" value="<?= ucfirst($login_region) ?>" readonly>
+                            <input type="hidden" name="direct_sale" id="edit_direct_sale" value="<?= $login_region ?>">
+                        <?php endif; ?>
+                    </div>
                     <div class="mb-3 form-check">
                         <input type="checkbox" class="form-check-input" id="edit_is_active" name="is_active">
                         <label class="form-check-label" for="edit_is_active">Active</label>
@@ -218,12 +284,16 @@ $(document).ready(function() {
         var name = $(this).data('name');
         var locationId = $(this).data('location-id');
         var description = $(this).data('description');
+        var region = $(this).data('region');
+        var direct_sale = $(this).data('direct_sale');
         var is_active = $(this).data('active');
         
         $('#edit_id').val(id);
         $('#edit_name').val(name);
         $('#edit_location_id').val(locationId);
         $('#edit_description').val(description);
+        $('#edit_region').val(region);
+        $('#edit_direct_sale').val(direct_sale);
         $('#edit_is_active').prop('checked', is_active == 1);
         
         $('#editInventoryModal').modal('show');

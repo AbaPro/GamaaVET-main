@@ -81,14 +81,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 // Get vendors for dropdown
 $vendors = $pdo->query("SELECT id, name FROM vendors ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 
-// Get products for dropdown
+// Get products for dropdown (include type and customer_id for filtering)
 $products = $pdo->query("
-    SELECT p.id, p.name, p.sku, p.cost_price, c.name as category 
+    SELECT p.id, p.name, p.sku, p.cost_price, p.type, p.customer_id, c.name as category 
     FROM products p
     JOIN categories c ON p.category_id = c.id
-    WHERE p.type_e IN ('POU', 'RM')
     ORDER BY p.name
 ")->fetchAll(PDO::FETCH_ASSOC);
+
+// Get customers for product filter
+$customers = $pdo->query("SELECT id, name FROM customers ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 
 // Set default date
 $order_date = date('Y-m-d');
@@ -202,6 +204,33 @@ $order_date = date('Y-m-d');
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
+                <div class="bg-light p-3 rounded mb-3">
+                    <div class="row g-2">
+                        <div class="col-md-4">
+                            <label for="filter_type_modal" class="form-label small">Product Type</label>
+                            <select class="form-select form-select-sm" id="filter_type_modal">
+                                <option value="">All types</option>
+                                <option value="primary">Primary</option>
+                                <option value="final">Final</option>
+                                <option value="material">Material</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label for="filter_customer_modal" class="form-label small">Customer</label>
+                            <select class="form-select form-select-sm" id="filter_customer_modal">
+                                <option value="">All customers</option>
+                                <?php foreach ($customers as $cust) : ?>
+                                    <option value="<?= (int)$cust['id'] ?>"><?= htmlspecialchars($cust['name']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label for="productSearchModal" class="form-label small">Search</label>
+                            <input type="text" id="productSearchModal" class="form-control form-control-sm" placeholder="Type name or SKU...">
+                        </div>
+                    </div>
+                </div>
+
                 <table class="table table-striped table-hover" id="productsTable">
                     <thead>
                         <tr>
@@ -213,7 +242,7 @@ $order_date = date('Y-m-d');
                     </thead>
                     <tbody>
                         <?php foreach ($products as $product) : ?>
-                            <tr>
+                            <tr data-type="<?= htmlspecialchars($product['type'] ?? '') ?>" data-customer-id="<?= (int)($product['customer_id'] ?? 0) ?>">
                                 <td><?= htmlspecialchars($product['sku']) ?></td>
                                 <td><?= htmlspecialchars($product['name']) ?></td>
                                 <td><?= htmlspecialchars($product['category']) ?></td>
@@ -262,27 +291,59 @@ $order_date = date('Y-m-d');
 
         const productModalEl = document.getElementById('productModal');
         const productModal = new bootstrap.Modal(productModalEl);
-        const productRows = Array.from(document.querySelectorAll('#productsTable tbody tr'));
         const productSearch = document.getElementById('productSearch');
+        const productSearchModal = document.getElementById('productSearchModal');
+        const productTypeFilter = document.getElementById('filter_type_modal');
+        const productCustomerFilter = document.getElementById('filter_customer_modal');
+
+        const getProductRows = () => Array.from(document.querySelectorAll('#productsTable tbody tr'));
 
         const filterProducts = () => {
-            const term = (productSearch.value || '').toLowerCase();
-            productRows.forEach(row => {
+            const term = ((productSearchModal && productSearchModal.value) || (productSearch && productSearch.value) || '').toLowerCase();
+            const type = (productTypeFilter && productTypeFilter.value) || '';
+            const customer = (productCustomerFilter && productCustomerFilter.value) || '';
+            const rows = getProductRows();
+            rows.forEach(row => {
                 const content = row.textContent.toLowerCase();
-                row.style.display = content.includes(term) ? '' : 'none';
+                const rowType = (row.dataset.type || '').toLowerCase();
+                const rowCustomer = String(row.dataset.customerId || '');
+
+                const matchesTerm = term === '' || content.includes(term);
+                const matchesType = type === '' || rowType === type;
+                const matchesCustomer = customer === '' || rowCustomer === customer;
+
+                row.style.display = (matchesTerm && matchesType && matchesCustomer) ? '' : 'none';
             });
         };
 
         if (productSearch) {
             productSearch.addEventListener('input', filterProducts);
         }
+        if (productSearchModal) {
+            productSearchModal.addEventListener('input', filterProducts);
+        }
+        if (productTypeFilter) {
+            productTypeFilter.addEventListener('change', filterProducts);
+        }
+        if (productCustomerFilter) {
+            productCustomerFilter.addEventListener('change', filterProducts);
+        }
 
         $('#addItemBtn').click(function() {
             if (productSearch) {
                 productSearch.value = '';
-                filterProducts();
             }
+            if (productSearchModal) {
+                productSearchModal.value = '';
+            }
+            if (productTypeFilter) productTypeFilter.value = '';
+            if (productCustomerFilter) productCustomerFilter.value = '';
             productModal.show();
+        });
+
+        // Filter products when modal is shown
+        $('#productModal').on('shown.bs.modal', function() {
+            filterProducts();
         });
 
         // Product selection

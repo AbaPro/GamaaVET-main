@@ -19,6 +19,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $whatsapp_phone = !empty($_POST['whatsapp_phone']) ? sanitize($_POST['whatsapp_phone']) : NULL;
     $tax_number = !empty($_POST['tax_number']) ? sanitize($_POST['tax_number']) : NULL;
     $wallet_balance = !empty($_POST['wallet_balance']) ? sanitize($_POST['wallet_balance']) : 0;
+    $region = !empty($_POST['region']) ? sanitize($_POST['region']) : NULL;
+    $direct_sale = !empty($_POST['direct_sale']) ? sanitize($_POST['direct_sale']) : NULL;
     
     // Primary contact info
     $contact_name = sanitize($_POST['contact_name']);
@@ -41,11 +43,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         // Insert customer
         $customer_sql = "INSERT INTO customers 
-                         (name, type, factory_id, email, phone, whatsapp_phone, tax_number, wallet_balance) 
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+                         (name, type, factory_id, email, phone, whatsapp_phone, tax_number, wallet_balance, region, direct_sale) 
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         $customer_stmt = $conn->prepare($customer_sql);
         $customer_stmt->bind_param(
-            "siissssd",
+            "siisssssss",
             $name,
             $type,
             $factory_id,
@@ -53,7 +55,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $phone,
             $whatsapp_phone,
             $tax_number,
-            $wallet_balance
+            $wallet_balance,
+            $region,
+            $direct_sale
         );
         $customer_stmt->execute();
         $customer_id = $customer_stmt->insert_id;

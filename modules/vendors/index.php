@@ -116,14 +116,14 @@ $result = $conn->query($sql);
                         <?php while ($row = $result->fetch_assoc()): ?>
                             <tr>
                                 <td><?php echo $row['id']; ?></td>
-                                <td><?php echo htmlspecialchars($row['name']); ?></td>
+                                <td><?php echo htmlspecialchars($row['name'] ?? ''); ?></td>
                                 <td>
                                     <span class="badge bg-<?php echo $row['type'] == 1 ? 'info' : ($row['type'] == 2 ? 'primary' : 'warning'); ?>">
                                         <?php echo $row['type_name'] ? ucfirst($row['type_name']) : 'N/A'; ?>
                                     </span>
                                 </td>
-                                <td><?php echo htmlspecialchars($row['email']); ?></td>
-                                <td><?php echo htmlspecialchars($row['phone']); ?></td>
+                                <td><?php echo htmlspecialchars($row['email'] ?? ''); ?></td>
+                                <td><?php echo htmlspecialchars($row['phone'] ?? ''); ?></td>
                                 <td><?php echo number_format($row['wallet_balance'], 2); ?></td>
                                 <td>
                                     <div class="dropdown">
@@ -263,8 +263,8 @@ $result = $conn->query($sql);
                                 </div>
                             </div>
                             <div class="mb-3">
-                                <label for="country" class="form-label">Country*</label>
-                                <input type="text" class="form-control" id="country" name="country" required>
+                                <label for="country" class="form-label">Country (optional)</label>
+                                <input type="text" class="form-control" id="country" name="country">
                             </div>
                             <div class="form-check">
                                 <input class="form-check-input" type="checkbox" id="is_default_address" name="is_default_address" checked>

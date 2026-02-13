@@ -47,6 +47,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $username = trim($_POST['username']);
     $email = trim($_POST['email']);
     $role_id = isset($_POST['role_id']) ? (int)$_POST['role_id'] : 0;
+    $region = isset($_POST['region']) ? trim($_POST['region']) : null;
     $is_active = isset($_POST['is_active']) ? 1 : 0;
     
     // Validate email format
@@ -88,6 +89,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'username' => $username,
         'email' => $email,
         'role_id' => $role_id,
+        'region' => $region,
         'is_active' => $is_active
     ];
     
@@ -187,6 +189,16 @@ include __DIR__ . '/../../includes/header.php';
                                     <input class="form-check-input" type="checkbox" id="is_active" name="is_active" 
                                            <?= $user['is_active'] ? 'checked' : '' ?>>
                                     <label class="form-check-label" for="is_active">Active User</label>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="region">Region Permission</label>
+                                    <select class="form-select" id="region" name="region">
+                                        <option value="">-- Factory (None) --</option>
+                                        <option value="curva" <?= ($user['region'] === 'curva') ? 'selected' : '' ?>>Curva</option>
+                                        <option value="primer" <?= ($user['region'] === 'primer') ? 'selected' : '' ?>>Primer</option>
+                                    </select>
                                 </div>
                             </div>
                         </div>

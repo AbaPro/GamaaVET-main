@@ -16,13 +16,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $phone = sanitize($_POST['phone']);
     $whatsapp_phone = !empty($_POST['whatsapp_phone']) ? sanitize($_POST['whatsapp_phone']) : NULL;
     $tax_number = !empty($_POST['tax_number']) ? sanitize($_POST['tax_number']) : NULL;
+    $region = !empty($_POST['region']) ? sanitize($_POST['region']) : NULL;
+    $direct_sale = !empty($_POST['direct_sale']) ? sanitize($_POST['direct_sale']) : NULL;
     
     $update_sql = "UPDATE customers SET 
-                   name = ?, type = ?, factory_id = ?, email = ?, phone = ?, whatsapp_phone = ?, tax_number = ? 
+                   name = ?, type = ?, factory_id = ?, email = ?, phone = ?, whatsapp_phone = ?, tax_number = ?, region = ?, direct_sale = ? 
                    WHERE id = ?";
     $update_stmt = $conn->prepare($update_sql);
     $update_stmt->bind_param(
-        "siissssi",
+        "siissssssi",
         $name,
         $type,
         $factory_id,
@@ -30,6 +32,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $phone,
         $whatsapp_phone,
         $tax_number,
+        $region,
+        $direct_sale,
         $id
     );
     
