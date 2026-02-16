@@ -241,8 +241,8 @@ $productsTableColspan = 8 + ($showUnitPriceColumn ? 1 : 0) + ($showCostPriceColu
                                 <?php if ($showUnitPriceColumn): ?>
                                 <td>
                                     <?php if (canViewProductPrice($row['type'])): ?>
-                                        <?php echo number_format($row['unit_price'], 2); ?>
-                                    <?php endif; ?>
+                                            <?php echo isset($row['unit_price']) && $row['unit_price'] !== '' ? number_format((float)$row['unit_price'], 2) : '-'; ?>
+                                        <?php endif; ?>
                                 </td>
                                 <?php endif; ?>
                                 <?php if ($showCostPriceColumn): ?>
@@ -347,7 +347,7 @@ $productsTableColspan = 8 + ($showUnitPriceColumn ? 1 : 0) + ($showCostPriceColu
                         </div>
                     </div>
                     <div class="row">
-                        <div class="col-md-12 mb-3">
+                        <div class="col-md-12 mb-3" data-customer-group="customer">
                             <label for="customer_id" class="form-label">Customer</label>
                             <select class="form-select js-searchable-select" id="customer_id" name="customer_id">
                                 <option value="">-- Select Customer --</option>
@@ -450,7 +450,7 @@ $productsTableColspan = 8 + ($showUnitPriceColumn ? 1 : 0) + ($showCostPriceColu
                         </div>
                     </div>
                     <div class="row">
-                        <div class="col-md-12 mb-3">
+                        <div class="col-md-12 mb-3" data-customer-group="customer">
                             <label for="edit_customer_id" class="form-label">Customer</label>
                             <select class="form-select js-searchable-select" id="edit_customer_id" name="customer_id">
                                 <option value="">-- Select Customer --</option>
@@ -527,12 +527,15 @@ $productsTableColspan = 8 + ($showUnitPriceColumn ? 1 : 0) + ($showCostPriceColu
         if (!form) return;
         const showUnit = type !== 'material';
         const showCost = type !== 'final';
+        const showCustomer = type !== 'material';
         const unitGroup = form.querySelector('[data-pricing-group="unit"]');
         const costGroup = form.querySelector('[data-pricing-group="cost"]');
         const unitInput = form.querySelector('[data-role="unit-price"]');
         const costInput = form.querySelector('[data-role="cost-price"]');
         if (unitGroup) unitGroup.classList.toggle('d-none', !showUnit);
         if (costGroup) costGroup.classList.toggle('d-none', !showCost);
+        const customerGroup = form.querySelector('[data-customer-group="customer"]');
+        if (customerGroup) customerGroup.classList.toggle('d-none', !showCustomer);
         if (unitInput) unitInput.required = showUnit;
         if (costInput) costInput.required = showCost;
     };

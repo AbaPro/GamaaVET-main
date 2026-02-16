@@ -91,7 +91,7 @@ require_once 'includes/header.php';
 
     <?php if (hasPermission('inventories.view')): ?>
     <div class="col-md-6 col-lg-3 mb-4">
-        <a href="<?= BASE_URL ?>modules/inventories/" class="text-decoration-none">
+        <a href="<?= BASE_URL ?>modules/inventories/low_stock.php" class="text-decoration-none">
             <div class="card bg-warning text-dark">
                 <div class="card-body">
                     <div class="d-flex justify-content-between align-items-center">

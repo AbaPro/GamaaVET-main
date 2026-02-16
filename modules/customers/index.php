@@ -122,9 +122,11 @@ if ($factories_result) {
         <a href="types.php" class="btn btn-outline-secondary">
             <i class="fas fa-tags"></i> Manage Customer Types
         </a>
+        <?php if (hasPermission('customers.factories.manage')): ?>
         <a href="factories.php" class="btn btn-outline-secondary">
             <i class="fas fa-industry"></i> Manage Factories
         </a>
+        <?php endif; ?>
         <a href="sample_customers.csv" class="btn btn-outline-info" download>
             <i class="fas fa-file-csv"></i> Sample CSV
         </a>

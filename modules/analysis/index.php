@@ -2,6 +2,11 @@
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
 
+if (!hasPermission('analysis.view_reports')) {
+    setAlert('danger', 'Access denied.');
+    redirect('../../dashboard.php');
+}
+
 $page_title = 'Analysis';
 require_once '../../includes/header.php';
 
@@ -388,6 +393,16 @@ $groups = [
     'Accounting',
     'Operations'
 ];
+
+// Map groups to their specific view permissions
+$groupPermissions = [
+    'Sales' => 'analysis.view_sales_summary',
+    'Inventory' => 'analysis.view_inventory_levels',
+    'Purchasing' => 'analysis.view_purchase_summary',
+    'Finance' => 'analysis.view_finance_reports',
+    'Accounting' => 'analysis.view_accounting_reports',
+    'Operations' => 'analysis.view_operations_reports',
+];
 ?>
 
 <style>
@@ -587,7 +602,13 @@ $groups = [
                 <div class="tab-pane fade <?= $index === 0 ? 'show active' : '' ?>" id="<?= $tabId ?>" role="tabpanel">
                     <div class="analysis-grid row g-2"> <!-- smaller gap -->
                         <?php foreach ($cards as $card): ?>
-                            <?php if ($card['group'] !== $group) continue; ?>
+                            <?php
+                                if ($card['group'] !== $group) continue;
+                                // Get the specific permission for this group, fallback to general view_reports
+                                $permKey = $groupPermissions[$card['group']] ?? 'analysis.view_reports';
+                                // Show card only if user has the group-specific permission or the general analysis view permission
+                                if (!hasPermission($permKey) && !hasPermission('analysis.view_reports')) continue;
+                            ?>
 
                             <!-- 6 per row on xl, 5 per row on lg (using custom col-20) -->
                             <div class="col-6 col-md-4 col-lg-2 col-xl-2">

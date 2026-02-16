@@ -24,22 +24,22 @@ $stats = [
 // Month's purchases
 $stmt = $pdo->prepare("SELECT SUM(total_amount) FROM purchase_orders WHERE DATE(order_date) BETWEEN ? AND ?");
 $stmt->execute([$month_start, $today]);
-$stats['month_purchases'] = $stmt->fetchColumn();
+$stats['month_purchases'] = (float)($stmt->fetchColumn() ?? 0);
 
 // Pending POs
 $stmt = $pdo->prepare("SELECT COUNT(*) FROM purchase_orders WHERE status IN ('new', 'ordered', 'partially-received')");
 $stmt->execute();
-$stats['pending_pos'] = $stmt->fetchColumn();
+$stats['pending_pos'] = (int)($stmt->fetchColumn() ?? 0);
 
 // Unpaid POs
 $stmt = $pdo->prepare("SELECT COUNT(*) FROM purchase_orders WHERE paid_amount < total_amount");
 $stmt->execute();
-$stats['unpaid_pos'] = $stmt->fetchColumn();
+$stats['unpaid_pos'] = (int)($stmt->fetchColumn() ?? 0);
 
 // Partially received
 $stmt = $pdo->prepare("SELECT COUNT(*) FROM purchase_orders WHERE status = 'partially-received'");
 $stmt->execute();
-$stats['partially_received'] = $stmt->fetchColumn();
+$stats['partially_received'] = (int)($stmt->fetchColumn() ?? 0);
 ?>
 
 <div class="container mt-4">
@@ -48,7 +48,7 @@ $stats['partially_received'] = $stmt->fetchColumn();
     <?php include '../../includes/messages.php'; ?>
     
     <div class="row mb-4">
-        <div class="col-md-3">
+        <div class="col-md-3 mb-3">
             <div class="card text-white bg-primary">
                 <div class="card-body">
                     <h5 class="card-title">Month's Purchases</h5>
@@ -56,7 +56,7 @@ $stats['partially_received'] = $stmt->fetchColumn();
                 </div>
             </div>
         </div>
-        <div class="col-md-3">
+        <div class="col-md-3 mb-3">
             <div class="card text-white bg-warning">
                 <div class="card-body">
                     <h5 class="card-title">Pending POs</h5>
@@ -64,7 +64,7 @@ $stats['partially_received'] = $stmt->fetchColumn();
                 </div>
             </div>
         </div>
-        <div class="col-md-3">
+        <div class="col-md-3 mb-3">
             <div class="card text-white bg-danger">
                 <div class="card-body">
                     <h5 class="card-title">Unpaid POs</h5>
@@ -72,7 +72,7 @@ $stats['partially_received'] = $stmt->fetchColumn();
                 </div>
             </div>
         </div>
-        <div class="col-md-3">
+        <div class="col-md-3 mb-3">
             <div class="card text-white bg-info">
                 <div class="card-body">
                     <h5 class="card-title">Partially Received</h5>
@@ -91,18 +91,19 @@ $stats['partially_received'] = $stmt->fetchColumn();
             </div>
         </div>
         <div class="card-body">
-            <table class="table js-datatable table-striped table-hover">
-                <thead>
-                    <tr>
-                        <th>PO #</th>
-                        <th>Vendor</th>
-                        <th>Date</th>
-                        <th>Amount</th>
-                        <th>Status</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
+            <div class="table-responsive">
+                <table class="table js-datatable table-striped table-hover">
+                    <thead>
+                        <tr>
+                            <th>PO #</th>
+                            <th>Vendor</th>
+                            <th>Date</th>
+                            <th>Amount</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
                     <?php
                     $stmt = $pdo->prepare("
                         SELECT po.id, po.order_date, po.total_amount, po.paid_amount, 
@@ -141,6 +142,7 @@ $stats['partially_received'] = $stmt->fetchColumn();
                     <?php } ?>
                 </tbody>
             </table>
+            </div>
         </div>
     </div>
 </div>

@@ -1,6 +1,12 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+
+if (!hasPermission('manufacturing.view')) {
+    setAlert('danger', 'Access denied.');
+    redirect('../../dashboard.php');
+}
+
 require_once 'lib.php';
 
 $page_title = 'Manufacturing Control Center';

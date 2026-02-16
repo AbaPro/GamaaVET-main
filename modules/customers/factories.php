@@ -2,7 +2,7 @@
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
 
-if (!hasPermission('customers.view')) {
+if (!hasPermission('customers.factories.manage')) {
     setAlert('danger', 'Access denied.');
     redirect('../../dashboard.php');
 }

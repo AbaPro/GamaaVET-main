@@ -259,7 +259,7 @@
                             </li>
                         <?php endif; ?>
 
-                        <?php if ($login_region === 'factory'): ?>
+                        <?php if (hasPermission('manufacturing.view') && $login_region === 'factory'): ?>
                             <li class="nav-item">
                                 <a class="nav-link" href="<?= BASE_URL ?>modules/manufacturing/">
                                     <i class="fas fa-industry me-1"></i> Manufacturing
@@ -277,7 +277,7 @@
                         <?php endif; ?>
 
                     <?php endif; ?>
-                    <?php if (isLoggedIn() && $login_region === 'factory'): ?>
+                    <?php if (isLoggedIn() && hasPermission('analysis.view_reports') && $login_region === 'factory'): ?>
                         <li class="nav-item">
                             <a class="nav-link" href="<?= BASE_URL ?>modules/analysis/">
                                 <i class="fas fa-chart-line me-1"></i> Analysis

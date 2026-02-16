@@ -62,7 +62,7 @@ if (!hasPermission('products.create')) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         // Validate required fields
-        $required = ['name', 'type', 'category_id', 'unit_price'];
+        $required = ['name', 'type', 'category_id'];
         foreach ($required as $field) {
             if (empty($_POST[$field])) {
                 throw new Exception("Required field '$field' is missing");
@@ -77,7 +77,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $category_id = (int)$_POST['category_id'];
         $subcategory_id = !empty($_POST['subcategory_id']) ? (int)$_POST['subcategory_id'] : NULL;
         $customer_id = isset($_POST['customer_id']) && $_POST['customer_id'] !== '' ? (int)$_POST['customer_id'] : NULL;
-        $unit_price = (float)$_POST['unit_price'];
+        $unit_price = isset($_POST['unit_price']) && $_POST['unit_price'] !== '' ? (float)$_POST['unit_price'] : NULL;
         $cost_price = !empty($_POST['cost_price']) ? (float)$_POST['cost_price'] : NULL;
         $min_stock_level = !empty($_POST['min_stock_level']) ? (int)$_POST['min_stock_level'] : 0;
         $description = sanitize($_POST['description'] ?? '');
@@ -150,7 +150,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new Exception("Prepare failed: " . $conn->error);
         }
         
-        $insert_stmt->bind_param("ssssiiidddss", 
+        $insert_stmt->bind_param("ssssiiiddiss", 
             $name, $sku, $barcode, $type, $category_id, $subcategory_id, $customer_id,
             $unit_price, $cost_price, $min_stock_level, $description, $image_name);
         
