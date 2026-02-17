@@ -91,11 +91,14 @@ if ($customerFilter !== null) {
     $paramValues[] = $customerFilter;
 }
 
-$sql = "SELECT p.*, c1.name as category_name, c2.name as subcategory_name, cust.name as customer_name
+$sql = "SELECT p.*, c1.name as category_name, c2.name as subcategory_name, cust.name as customer_name,
+               COALESCE(SUM(ip.quantity), 0) as total_stock
         FROM products p
         LEFT JOIN categories c1 ON p.category_id = c1.id
         LEFT JOIN categories c2 ON p.subcategory_id = c2.id
-        LEFT JOIN customers cust ON p.customer_id = cust.id";
+        LEFT JOIN customers cust ON p.customer_id = cust.id
+        LEFT JOIN inventory_products ip ON p.id = ip.product_id
+        GROUP BY p.id";
 
 if (!empty($whereClauses)) {
     $sql .= ' WHERE ' . implode(' AND ', $whereClauses);
@@ -200,6 +203,7 @@ $productsTableColspan = 8 + ($showUnitPriceColumn ? 1 : 0) + ($showCostPriceColu
                         <th>Category</th>
                         <th>Subcategory</th>
                         <th>Customer</th>
+                        <th>Stock</th>
                         <?php if ($showUnitPriceColumn): ?>
                         <th>Unit Price</th>
                         <?php endif; ?>
@@ -238,6 +242,11 @@ $productsTableColspan = 8 + ($showUnitPriceColumn ? 1 : 0) + ($showCostPriceColu
                                 <td><?php echo htmlspecialchars($row['category_name']); ?></td>
                                 <td><?php echo $row['subcategory_name'] ? htmlspecialchars($row['subcategory_name']) : '-'; ?></td>
                                 <td><?php echo $row['customer_name'] ? htmlspecialchars($row['customer_name']) : '-'; ?></td>
+                                <td>
+                                    <span class="badge bg-<?php echo $row['total_stock'] > 0 ? 'success' : 'danger'; ?>">
+                                        <?php echo number_format((float)$row['total_stock'], 2); ?>
+                                    </span>
+                                </td>
                                 <?php if ($showUnitPriceColumn): ?>
                                 <td>
                                     <?php if (canViewProductPrice($row['type'])): ?>
