@@ -92,13 +92,11 @@ if ($customerFilter !== null) {
 }
 
 $sql = "SELECT p.*, c1.name as category_name, c2.name as subcategory_name, cust.name as customer_name,
-               COALESCE(SUM(ip.quantity), 0) as total_stock
+               (SELECT COALESCE(SUM(quantity), 0) FROM inventory_products WHERE product_id = p.id) as total_stock
         FROM products p
         LEFT JOIN categories c1 ON p.category_id = c1.id
         LEFT JOIN categories c2 ON p.subcategory_id = c2.id
-        LEFT JOIN customers cust ON p.customer_id = cust.id
-        LEFT JOIN inventory_products ip ON p.id = ip.product_id
-        GROUP BY p.id";
+        LEFT JOIN customers cust ON p.customer_id = cust.id";
 
 if (!empty($whereClauses)) {
     $sql .= ' WHERE ' . implode(' AND ', $whereClauses);
@@ -142,7 +140,7 @@ foreach ($products as $productRow) {
         break;
     }
 }
-$productsTableColspan = 8 + ($showUnitPriceColumn ? 1 : 0) + ($showCostPriceColumn ? 1 : 0);
+$productsTableColspan = 9 + ($showUnitPriceColumn ? 1 : 0) + ($showCostPriceColumn ? 1 : 0);
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -243,8 +241,18 @@ $productsTableColspan = 8 + ($showUnitPriceColumn ? 1 : 0) + ($showCostPriceColu
                                 <td><?php echo $row['subcategory_name'] ? htmlspecialchars($row['subcategory_name']) : '-'; ?></td>
                                 <td><?php echo $row['customer_name'] ? htmlspecialchars($row['customer_name']) : '-'; ?></td>
                                 <td>
-                                    <span class="badge bg-<?php echo $row['total_stock'] > 0 ? 'success' : 'danger'; ?>">
-                                        <?php echo number_format((float)$row['total_stock'], 2); ?>
+                                    <?php
+                                    $stock = (float)$row['total_stock'];
+                                    $minStock = (float)($row['min_stock_level'] ?? 0);
+                                    $badgeClass = 'success';
+                                    if ($stock <= 0) {
+                                        $badgeClass = 'danger';
+                                    } elseif ($stock <= $minStock) {
+                                        $badgeClass = 'warning';
+                                    }
+                                    ?>
+                                    <span class="badge bg-<?php echo $badgeClass; ?>">
+                                        <?php echo number_format($stock, 2); ?>
                                     </span>
                                 </td>
                                 <?php if ($showUnitPriceColumn): ?>
