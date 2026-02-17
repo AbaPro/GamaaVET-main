@@ -25,6 +25,7 @@ if ($locationsResult) {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $customerId = isset($_POST['customer_id']) ? (int)$_POST['customer_id'] : 0;
+    $productId = isset($_POST['product_id']) ? (int)$_POST['product_id'] : 0;
     $selectedFormulaId = isset($_POST['formula_id']) ? (int)$_POST['formula_id'] : 0;
     $locationId = isset($_POST['location_id']) ? (int)$_POST['location_id'] : 0;
     $priority = $_POST['priority'] ?? 'normal';
@@ -39,6 +40,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($customerId <= 0) {
         setAlert('danger', 'Please select the customer/provider for this manufacturing order.');
+    } elseif ($productId <= 0) {
+        setAlert('danger', 'Please select the final product for this manufacturing order.');
     } elseif ($locationId <= 0) {
         setAlert('danger', 'Please select a location for this manufacturing order.');
     } else {
@@ -105,12 +108,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $createdBy = $_SESSION['user_id'] ?? null;
             $orderStmt = $pdo->prepare("
                 INSERT INTO manufacturing_orders 
-                    (order_number, customer_id, formula_id, location_id, batch_size, due_date, priority, notes, created_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (order_number, customer_id, product_id, formula_id, location_id, batch_size, due_date, priority, notes, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ");
             $orderStmt->execute([
                 $orderNumber,
                 $customerId,
+                $productId ?: null,
                 $formulaId,
                 $locationId,
                 $batchSize,
@@ -218,11 +222,17 @@ $selectedFormulaId = $old['formula_id'] ?? '';
                 </div>
             </div>
             <div class="row g-3 mt-3">
-                <div class="col-md-6">
+                <div class="col-md-4">
+                    <label class="form-label">Final Product</label>
+                    <select class="form-select" name="product_id" id="product_id" required disabled>
+                        <option value="">Select provider first</option>
+                    </select>
+                </div>
+                <div class="col-md-4">
                     <label class="form-label">Batch size</label>
                     <input step="0.01" min="0" type="number" class="form-control" name="batch_size" value="<?php echo e($old['batch_size'] ?? ''); ?>" placeholder="Total units to produce">
                 </div>
-                <div class="col-md-6">
+                <div class="col-md-4">
                     <label class="form-label">Order notes</label>
                     <textarea class="form-control" name="notes" rows="2"><?php echo e($old['notes'] ?? ''); ?></textarea>
                 </div>
@@ -307,6 +317,7 @@ $selectedFormulaId = $old['formula_id'] ?? '';
 <script>
     const providerSelect = $('#customer_id');
     const formulaSelect = $('#formula_id');
+    const productSelect = $('#product_id');
     const formulaPreview = $('#formulaPreview');
     const componentsBody = $('#componentsBody');
     const oldComponents = <?php echo json_encode($old['components'] ?? [], JSON_UNESCAPED_UNICODE); ?>;
@@ -315,6 +326,7 @@ $selectedFormulaId = $old['formula_id'] ?? '';
     let componentIndex = 0;
     let loadedFormulas = [];
     let pendingFormulaSelection = <?php echo json_encode($selectedFormulaId ?: ''); ?>;
+    let pendingProductSelection = <?php echo json_encode($_POST['product_id'] ?? ''); ?>;
 
     function escapeForAttr(value) {
         if (!value) {
@@ -415,6 +427,35 @@ $selectedFormulaId = $old['formula_id'] ?? '';
         formulaPreview.html(html);
     }
 
+    function loadProductsForProvider(providerId) {
+        if (!providerId) {
+            productSelect.html('<option value="">Select provider first</option>');
+            productSelect.prop('disabled', true);
+            return;
+        }
+        productSelect.prop('disabled', true).html('<option>Loading products…</option>');
+        $.getJSON('../../ajax/get_final_products.php', { provider_id: providerId })
+            .done(function (resp) {
+                if (!resp.success) {
+                    productSelect.html('<option value="">Unable to load products</option>');
+                    return;
+                }
+                let options = '<option value="">Select final product</option>';
+                resp.products.forEach(product => {
+                    const label = escapeForAttr(product.name) + (product.sku ? ' (' + escapeForAttr(product.sku) + ')' : '');
+                    options += `<option value="${product.id}">${label}</option>`;
+                });
+                productSelect.html(options);
+                productSelect.prop('disabled', resp.products.length === 0);
+                if (pendingProductSelection) {
+                    productSelect.val(pendingProductSelection);
+                }
+            })
+            .fail(function () {
+                productSelect.html('<option value="">Unable to load products</option>');
+            });
+    }
+
     function loadFormulasForProvider(providerId) {
         if (!providerId) {
             formulaSelect.html('<option value="">Select provider first</option>');
@@ -472,7 +513,9 @@ $selectedFormulaId = $old['formula_id'] ?? '';
 
         providerSelect.on('change', function () {
             pendingFormulaSelection = '';
+            pendingProductSelection = '';
             loadFormulasForProvider($(this).val());
+            loadProductsForProvider($(this).val());
         });
 
         formulaSelect.on('change', function () {
@@ -494,6 +537,7 @@ $selectedFormulaId = $old['formula_id'] ?? '';
 
         if (providerSelect.val()) {
             loadFormulasForProvider(providerSelect.val());
+            loadProductsForProvider(providerSelect.val());
         }
     });
 </script>

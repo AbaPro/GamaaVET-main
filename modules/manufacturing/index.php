@@ -32,10 +32,11 @@ if ($providerFilter > 0) {
 }
 
 $ordersQuery = "
-    SELECT mo.*, c.name AS customer_name, f.name AS formula_name
+    SELECT mo.*, c.name AS customer_name, f.name AS formula_name, p.name AS product_name
     FROM manufacturing_orders mo
     JOIN customers c ON c.id = mo.customer_id
     JOIN manufacturing_formulas f ON f.id = mo.formula_id
+    LEFT JOIN products p ON p.id = mo.product_id
 ";
 if (!empty($whereClauses)) {
     $ordersQuery .= ' WHERE ' . implode(' AND ', $whereClauses);
@@ -147,6 +148,7 @@ if (!empty($stepIds)) {
                     <tr>
                         <th>Order #</th>
                         <th>Provider</th>
+                        <th>Product</th>
                         <th>Formula</th>
                         <th>Priority</th>
                         <th>Status</th>
@@ -176,6 +178,7 @@ if (!empty($stepIds)) {
                             <tr>
                                 <td><?= htmlspecialchars($order['order_number']); ?></td>
                                 <td><?= htmlspecialchars($order['customer_name']); ?></td>
+                                <td><?= htmlspecialchars($order['product_name'] ?? 'N/A'); ?></td>
                                 <td><?= htmlspecialchars($order['formula_name']); ?></td>
                                 <td><?= ucfirst(htmlspecialchars($order['priority'])); ?></td>
                                 <td>
@@ -192,12 +195,20 @@ if (!empty($stepIds)) {
                                     <i class="fas fa-file-alt me-1"></i> <?= $docCount; ?>
                                 </td>
                                 <td>
-                                    <a href="order.php?id=<?= $order['id']; ?>" class="btn btn-sm btn-outline-primary">
-                                        <i class="fas fa-eye me-1"></i> View
-                                    </a>
-                                    <a href="edit.php?id=<?= $order['id']; ?>" class="btn btn-sm btn-outline-warning">
-                                        <i class="fas fa-edit me-1"></i> Edit
-                                    </a>
+                                    <div class="btn-group">
+                                        <a href="order.php?id=<?= $order['id']; ?>" class="btn btn-sm btn-outline-primary">
+                                            <i class="fas fa-eye me-1"></i> View
+                                        </a>
+                                        <a href="edit.php?id=<?= $order['id']; ?>" class="btn btn-sm btn-outline-warning">
+                                            <i class="fas fa-edit me-1"></i> Edit
+                                        </a>
+                                        <?php if (hasPermission('manufacturing.delete')): ?>
+                                            <a href="javascript:void(0)" class="btn btn-sm btn-outline-danger" 
+                                               onclick="confirmDelete(<?= $order['id']; ?>, '<?= htmlspecialchars($order['order_number']); ?>')">
+                                                <i class="fas fa-trash me-1"></i> Delete
+                                            </a>
+                                        <?php endif; ?>
+                                    </div>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
@@ -222,7 +233,7 @@ if (!empty($stepIds)) {
                     emptyTable: 'No manufacturing orders found.'
                 },
                 columnDefs: [
-                    { orderable: false, targets: [6, 7, 8] }
+                    { orderable: false, targets: [7, 8, 9] }
                 ]
             });
         }
@@ -232,4 +243,10 @@ if (!empty($stepIds)) {
             table.search($(this).val()).draw();
         });
     });
+
+    function confirmDelete(id, orderNumber) {
+        if (confirm('Are you sure you want to delete manufacturing order #' + orderNumber + '? This will also delete all steps, and documents associated with this order. This action cannot be undone.')) {
+            window.location.href = 'delete.php?id=' + id;
+        }
+    }
 </script>

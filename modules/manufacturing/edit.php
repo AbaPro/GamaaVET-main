@@ -33,6 +33,17 @@ if (!$order) {
     redirect('index.php');
 }
 
+// Fetch products for this customer (type final)
+$products = [];
+$productStmt = $conn->prepare("SELECT id, name, sku FROM products WHERE customer_id = ? AND type = 'final' ORDER BY name");
+$productStmt->bind_param("i", $order['customer_id']);
+$productStmt->execute();
+$productResult = $productStmt->get_result();
+while ($pRow = $productResult->fetch_assoc()) {
+    $products[] = $pRow;
+}
+$productStmt->close();
+
 $old = $_POST;
 
 $locations = [];
@@ -45,6 +56,7 @@ if ($locationsResult) {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $locationId = isset($_POST['location_id']) ? (int)$_POST['location_id'] : 0;
+    $productId = isset($_POST['product_id']) ? (int)$_POST['product_id'] : 0;
     $priority = $_POST['priority'] ?? 'normal';
     $batchSize = isset($_POST['batch_size']) ? floatval($_POST['batch_size']) : 0;
     $dueDate = $_POST['due_date'] ?? null;
@@ -70,10 +82,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             $updateStmt = $conn->prepare("
                 UPDATE manufacturing_orders 
-                SET location_id = ?, batch_size = ?, due_date = ?, priority = ?, notes = ?, status = ?
+                SET location_id = ?, product_id = ?, batch_size = ?, due_date = ?, priority = ?, notes = ?, status = ?
                 WHERE id = ?
             ");
-            $updateStmt->bind_param("idssssi", $locationId, $batchSize, $dueDateValue, $priority, $orderNotes, $status, $orderId);
+            $productIdValue = $productId ?: null;
+            $updateStmt->bind_param("iidssssi", $locationId, $productIdValue, $batchSize, $dueDateValue, $priority, $orderNotes, $status, $orderId);
             
             if ($updateStmt->execute()) {
                 setAlert('success', 'Manufacturing order updated successfully.');
@@ -120,18 +133,29 @@ $statuses = ['getting' => 'Getting', 'preparing' => 'Preparing', 'delivering' =>
         <div class="card-header">Order Details</div>
         <div class="card-body">
             <div class="row g-3">
-                <div class="col-md-6">
+                <div class="col-md-4">
                     <label class="form-label">Provider / Customer</label>
                     <input type="text" class="form-control" value="<?php echo e($order['customer_name']); ?>" disabled>
                     <small class="text-muted">Cannot change customer for existing order</small>
                 </div>
-                <div class="col-md-6">
+                <div class="col-md-4">
                     <label class="form-label">Location</label>
                     <select class="form-select" name="location_id" required>
                         <option value="">Select location</option>
                         <?php foreach ($locations as $location): ?>
                             <option value="<?php echo $location['id']; ?>" <?php echo (isset($old['location_id']) ? $old['location_id'] : $order['location_id']) == $location['id'] ? 'selected' : ''; ?>>
                                 <?php echo e($location['name']); ?> (<?php echo e($location['address']); ?>)
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Final Product</label>
+                    <select class="form-select" name="product_id">
+                        <option value="">Select product</option>
+                        <?php foreach ($products as $product): ?>
+                            <option value="<?php echo $product['id']; ?>" <?php echo (isset($old['product_id']) ? $old['product_id'] : $order['product_id']) == $product['id'] ? 'selected' : ''; ?>>
+                                <?php echo e($product['name']); ?> <?= $product['sku'] ? '(' . e($product['sku']) . ')' : ''; ?>
                             </option>
                         <?php endforeach; ?>
                     </select>

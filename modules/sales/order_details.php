@@ -33,9 +33,14 @@ if (!$order) {
     exit();
 }
 
+// Fetch locations for manufacturing modal
+$locations = $pdo->query("SELECT id, name FROM locations WHERE is_active = 1 ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+$priorities = ['normal' => 'Normal', 'rush' => 'Rush', 'critical' => 'Critical'];
+
 // Fetch order items
 $stmt = $pdo->prepare("
-    SELECT oi.*, p.name AS product_name, p.sku, p.barcode, p.type
+    SELECT oi.*, p.name AS product_name, p.sku, p.barcode, p.type,
+           (SELECT COALESCE(SUM(quantity), 0) FROM inventory_products WHERE product_id = p.id) as current_stock
     FROM order_items oi
     JOIN products p ON oi.product_id = p.id
     WHERE oi.order_id = ?
@@ -302,8 +307,10 @@ require_once '../../includes/header.php';
                                 <th>SKU</th>
                                 <th>Product</th>
                                 <th>Quantity</th>
+                                <th>Stock</th>
                                 <th>Unit Price</th>
                                 <th>Total</th>
+                                <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -318,6 +325,11 @@ require_once '../../includes/header.php';
                                     </td>
                                     <td><?= $item['quantity'] ?></td>
                                     <td>
+                                        <span class="badge <?= $item['current_stock'] >= $item['quantity'] ? 'bg-success' : 'bg-danger' ?>">
+                                            <?= number_format($item['current_stock']) ?>
+                                        </span>
+                                    </td>
+                                    <td>
                                         <?php if (canViewProductPrice($item['type'])): ?>
                                             <?= number_format($item['unit_price'], 2) ?>
                                         <?php else: ?>
@@ -331,23 +343,36 @@ require_once '../../includes/header.php';
                                             <span class="text-muted">Hidden</span>
                                         <?php endif; ?>
                                     </td>
+                                    <td>
+                                        <?php if ($item['type'] === 'final' && hasPermission('manufacturing.view')) : ?>
+                                            <button type="button" class="btn btn-sm btn-outline-primary btn-manufacture" 
+                                                    data-product-id="<?= $item['product_id'] ?>"
+                                                    data-product-name="<?= htmlspecialchars($item['product_name']) ?>"
+                                                    data-required-qty="<?= $item['quantity'] ?>"
+                                                    data-current-stock="<?= $item['current_stock'] ?>">
+                                                <i class="fas fa-hammer me-1"></i> Manufacture
+                                            </button>
+                                        <?php endif; ?>
+                                    </td>
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>
                         <tfoot>
                             <tr>
-                                <td colspan="4" class="text-end"><strong>Items Subtotal:</strong></td>
+                                <td colspan="5" class="text-end"><strong>Items Subtotal:</strong></td>
                                 <td><?= $canViewFinalPrices ? number_format($itemsSubtotal, 2) : '<span class="text-muted">Hidden</span>' ?></td>
+                                <td></td>
                             </tr>
                             <?php if ($discountAmount > 0): ?>
                             <tr>
-                                <td colspan="4" class="text-end"><strong>Discount:</strong></td>
+                                <td colspan="5" class="text-end"><strong>Discount:</strong></td>
                                 <td class="text-danger"><?= $canViewFinalPrices ? '-' . number_format($discountAmount, 2) : '<span class="text-muted">Hidden</span>' ?></td>
+                                <td></td>
                             </tr>
                             <?php endif; ?>
                             <?php if ($shippingAmount > 0): ?>
                             <tr>
-                                <td colspan="4" class="text-end"><strong>Shipping:</strong></td>
+                                <td colspan="5" class="text-end"><strong>Shipping:</strong></td>
                                 <td>
                                     <?php if ($canViewFinalPrices): ?>
                                         <?= number_format($shippingAmount, 2) . ' (Manual)' ?>
@@ -355,21 +380,25 @@ require_once '../../includes/header.php';
                                         <span class="text-muted">Hidden</span>
                                     <?php endif; ?>
                                 </td>
+                                <td></td>
                             </tr>
                             <?php endif; ?>
                             <tr>
-                                <td colspan="4" class="text-end"><strong>Total:</strong></td>
+                                <td colspan="5" class="text-end"><strong>Total:</strong></td>
                                 <td><?= $canViewFinalPrices ? number_format($order['total_amount'], 2) : '<span class="text-muted">Hidden</span>' ?></td>
+                                <td></td>
                             </tr>
                             <tr>
-                                <td colspan="4" class="text-end"><strong>Paid Amount:</strong></td>
+                                <td colspan="5" class="text-end"><strong>Paid Amount:</strong></td>
                                 <td><?= $canViewFinalPrices ? number_format($order['paid_amount'], 2) : '<span class="text-muted">Hidden</span>' ?></td>
+                                <td></td>
                             </tr>
                             <tr>
-                                <td colspan="4" class="text-end"><strong>Balance:</strong></td>
+                                <td colspan="5" class="text-end"><strong>Balance:</strong></td>
                                 <td class="<?= $balance > 0 ? 'text-danger' : 'text-success' ?>">
                                     <?= $canViewFinalPrices ? number_format($balance, 2) : '<span class="text-muted">Hidden</span>' ?>
                                 </td>
+                                <td></td>
                             </tr>
                         </tfoot>
                     </table>
@@ -510,24 +539,184 @@ require_once '../../includes/header.php';
     </div>
 </div>
 
-<?php if (in_array($_SESSION['user_role'], ['admin', 'salesman', 'accountant'])) : ?>
+<?php if (hasPermission('manufacturing.view') || in_array($_SESSION['user_role'], ['admin', 'salesman', 'accountant'])) : ?>
+<!-- Manufacturing Modal -->
+<div class="modal fade" id="manufactureModal" tabindex="-1" aria-labelledby="manufactureModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form id="manufactureForm">
+                <input type="hidden" name="product_id" id="m_product_id">
+                <input type="hidden" name="customer_id" value="<?= $order['customer_id'] ?>">
+                <input type="hidden" name="sales_order_id" value="<?= $order_id ?>">
+                
+                <div class="modal-header">
+                    <h5 class="modal-title" id="manufactureModalLabel">Create Manufacturing Order</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info py-2 mb-3">
+                        <div class="row text-center">
+                            <div class="col-6">
+                                <small class="text-muted d-block">Current Stock</small>
+                                <span class="fw-bold" id="m_current_stock">0</span>
+                            </div>
+                            <div class="col-6">
+                                <small class="text-muted d-block">Required</small>
+                                <span class="fw-bold" id="m_required_qty">0</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Product</label>
+                        <input type="text" class="form-control" id="m_product_name" readonly>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="m_formula_id" class="form-label">Formula <span class="text-danger">*</span></label>
+                        <select class="form-select" name="formula_id" id="m_formula_id" required>
+                            <option value="">Loading formulas...</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="m_location_id" class="form-label">Location <span class="text-danger">*</span></label>
+                        <select class="form-select" name="location_id" id="m_location_id" required>
+                            <option value="">Select Location</option>
+                            <?php foreach ($locations as $loc): ?>
+                                <option value="<?= $loc['id'] ?>"><?= htmlspecialchars($loc['name']) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="m_batch_size" class="form-label">Batch Size <span class="text-danger">*</span></label>
+                            <input type="number" step="0.01" min="0.01" class="form-control" name="batch_size" id="m_batch_size" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="m_priority" class="form-label">Priority</label>
+                            <select class="form-select" name="priority" id="m_priority">
+                                <?php foreach ($priorities as $val => $lbl): ?>
+                                    <option value="<?= $val ?>"><?= $lbl ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="m_due_date" class="form-label">Due Date</label>
+                        <input type="date" class="form-control" name="due_date" id="m_due_date" value="<?= date('Y-m-d', strtotime('+7 days')) ?>">
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="m_notes" class="form-label">Notes</label>
+                        <textarea class="form-control" name="notes" id="m_notes" rows="2" placeholder="Optional notes..."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="btnSubmitManufacture">Create Order</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
 <script>
-    (function() {
+    document.addEventListener('DOMContentLoaded', function() {
+        const modalEl = document.getElementById('manufactureModal');
+        if (modalEl && typeof bootstrap !== 'undefined') {
+            const manufactureModal = new bootstrap.Modal(modalEl);
+            const formulaSelect = document.getElementById('m_formula_id');
+            const customerId = <?= (int)$order['customer_id'] ?>;
+
+            document.querySelectorAll('.btn-manufacture').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const data = this.dataset;
+                    document.getElementById('m_product_id').value = data.productId;
+                    document.getElementById('m_product_name').value = data.productName;
+                    document.getElementById('m_required_qty').textContent = data.requiredQty;
+                    document.getElementById('m_current_stock').textContent = data.currentStock;
+                    
+                    // Suggested batch size = required - current stock if negative, else just required
+                    const req = parseFloat(data.requiredQty);
+                    const stock = parseFloat(data.currentStock);
+                    const suggested = Math.max(0, req - stock);
+                    document.getElementById('m_batch_size').value = suggested > 0 ? suggested : req;
+
+                    // Load formulas for this customer
+                    formulaSelect.innerHTML = '<option value="">Loading formulas...</option>';
+                    manufactureModal.show();
+
+                    fetch(`../../ajax/get_manufacturing_formulas.php?provider_id=${customerId}`)
+                        .then(r => r.json())
+                        .then(resp => {
+                            if (resp.success && resp.formulas.length > 0) {
+                                let options = '<option value="">Select Formula</option>';
+                                resp.formulas.forEach(f => {
+                                    options += `<option value="${f.id}">${f.name}</option>`;
+                                });
+                                formulaSelect.innerHTML = options;
+                            } else {
+                                formulaSelect.innerHTML = '<option value="">No formulas found for this provider</option>';
+                            }
+                        })
+                        .catch(e => {
+                            console.error(e);
+                            formulaSelect.innerHTML = '<option value="">Error loading formulas</option>';
+                        });
+                });
+            });
+
+            document.getElementById('manufactureForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+                const btn = document.getElementById('btnSubmitManufacture');
+                const originalText = btn.innerHTML;
+                btn.disabled = true;
+                btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Creating...';
+
+                const formData = new FormData(this);
+                
+                fetch('../../ajax/create_manufacturing_order.php', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(r => r.json())
+                .then(resp => {
+                    if (resp.success) {
+                        alert(resp.message || 'Manufacturing order created successfully!');
+                        location.reload();
+                    } else {
+                        alert('Error: ' + (resp.message || 'Unknown error occurred'));
+                        btn.disabled = false;
+                        btn.innerHTML = originalText;
+                    }
+                })
+                .catch(e => {
+                    console.error(e);
+                    alert('A network error occurred');
+                    btn.disabled = false;
+                    btn.innerHTML = originalText;
+                });
+            });
+        }
+
         const typeSelect = document.getElementById('shipping_cost_type_edit');
         const amountInput = document.getElementById('shipping_cost_edit');
-        if (!typeSelect || !amountInput) return;
+        if (typeSelect && amountInput) {
+            const toggleShippingAmount = () => {
+                const manual = typeSelect.value === 'manual';
+                amountInput.disabled = !manual;
+                if (!manual) {
+                    amountInput.value = '0.00';
+                }
+            };
 
-        const toggleShippingAmount = () => {
-            const manual = typeSelect.value === 'manual';
-            amountInput.disabled = !manual;
-            if (!manual) {
-                amountInput.value = '0.00';
-            }
-        };
-
-        toggleShippingAmount();
-        typeSelect.addEventListener('change', toggleShippingAmount);
-    })();
+            toggleShippingAmount();
+            typeSelect.addEventListener('change', toggleShippingAmount);
+        }
+    });
 </script>
 <?php endif; ?>
 

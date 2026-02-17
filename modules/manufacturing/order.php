@@ -11,11 +11,12 @@ if ($orderId <= 0) {
 
 $orderStmt = $conn->prepare("
     SELECT mo.*, c.name AS customer_name, f.name AS formula_name, f.description AS formula_description, f.components_json,
-           l.name AS location_name, l.address AS location_address
+           l.name AS location_name, l.address AS location_address, p.name AS product_name, p.sku AS product_sku
     FROM manufacturing_orders mo
     JOIN customers c ON c.id = mo.customer_id
     JOIN manufacturing_formulas f ON f.id = mo.formula_id
     LEFT JOIN locations l ON l.id = mo.location_id
+    LEFT JOIN products p ON p.id = mo.product_id
     WHERE mo.id = ?
     LIMIT 1
 ");
@@ -650,7 +651,7 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
 <div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-3">
     <div>
         <h2>Manufacturing Order <?= htmlspecialchars($order['order_number']); ?></h2>
-        <p class="text-muted mb-0">Provider: <?= htmlspecialchars($order['customer_name']); ?> | Formula: <?= htmlspecialchars($order['formula_name']); ?></p>
+        <p class="text-muted mb-0">Provider: <?= htmlspecialchars($order['customer_name']); ?> | Product: <?= htmlspecialchars($order['product_name'] ?? 'N/A'); ?> | Formula: <?= htmlspecialchars($order['formula_name']); ?></p>
     </div>
     <div class="d-flex gap-2">
         <span class="badge <?= $orderBadge['class']; ?> text-uppercase">
@@ -659,6 +660,12 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
         <a href="edit.php?id=<?= $orderId; ?>" class="btn btn-outline-primary">
             <i class="fas fa-edit me-1"></i> Edit
         </a>
+        <?php if (hasPermission('manufacturing.delete')): ?>
+            <button type="button" class="btn btn-danger" 
+                    onclick="confirmDelete(<?= $orderId; ?>, '<?= htmlspecialchars($order['order_number']); ?>')">
+                <i class="fas fa-trash me-1"></i> Delete
+            </button>
+        <?php endif; ?>
         <a href="index.php" class="btn btn-outline-secondary">
             <i class="fas fa-arrow-left me-1"></i> Back to dashboard
         </a>
@@ -670,6 +677,7 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
         <div class="card h-100">
             <div class="card-header">Order snapshot</div>
             <div class="card-body">
+                <p class="mb-1"><strong>Final Product:</strong> <?= htmlspecialchars($order['product_name'] ?? 'Not set'); ?> <?= $order['product_sku'] ? '(' . htmlspecialchars($order['product_sku']) . ')' : ''; ?></p>
                 <p class="mb-1"><strong>Priority:</strong> <?= ucfirst(htmlspecialchars($order['priority'])); ?></p>
                 <p class="mb-1"><strong>Location:</strong> <?= $order['location_name'] ? htmlspecialchars($order['location_name']) . ' - ' . htmlspecialchars($order['location_address'])  : '<span class="text-muted">Not set</span>'; ?></p>
                 <p class="mb-1"><strong>Due Date:</strong> <?= $order['due_date'] ? htmlspecialchars($order['due_date']) : '<span class="text-muted">Not set</span>'; ?></p>
@@ -1564,3 +1572,11 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
 </div>
 
 <?php require_once '../../includes/footer.php'; ?>
+
+<script>
+    function confirmDelete(id, orderNumber) {
+        if (confirm('Are you sure you want to delete manufacturing order #' + orderNumber + '? This will also delete all steps, and documents associated with this order. This action cannot be undone.')) {
+            window.location.href = 'delete.php?id=' + id;
+        }
+    }
+</script>
