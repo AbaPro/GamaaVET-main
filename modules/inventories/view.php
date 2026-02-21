@@ -51,6 +51,9 @@ $products_result = $products_stmt->get_result();
         </span>
     </h2>
     <div>
+        <a href="upload.php?inventory_id=<?php echo $inventory_id; ?>" class="btn btn-outline-primary">
+            <i class="fas fa-file-upload"></i> Bulk Upload
+        </a>
         <a href="print.php?id=<?php echo $inventory_id; ?>" class="btn btn-info" target="_blank">
             <i class="fas fa-print"></i> Print
         </a>

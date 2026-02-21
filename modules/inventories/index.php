@@ -70,6 +70,9 @@ $result = $stmt->get_result();
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2>Inventories</h2>
     <div>
+        <a href="upload.php" class="btn btn-outline-primary">
+            <i class="fas fa-file-upload"></i> Bulk Upload Products Quantity
+        </a>
         <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addInventoryModal">
             <i class="fas fa-plus"></i> Add Inventory
         </button>
