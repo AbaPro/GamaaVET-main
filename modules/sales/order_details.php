@@ -181,7 +181,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_status'])) {
 // Handle shipping update
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_shipping'])) {
     try {
-        if (!in_array($_SESSION['user_role'], ['admin', 'salesman', 'accountant'])) {
+        if (!hasPermission('sales.orders.shipping.edit')) {
             throw new Exception('You are not allowed to update shipping.');
         }
 
@@ -240,21 +240,27 @@ require_once '../../includes/header.php';
                 <div class="col-md-6">
                     <h5>Customer Information</h5>
                     <p><strong>Customer:</strong> <?= htmlspecialchars($order['customer_name']) ?></p>
-                    <p><strong>Contact Person:</strong> <?= htmlspecialchars($order['contact_name']) ?></p>
-                    <p><strong>Contact Phone:</strong> <?= htmlspecialchars($order['contact_phone']) ?></p>
+                    <?php if (hasPermission('contacts.view')): ?>
+                        <p><strong>Contact Person:</strong> <?= htmlspecialchars($order['contact_name']) ?></p>
+                        <p><strong>Contact Phone:</strong> <?= htmlspecialchars($order['contact_phone']) ?></p>
+                    <?php endif; ?>
                     <p><strong>Factory:</strong> <?= $order['factory_name'] ? htmlspecialchars($order['factory_name']) : 'Not assigned' ?></p>
                 </div>
                 <div class="col-md-6">
                     <h5>Order Information</h5>
                     <p><strong>Order Date:</strong> <?= date('M d, Y', strtotime($order['order_date'])) ?></p>
                     <p><strong>Created By:</strong> <?= htmlspecialchars($order['created_by_name']) ?></p>
-                    <p><strong>Discount %:</strong> <?= number_format($order['discount_percentage'], 2) ?>%</p>
-                    <p><strong>Discount Type:</strong> <?= htmlspecialchars($discountBasisLabel) ?></p>
-                    <p><strong>Discount Amount:</strong> <?= number_format($discountAmount, 2) ?></p>
-                    <p><strong>Discounted Products:</strong> <?= (int)$order['discount_product_count'] ?></p>
-                    <p><strong>Free Samples:</strong> <?= (int)$order['free_sample_count'] ?></p>
-                    <p><strong>Shipping:</strong> <?= $order['shipping_cost_type'] === 'manual' ? number_format($shippingAmount, 2) . ' (Manual)' : 'No Shipping' ?></p>
-                    <?php if (in_array($_SESSION['user_role'], ['admin', 'salesman', 'accountant'])) : ?>
+                    <?php if (hasPermission('sales.orders.discount.view')): ?>
+                        <p><strong>Discount %:</strong> <?= number_format($order['discount_percentage'], 2) ?>%</p>
+                        <p><strong>Discount Type:</strong> <?= htmlspecialchars($discountBasisLabel) ?></p>
+                        <p><strong>Discount Amount:</strong> <?= number_format($discountAmount, 2) ?></p>
+                        <p><strong>Discounted Products:</strong> <?= (int)$order['discount_product_count'] ?></p>
+                        <p><strong>Free Samples:</strong> <?= (int)$order['free_sample_count'] ?></p>
+                    <?php endif; ?>
+                    <?php if (hasPermission('sales.orders.shipping.view')): ?>
+                        <p><strong>Shipping:</strong> <?= $order['shipping_cost_type'] === 'manual' ? number_format($shippingAmount, 2) . ' (Manual)' : 'No Shipping' ?></p>
+                    <?php endif; ?>
+                    <?php if (hasPermission('sales.orders.shipping.edit')) : ?>
                         <form method="post" class="mt-3 border-top pt-3">
                             <div class="row g-2 align-items-end">
                                 <div class="col-sm-6">
@@ -344,7 +350,7 @@ require_once '../../includes/header.php';
                                         <?php endif; ?>
                                     </td>
                                     <td>
-                                        <?php if ($item['type'] === 'final' && hasPermission('manufacturing.view')) : ?>
+                                        <?php if ($item['type'] === 'final' && hasPermission('manufacturing.orders.create')) : ?>
                                             <button type="button" class="btn btn-sm btn-outline-primary btn-manufacture" 
                                                     data-product-id="<?= $item['product_id'] ?>"
                                                     data-product-name="<?= htmlspecialchars($item['product_name']) ?>"
@@ -363,14 +369,14 @@ require_once '../../includes/header.php';
                                 <td><?= $canViewFinalPrices ? number_format($itemsSubtotal, 2) : '<span class="text-muted">Hidden</span>' ?></td>
                                 <td></td>
                             </tr>
-                            <?php if ($discountAmount > 0): ?>
+                            <?php if ($discountAmount > 0 && hasPermission('sales.orders.discount.view')): ?>
                             <tr>
                                 <td colspan="5" class="text-end"><strong>Discount:</strong></td>
                                 <td class="text-danger"><?= $canViewFinalPrices ? '-' . number_format($discountAmount, 2) : '<span class="text-muted">Hidden</span>' ?></td>
                                 <td></td>
                             </tr>
                             <?php endif; ?>
-                            <?php if ($shippingAmount > 0): ?>
+                            <?php if ($shippingAmount > 0 && hasPermission('sales.orders.shipping.view')): ?>
                             <tr>
                                 <td colspan="5" class="text-end"><strong>Shipping:</strong></td>
                                 <td>
@@ -539,7 +545,7 @@ require_once '../../includes/header.php';
     </div>
 </div>
 
-<?php if (hasPermission('manufacturing.view') || in_array($_SESSION['user_role'], ['admin', 'salesman', 'accountant'])) : ?>
+<?php if (hasPermission('manufacturing.orders.create')) : ?>
 <!-- Manufacturing Modal -->
 <div class="modal fade" id="manufactureModal" tabindex="-1" aria-labelledby="manufactureModalLabel" aria-hidden="true">
     <div class="modal-dialog">

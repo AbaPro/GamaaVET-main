@@ -1,6 +1,5 @@
 <?php
 require_once '../../includes/auth.php';
-require_once '../../includes/header.php';
 require_once '../../config/database.php';
 
 // Permission check
@@ -96,6 +95,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $_SESSION['error'] = "Error receiving items: " . $e->getMessage();
     }
 }
+
+require_once '../../includes/header.php';
 ?>
 
 <div class="container mt-4">

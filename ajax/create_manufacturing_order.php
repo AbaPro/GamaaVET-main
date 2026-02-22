@@ -5,7 +5,7 @@ require_once __DIR__ . '/../modules/manufacturing/lib.php';
 
 header('Content-Type: application/json');
 
-if (!hasPermission('manufacturing.view')) {
+if (!hasPermission('manufacturing.view') && !hasPermission('manufacturing.orders.create')) {
     echo json_encode(['success' => false, 'message' => 'Permission denied.']);
     exit;
 }

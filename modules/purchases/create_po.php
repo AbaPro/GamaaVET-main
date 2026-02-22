@@ -1,6 +1,5 @@
 <?php
 require_once '../../includes/auth.php';
-require_once '../../includes/header.php';
 require_once '../../config/database.php';
 
 // Permission check
@@ -94,6 +93,8 @@ $customers = $pdo->query("SELECT id, name FROM customers ORDER BY name")->fetchA
 
 // Set default date
 $order_date = date('Y-m-d');
+
+require_once '../../includes/header.php';
 ?>
 
 <div class="container mt-4">
@@ -237,6 +238,7 @@ $order_date = date('Y-m-d');
                             <th>SKU</th>
                             <th>Name</th>
                             <th>Category</th>
+                            <th>Stock</th>
                             <th>Action</th>
                         </tr>
                     </thead>
@@ -246,6 +248,17 @@ $order_date = date('Y-m-d');
                                 <td><?= htmlspecialchars($product['sku']) ?></td>
                                 <td><?= htmlspecialchars($product['name']) ?></td>
                                 <td><?= htmlspecialchars($product['category']) ?></td>
+                                <td>
+                                    <?php
+                                    $stock = $pdo->query(
+                                        "
+                                        SELECT SUM(quantity) 
+                                        FROM inventory_products 
+                                        WHERE product_id = " . (int)$product['id']
+                                    )->fetchColumn();
+                                    echo $stock ? number_format($stock) : '0';
+                                    ?>
+                                </td>
                                 <td>
                                     <button type="button" class="btn btn-sm btn-primary select-product"
                                         data-id="<?= $product['id'] ?>"

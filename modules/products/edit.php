@@ -9,9 +9,19 @@ if (!hasPermission('products.edit')) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $id = sanitize($_POST['id']);
+    $id = (int)($_POST['id'] ?? 0);
+    if ($id <= 0) {
+        setAlert('danger', 'Invalid product reference.');
+        redirect('index.php');
+    }
+    
     $name = sanitize($_POST['name']);
     $sku = sanitize($_POST['sku']);
+
+    if (empty($sku)) {
+        $sku = generateUniqueSku();
+    }
+
     $barcode = sanitize($_POST['barcode']);
     $type = sanitize($_POST['type']);
     $category_id = sanitize($_POST['category_id']);
@@ -22,6 +32,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $min_stock_level = !empty($_POST['min_stock_level']) ? sanitize($_POST['min_stock_level']) : 0;
     $description = sanitize($_POST['description']);
 
+    // Check if the SKU already exists for OTHER products
     $check_sql = "SELECT id FROM products WHERE sku = ? AND id != ?";
     $check_stmt = $conn->prepare($check_sql);
     $check_stmt->bind_param("si", $sku, $id);
@@ -29,7 +40,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $check_result = $check_stmt->get_result();
 
     if ($check_result->num_rows > 0) {
-        setAlert('danger', 'Another product with this SKU already exists.');
+        $duplicate = $check_result->fetch_assoc();
+        setAlert('danger', 'Another product with SKU "' . $sku . '" already exists (ID: ' . $duplicate['id'] . ').');
         $check_stmt->close();
         redirect('index.php');
     }

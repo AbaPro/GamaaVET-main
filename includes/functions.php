@@ -28,6 +28,25 @@ function generateUniqueId($prefix = 'ORD') {
     return $prefix . '-' . date('Ymd') . '-' . generateRandomString(6);
 }
 
+// Function to generate unique SKU
+function generateUniqueSku() {
+    global $conn;
+    $maxAttempts = 20;
+    for ($i = 0; $i < $maxAttempts; $i++) {
+        $candidate = 'SKU-' . date('ymd') . '-' . generateRandomString(6);
+        $stmt = $conn->prepare("SELECT id FROM products WHERE sku = ?");
+        $stmt->bind_param("s", $candidate);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $exists = $res && $res->num_rows > 0;
+        $stmt->close();
+        if (!$exists) {
+            return $candidate;
+        }
+    }
+    return 'SKU-' . date('ymd') . '-' . generateRandomString(6);
+}
+
 // Function to check if user is logged in
 function isLoggedIn() {
     return isset($_SESSION['user_id']);

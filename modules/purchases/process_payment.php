@@ -102,6 +102,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         }
     }
 }
+
+require_once '../../includes/header.php';
 ?>
 
 <div class="container mt-4">

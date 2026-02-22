@@ -64,6 +64,14 @@ $orders_stmt = $conn->prepare($orders_sql);
 $orders_stmt->bind_param("i", $customer_id);
 $orders_stmt->execute();
 $orders_result = $orders_stmt->get_result();
+
+$factories_data = [];
+$factories_result = $conn->query("SELECT id, name FROM factories ORDER BY name");
+if ($factories_result) {
+    while ($factory = $factories_result->fetch_assoc()) {
+        $factories_data[] = $factory;
+    }
+}
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -73,7 +81,39 @@ $orders_result = $orders_stmt->get_result();
             <?php echo ucfirst($customer['type_name']); ?>
         </span>
     </h2>
-    <div>
+    <div class="d-flex gap-2">
+        <div class="dropdown">
+            <button class="btn btn-outline-primary dropdown-toggle" type="button" id="customerActions" data-bs-toggle="dropdown">
+                <i class="fas fa-cog"></i> Actions
+            </button>
+            <ul class="dropdown-menu shadow-sm">
+                <?php if (hasPermission('customers.edit')): ?>
+                    <li><a class="dropdown-item edit-customer" href="#" data-id="<?php echo $customer['id']; ?>"><i class="fas fa-edit"></i> Edit</a></li>
+                <?php endif; ?>
+                <?php if (hasPermission('customers.contacts.manage')): ?>
+                    <li><a class="dropdown-item" href="contacts.php?id=<?php echo $customer['id']; ?>"><i class="fas fa-address-book"></i> Contacts</a></li>
+                <?php endif; ?>
+                <?php if (hasPermission('customers.wallet')): ?>
+                    <li><a class="dropdown-item" href="wallet.php?id=<?php echo $customer['id']; ?>"><i class="fas fa-wallet"></i> Wallet</a></li>
+                <?php endif; ?>
+                <?php if (hasPermission('customers.whatsapp_portal')): ?>
+                    <li><a class="dropdown-item" href="portal_access.php?id=<?php echo $customer['id']; ?>"><i class="fas fa-lock"></i> Portal Access</a></li>
+                    <li>
+                        <button type="button"
+                                class="dropdown-item send-portal-link"
+                                data-id="<?php echo $customer['id']; ?>"
+                                data-phone="<?php echo e(!empty($customer['whatsapp_phone']) ? $customer['whatsapp_phone'] : $customer['phone']); ?>"
+                                data-name="<?php echo e($customer['name']); ?>">
+                            <i class="fab fa-whatsapp"></i> WhatsApp Portal Link
+                        </button>
+                    </li>
+                <?php endif; ?>
+                <?php if (hasPermission('customers.delete')): ?>
+                    <li><hr class="dropdown-divider"></li>
+                    <li><a class="dropdown-item text-danger" href="index.php?delete=<?php echo $customer['id']; ?>" onclick="return confirm('Are you sure you want to delete this customer?')"><i class="fas fa-trash"></i> Delete</a></li>
+                <?php endif; ?>
+            </ul>
+        </div>
         <a href="index.php" class="btn btn-secondary">Back to Customers</a>
     </div>
 </div>
@@ -196,5 +236,179 @@ $orders_result = $orders_stmt->get_result();
         </div>
     </div>
 </div>
+
+<!-- Edit Customer Modal -->
+<div class="modal fade" id="editCustomerModal" tabindex="-1" aria-labelledby="editCustomerModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <form action="edit.php" method="POST">
+                <input type="hidden" id="edit_id" name="id">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="editCustomerModalLabel">Edit Customer</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <ul class="nav nav-tabs" id="editCustomerTabs" role="tablist">
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link active" id="edit-basic-tab" data-bs-toggle="tab" data-bs-target="#edit-basic" type="button">Basic Info</button>
+                        </li>
+                    </ul>
+                    <div class="tab-content p-3 border border-top-0 rounded-bottom" id="editCustomerTabsContent">
+                        <div class="tab-pane fade show active" id="edit-basic" role="tabpanel">
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label for="edit_name" class="form-label">Customer Name*</label>
+                                    <input type="text" class="form-control" id="edit_name" name="name" required>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label for="edit_type" class="form-label">Customer Type*</label>
+                                    <select class="form-select" id="edit_type" name="type" required>
+                                        <?php
+                                        $types = $conn->query("SELECT * FROM customer_types");
+                                        while ($type = $types->fetch_assoc()) {
+                                            echo '<option value="' . $type['id'] . '">' . ucfirst($type['name']) . '</option>';
+                                        }
+                                        ?>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label for="edit_factory_id" class="form-label">Factory</label>
+                                    <select class="form-select" id="edit_factory_id" name="factory_id">
+                                        <option value="">-- Not Assigned --</option>
+                                        <?php foreach ($factories_data as $factory): ?>
+                                            <option value="<?= $factory['id']; ?>"><?= e($factory['name']); ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label for="edit_whatsapp_phone" class="form-label">WhatsApp Number</label>
+                                    <input type="text" class="form-control" id="edit_whatsapp_phone" name="whatsapp_phone">
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label for="edit_email" class="form-label">Email</label>
+                                    <input type="email" class="form-control" id="edit_email" name="email">
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label for="edit_phone" class="form-label">Phone*</label>
+                                    <input type="text" class="form-control" id="edit_phone" name="phone" required>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <?php if ($login_region !== 'factory'): ?>
+                                <div class="col-md-6 mb-3">
+                                    <label for="edit_region" class="form-label">Region</label>
+                                    <select class="form-select" id="edit_region" name="region">
+                                        <option value="">-- None --</option>
+                                        <?php
+                                        $regions_query = $conn->query("SELECT name FROM regions ORDER BY name ASC");
+                                        while ($r = $regions_query->fetch_assoc()) {
+                                            echo '<option value="' . htmlspecialchars($r['name']) . '">' . htmlspecialchars($r['name']) . '</option>';
+                                        }
+                                        ?>
+                                    </select>
+                                </div>
+                                <?php endif; ?>
+                                <div class="col-md-6 mb-3">
+                                    <label for="edit_direct_sale" class="form-label">Direct Sale</label>
+                                    <select class="form-select" id="edit_direct_sale" name="direct_sale">
+                                        <option value="">-- None (Factory) --</option>
+                                        <option value="curva">Curva</option>
+                                        <option value="primer">Primer</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label for="edit_tax_number" class="form-label">Tax Number</label>
+                                    <input type="text" class="form-control" id="edit_tax_number" name="tax_number">
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label for="edit_wallet_balance" class="form-label">Wallet Balance</label>
+                                    <input type="number" class="form-control" id="edit_wallet_balance" name="wallet_balance" min="0" step="0.01" readonly>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="submit" class="btn btn-primary">Update Customer</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+$(document).ready(function() {
+    // Handle edit customer click
+    $(document).on('click', '.edit-customer', function(e) {
+        e.preventDefault();
+        var customer_id = $(this).data('id');
+        
+        $.ajax({
+            url: '../../ajax/get_customer_details.php',
+            type: 'GET',
+            data: { id: customer_id },
+            dataType: 'json',
+            success: function(response) {
+                if (response.success) {
+                    $('#edit_id').val(response.customer.id);
+                    $('#edit_name').val(response.customer.name);
+                    $('#edit_type').val(response.customer.type);
+                    $('#edit_email').val(response.customer.email);
+                    $('#edit_phone').val(response.customer.phone);
+                    $('#edit_factory_id').val(response.customer.factory_id);
+                    $('#edit_whatsapp_phone').val(response.customer.whatsapp_phone);
+                    $('#edit_tax_number').val(response.customer.tax_number);
+                    $('#edit_wallet_balance').val(response.customer.wallet_balance);
+                    $('#edit_region').val(response.customer.region);
+                    $('#edit_direct_sale').val(response.customer.direct_sale);
+                    
+                    $('#editCustomerModal').modal('show');
+                } else {
+                    alert('Error loading customer data: ' + response.message);
+                }
+            }
+        });
+    });
+
+    // Handle WhatsApp portal link click
+    $(document).on('click', '.send-portal-link', function() {
+        var customerId = $(this).data('id');
+        var phone = ($(this).data('phone') || '').toString().trim();
+
+        if (!phone.length) {
+            alert('Please add a WhatsApp number before sending the portal link.');
+            return;
+        }
+
+        $.ajax({
+            url: '../../ajax/generate_portal_link.php',
+            method: 'POST',
+            data: { customer_id: customerId },
+            dataType: 'json',
+            success: function(resp) {
+                if (resp.success) {
+                    var passwordMessage = resp.password_required
+                        ? 'Password protection is enabled for this portal.' + (resp.password_hint ? '\nHint: ' + resp.password_hint : '')
+                        : 'No portal password is configured yet.';
+                    alert('Portal link generated successfully.\n' + passwordMessage);
+                    window.open(resp.whatsapp_url, '_blank');
+                } else {
+                    alert(resp.message || 'Unable to send the portal link.');
+                }
+            },
+            error: function() {
+                alert('Unable to reach the server. Please try again.');
+            }
+        });
+    });
+});
+</script>
 
 <?php require_once '../../includes/footer.php'; ?>

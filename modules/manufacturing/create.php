@@ -3,6 +3,11 @@ require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
 require_once 'lib.php';
 
+if (!hasPermission('manufacturing.orders.create')) {
+    setAlert('danger', 'Access denied.');
+    redirect('../../dashboard.php');
+}
+
 $old = $_POST;
 
 $products = [];

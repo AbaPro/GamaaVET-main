@@ -35,7 +35,8 @@ if (!$po) {
 
 // Fetch PO items
 $stmt = $pdo->prepare("
-    SELECT poi.*, p.name AS product_name, p.sku, p.barcode, p.type
+    SELECT poi.*, p.name AS product_name, p.sku, p.barcode, p.type,
+           (SELECT SUM(quantity) FROM inventory_products WHERE product_id = p.id) as current_stock
     FROM purchase_order_items poi
     JOIN products p ON poi.product_id = p.id
     WHERE poi.purchase_order_id = ?
@@ -100,8 +101,10 @@ require_once '../../includes/header.php';
                 <div class="col-md-6">
                     <h5>Vendor Information</h5>
                     <p><strong>Vendor:</strong> <?= htmlspecialchars($po['vendor_name']) ?></p>
-                    <p><strong>Contact Person:</strong> <?= htmlspecialchars($po['contact_name']) ?></p>
-                    <p><strong>Contact Phone:</strong> <?= htmlspecialchars($po['contact_phone']) ?></p>
+                    <?php if (hasPermission('contacts.view')): ?>
+                        <p><strong>Contact Person:</strong> <?= htmlspecialchars($po['contact_name']) ?></p>
+                        <p><strong>Contact Phone:</strong> <?= htmlspecialchars($po['contact_phone']) ?></p>
+                    <?php endif; ?>
                 </div>
                 <div class="col-md-6">
                     <h5>Order Information</h5>
@@ -135,6 +138,7 @@ require_once '../../includes/header.php';
                                 <th>Product</th>
                                 <th>Ordered Qty</th>
                                 <th>Received Qty</th>
+                                <th>Current Stock</th>
                                 <th>Unit Price</th>
                                 <th>Total</th>
                             </tr>
@@ -146,6 +150,7 @@ require_once '../../includes/header.php';
                                     <td><?= htmlspecialchars($item['product_name']) ?></td>
                                     <td><?= $item['quantity'] ?></td>
                                     <td><?= $item['received_quantity'] ?? 0 ?></td>
+                                    <td><?= number_format($item['current_stock'] ?? 0) ?></td>
                                     <td>
                                         <?php if (canViewProductCost($item['type'])): ?>
                                             <?= number_format($item['unit_price'], 2) ?>
@@ -165,15 +170,15 @@ require_once '../../includes/header.php';
                         </tbody>
                         <tfoot>
                             <tr>
-                                <td colspan="5" class="text-end"><strong>Subtotal:</strong></td>
+                                <td colspan="6" class="text-end"><strong>Subtotal:</strong></td>
                                 <td><?= $canViewMaterialCosts ? number_format($po['total_amount'], 2) : '<span class="text-muted">Hidden</span>' ?></td>
                             </tr>
                             <tr>
-                                <td colspan="5" class="text-end"><strong>Paid Amount:</strong></td>
+                                <td colspan="6" class="text-end"><strong>Paid Amount:</strong></td>
                                 <td><?= $canViewMaterialCosts ? number_format($po['paid_amount'], 2) : '<span class="text-muted">Hidden</span>' ?></td>
                             </tr>
                             <tr>
-                                <td colspan="5" class="text-end"><strong>Balance:</strong></td>
+                                <td colspan="6" class="text-end"><strong>Balance:</strong></td>
                                 <td class="<?= ($po['total_amount'] - $po['paid_amount']) > 0 ? 'text-danger' : 'text-success' ?>">
                                     <?= $canViewMaterialCosts ? number_format($po['total_amount'] - $po['paid_amount'], 2) : '<span class="text-muted">Hidden</span>' ?>
                                 </td>
@@ -251,7 +256,7 @@ document.addEventListener('DOMContentLoaded', function() {
     var rows = document.querySelectorAll('table.table-striped tbody tr');
     rows.forEach(function(row){
         var receivedTd = row.children[3];
-        var totalTd = row.children[5];
+        var totalTd = row.children[6];
         row.dataset.originalReceived = receivedTd ? receivedTd.textContent.trim() : '0';
         row.dataset.originalTotal = totalTd ? totalTd.textContent.trim() : '';
     });
@@ -269,7 +274,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 var product = row.children[1].textContent.trim();
                 var orderedQty = parseInt(row.children[2].textContent.trim()) || 0;
                 var receivedTd = row.children[3];
-                var unitPriceText = row.children[4].textContent.trim();
+                var unitPriceText = row.children[5].textContent.trim();
                 var unitPrice = parseFloat(unitPriceText.replace(/,/g,'').replace(/[^0-9.\-]/g,'')) || 0;
 
                 // ask user for received qty (default to current received or ordered)
@@ -281,7 +286,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 // update displayed received qty and total price (unit * recQty)
                 if (receivedTd) receivedTd.textContent = recQty;
-                var totalTd = row.children[5];
+                var totalTd = row.children[6];
                 if (totalTd) totalTd.textContent = (unitPrice * recQty).toFixed(2);
 
                 // append hidden input so backend can receive per-item received quantities
@@ -297,7 +302,7 @@ document.addEventListener('DOMContentLoaded', function() {
             // revert displayed values to original when not partially-received
             rows.forEach(function(row){
                 var receivedTd = row.children[3];
-                var totalTd = row.children[5];
+                var totalTd = row.children[6];
                 if (receivedTd && row.dataset.originalReceived !== undefined) receivedTd.textContent = row.dataset.originalReceived;
                 if (totalTd && row.dataset.originalTotal !== undefined) totalTd.textContent = row.dataset.originalTotal;
             });
