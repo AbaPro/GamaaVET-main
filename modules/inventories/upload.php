@@ -42,8 +42,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
             redirect('upload.php');
         }
 
-        // Normalize header names to lowercase for comparison
-        $header = array_map(function($h) { return strtolower(trim($h)); }, $header);
+        // Remove UTF-8 BOM if present from the first header element
+        if (isset($header[0])) {
+            $header[0] = preg_replace('/^\xEF\xBB\xBF/', '', $header[0]);
+        }
+
+        // Normalize header names to lowercase for comparison and trim whitespace/hidden chars
+        $header = array_map(function($h) { return strtolower(trim($h, " \t\n\r\0\x0B\xEF\xBB\xBF")); }, $header);
         
         $name_idx = array_search('product name', $header);
         if ($name_idx === false) $name_idx = array_search('name', $header);
