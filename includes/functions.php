@@ -29,22 +29,47 @@ function generateUniqueId($prefix = 'ORD') {
 }
 
 // Function to generate unique SKU
-function generateUniqueSku() {
+function generateUniqueSku($db = null) {
     global $conn;
-    $maxAttempts = 20;
+    $c = $db ?? $conn;
+    $maxAttempts = 50;
     for ($i = 0; $i < $maxAttempts; $i++) {
         $candidate = 'SKU-' . date('ymd') . '-' . generateRandomString(6);
-        $stmt = $conn->prepare("SELECT id FROM products WHERE sku = ?");
-        $stmt->bind_param("s", $candidate);
-        $stmt->execute();
-        $res = $stmt->get_result();
-        $exists = $res && $res->num_rows > 0;
-        $stmt->close();
-        if (!$exists) {
-            return $candidate;
+        $stmt = $c->prepare("SELECT id FROM products WHERE sku = ?");
+        if ($stmt) {
+            $stmt->bind_param("s", $candidate);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            $exists = $res && $res->num_rows > 0;
+            $stmt->close();
+            if (!$exists) {
+                return $candidate;
+            }
         }
     }
-    return 'SKU-' . date('ymd') . '-' . generateRandomString(6);
+    throw new Exception("Unable to generate unique SKU. Please try again.");
+}
+
+// Function to generate unique barcode
+function generateUniqueBarcode($db = null) {
+    global $conn;
+    $c = $db ?? $conn;
+    $maxAttempts = 50;
+    for ($i = 0; $i < $maxAttempts; $i++) {
+        $candidate = (string)random_int(100000000000, 999999999999);
+        $stmt = $c->prepare("SELECT id FROM products WHERE barcode = ?");
+        if ($stmt) {
+            $stmt->bind_param("s", $candidate);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            $exists = $res && $res->num_rows > 0;
+            $stmt->close();
+            if (!$exists) {
+                return $candidate;
+            }
+        }
+    }
+    throw new Exception("Unable to generate unique barcode. Please try again.");
 }
 
 // Function to check if user is logged in

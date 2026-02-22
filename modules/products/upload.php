@@ -8,41 +8,6 @@ if (!isset($conn) || !$conn instanceof mysqli || $conn->connect_error) {
     die("Database connection failed");
 }
 
-// Helpers to generate unique SKU/barcode
-function generateUniqueSku(mysqli $conn): string {
-    $maxAttempts = 20;
-    for ($i = 0; $i < $maxAttempts; $i++) {
-        $candidate = 'SKU-' . date('ymd') . '-' . generateRandomString(6);
-        $stmt = $conn->prepare("SELECT id FROM products WHERE sku = ?");
-        $stmt->bind_param("s", $candidate);
-        $stmt->execute();
-        $res = $stmt->get_result();
-        $exists = $res && $res->num_rows > 0;
-        $stmt->close();
-        if (!$exists) {
-            return $candidate;
-        }
-    }
-    throw new Exception("Unable to generate unique SKU. Please try again.");
-}
-
-function generateUniqueBarcode(mysqli $conn): string {
-    $maxAttempts = 20;
-    for ($i = 0; $i < $maxAttempts; $i++) {
-        $candidate = (string)random_int(100000000000, 999999999999);
-        $stmt = $conn->prepare("SELECT id FROM products WHERE barcode = ?");
-        $stmt->bind_param("s", $candidate);
-        $stmt->execute();
-        $res = $stmt->get_result();
-        $exists = $res && $res->num_rows > 0;
-        $stmt->close();
-        if (!$exists) {
-            return $candidate;
-        }
-    }
-    throw new Exception("Unable to generate unique barcode. Please try again.");
-}
-
 if (!hasPermission('products.bulk_upload')) {
     setAlert('danger', 'You do not have permission to access this page.');
     redirect('../../dashboard.php');
