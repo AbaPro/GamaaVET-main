@@ -156,12 +156,18 @@ $customers = $pdo->query("SELECT id, name FROM customers ORDER BY name")->fetchA
 
 // Get products for dropdown
 $products = $pdo->query("
-    SELECT p.id, p.name, p.sku, p.unit_price, c.name as category 
+    SELECT p.id, p.name, p.sku, p.unit_price, p.category_id, p.type, p.customer_id, c.name as category 
     FROM products p
     JOIN categories c ON p.category_id = c.id
     WHERE p.type = 'final'
     ORDER BY p.name
 ")->fetchAll(PDO::FETCH_ASSOC);
+
+// Get categories for product filter
+$categories = $pdo->query("SELECT id, name FROM categories ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+
+// Get customers for product filter (final products are linked to customers/factories)
+$all_customers = $pdo->query("SELECT id, name FROM customers ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 
 require_once '../../includes/header.php';
 ?>
@@ -232,7 +238,10 @@ require_once '../../includes/header.php';
         <div class="card mb-4">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <span>Order Items</span>
-                <button type="button" class="btn btn-sm btn-primary" id="addItemBtn">Add Item</button>
+                <div class="d-flex gap-2 flex-wrap">
+                    <input type="text" class="form-control form-control-sm" id="productSearch" placeholder="Search products..." aria-label="Search products">
+                    <button type="button" class="btn btn-sm btn-primary" id="addItemBtn">Add Item</button>
+                </div>
             </div>
             <div class="card-body">
                 <div class="table-responsive">
@@ -346,6 +355,33 @@ require_once '../../includes/header.php';
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
+                <div class="bg-light p-3 rounded mb-3">
+                    <div class="row g-2">
+                        <div class="col-md-3">
+                            <label for="filter_category_modal" class="form-label small">Category</label>
+                            <select class="form-select form-select-sm" id="filter_category_modal">
+                                <option value="">All categories</option>
+                                <?php foreach ($categories as $cat) : ?>
+                                    <option value="<?= (int)$cat['id'] ?>"><?= htmlspecialchars($cat['name']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label for="filter_customer_modal" class="form-label small">Product Customer</label>
+                            <select class="form-select form-select-sm" id="filter_customer_modal">
+                                <option value="">All customers</option>
+                                <?php foreach ($all_customers as $cust) : ?>
+                                    <option value="<?= (int)$cust['id'] ?>"><?= htmlspecialchars($cust['name']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="productSearchModal" class="form-label small">Search</label>
+                            <input type="text" id="productSearchModal" class="form-control form-control-sm" placeholder="Type name or SKU...">
+                        </div>
+                    </div>
+                </div>
+
                 <div class="table-responsive">
                     <table class="table table-striped table-hover" id="productsTable">
                         <thead>
@@ -360,7 +396,8 @@ require_once '../../includes/header.php';
                         </thead>
                         <tbody>
                         <?php foreach ($products as $product) : ?>
-                            <tr>
+                            <tr data-category-id="<?= (int)($product['category_id'] ?? 0) ?>"
+                                data-customer-id="<?= (int)($product['customer_id'] ?? 0) ?>">
                                 <td><?= htmlspecialchars($product['sku']) ?></td>
                                 <td><?= htmlspecialchars($product['name']) ?></td>
                                 <td><?= htmlspecialchars($product['category']) ?></td>
@@ -371,7 +408,7 @@ require_once '../../includes/header.php';
                                         "
                                         SELECT SUM(quantity) 
                                         FROM inventory_products 
-                                        WHERE product_id = " . $product['id']
+                                        WHERE product_id = " . (int)$product['id']
                                     )->fetchColumn();
                                     echo $stock ? number_format($stock) : '0';
                                     ?>
@@ -460,8 +497,57 @@ require_once '../../includes/header.php';
         // Add item button
         $('#addItemBtn').click(function() {
             console.log("Add item button clicked");
+            if (productSearch) productSearch.value = '';
+            $('#filter_category_modal').val('');
+            $('#filter_customer_modal').val('');
+            $('#productSearchModal').val('');
+            filterProducts();
             $('#productModal').modal('show');
         });
+
+        const productModalEl = document.getElementById('productModal');
+        const productSearch = document.getElementById('productSearch');
+        const productSearchModal = document.getElementById('productSearchModal');
+        const productCategoryFilter = document.getElementById('filter_category_modal');
+        const productCustomerFilter = document.getElementById('filter_customer_modal');
+
+        const getProductRows = () => Array.from(document.querySelectorAll('#productsTable tbody tr'));
+
+        const filterProducts = () => {
+            const term = ((productSearchModal && productSearchModal.value) || (productSearch && productSearch.value) || '').toLowerCase();
+            const category = (productCategoryFilter && productCategoryFilter.value) || '';
+            const customer = (productCustomerFilter && productCustomerFilter.value) || '';
+            const rows = getProductRows();
+            rows.forEach(row => {
+                const content = row.textContent.toLowerCase();
+                const rowCategory = String(row.dataset.categoryId || '');
+                const rowCustomer = String(row.dataset.customerId || '');
+
+                const matchesTerm = term === '' || content.includes(term);
+                const matchesCategory = category === '' || rowCategory === category;
+                const matchesCustomer = customer === '' || rowCustomer === customer;
+
+                row.style.display = (matchesTerm && matchesCategory && matchesCustomer) ? '' : 'none';
+            });
+        };
+
+        if (productSearch) {
+            productSearch.addEventListener('input', () => {
+                if (productSearch.value.trim() !== '') {
+                    $('#productModal').modal('show');
+                }
+                filterProducts();
+            });
+        }
+        if (productSearchModal) {
+            productSearchModal.addEventListener('input', filterProducts);
+        }
+        if (productCategoryFilter) {
+            productCategoryFilter.addEventListener('change', filterProducts);
+        }
+        if (productCustomerFilter) {
+            productCustomerFilter.addEventListener('change', filterProducts);
+        }
 
         // Product selection
         $(document).on('click', '.select-product', function() {

@@ -64,9 +64,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_status'])) {
     }
     $new_status = $_POST['status'];
     
+    // Validate status change
+    if ($new_status === 'new' && $po['status'] !== 'new') {
+        $_SESSION['error'] = "Status cannot be changed back to New.";
+        header("Location: po_details.php?id=" . $po_id);
+        exit();
+    }
+
+    if (in_array($po['status'], ['received', 'cancelled'])) {
+        $_SESSION['error'] = "Status cannot be updated for Received or Cancelled orders.";
+        header("Location: po_details.php?id=" . $po_id);
+        exit();
+    }
+    
     try {
-        $stmt = $pdo->prepare("UPDATE purchase_orders SET status = ? WHERE id = ?");
-        $stmt->execute([$new_status, $po_id]);
         
         $_SESSION['success'] = "Purchase order status updated successfully!";
         header("Location: po_details.php?id=" . $po_id);
@@ -93,6 +104,9 @@ require_once '../../includes/header.php';
                 <a href="po_list.php" class="btn btn-sm btn-secondary">Back to List</a>
                 <?php if ($po['status'] == 'new') : ?>
                     <a href="create_po.php?edit=<?= $po_id ?>" class="btn btn-sm btn-warning">Edit</a>
+                <?php endif; ?>
+                <?php if (in_array($po['status'], ['new', 'ordered', 'partially-received']) && hasPermission('purchases.receive')) : ?>
+                    <a href="receive_items.php?po_id=<?= $po_id ?>" class="btn btn-sm btn-success">Receive Items</a>
                 <?php endif; ?>
             </div>
         </div>
@@ -221,25 +235,29 @@ require_once '../../includes/header.php';
                     <h5>Order Notes</h5>
                     <p><?= nl2br(htmlspecialchars($po['notes'] ?? 'No notes available')) ?></p>
                     
-                    <?php if ($canUpdatePOStatus) : ?>
+                    <?php if ($canUpdatePOStatus && !in_array($po['status'], ['received', 'cancelled'])) : ?>
                         <hr>
                         <h5>Update Status</h5>
                         <form method="post">
                             <div class="input-group mb-3">
                                 <select class="form-select" name="status">
-                                    <option value="new" <?= $po['status'] == 'new' ? 'selected' : '' ?>>New</option>
-                                    <option value="ordered" <?= $po['status'] == 'ordered' ? 'selected' : '' ?>>Ordered</option>
-                                    <option value="partially-received" <?= $po['status'] == 'partially-received' ? 'selected' : '' ?>>Partially Received</option>
-                                    <option value="received" <?= $po['status'] == 'received' ? 'selected' : '' ?>>Received</option>
+                                    <?php if ($po['status'] == 'new'): ?>
+                                        <option value="new" selected>New (Draft)</option>
+                                        <option value="ordered">Mark as Ordered</option>
+                                    <?php elseif ($po['status'] == 'ordered'): ?>
+                                        <option value="ordered" selected>Ordered</option>
+                                    <?php elseif ($po['status'] == 'partially-received'): ?>
+                                        <option value="partially-received" selected disabled>Partially Received</option>
+                                    <?php endif; ?>
                                     <option value="cancelled" <?= $po['status'] == 'cancelled' ? 'selected' : '' ?>>Cancelled</option>
                                 </select>
                                 <button type="submit" name="update_status" class="btn btn-primary">Update</button>
                             </div>
                         </form>
-                        
-                        <?php if (($po['total_amount'] - $po['paid_amount']) > 0) : ?>
-                            <a href="process_payment.php?po_id=<?= $po_id ?>" class="btn btn-success">Record Payment</a>
-                        <?php endif; ?>
+                    <?php endif; ?>
+
+                    <?php if ($po['status'] != 'cancelled' && ($po['total_amount'] - $po['paid_amount']) > 0) : ?>
+                        <a href="process_payment.php?po_id=<?= $po_id ?>" class="btn btn-success">Record Payment</a>
                     <?php endif; ?>
                 </div>
             </div>
@@ -247,73 +265,4 @@ require_once '../../includes/header.php';
     </div>
 </div>
 
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    var statusSelect = document.querySelector('select[name="status"]');
-    if (!statusSelect) return;
-
-    // store original received/total for possible revert
-    var rows = document.querySelectorAll('table.table-striped tbody tr');
-    rows.forEach(function(row){
-        var receivedTd = row.children[3];
-        var totalTd = row.children[6];
-        row.dataset.originalReceived = receivedTd ? receivedTd.textContent.trim() : '0';
-        row.dataset.originalTotal = totalTd ? totalTd.textContent.trim() : '';
-    });
-
-    statusSelect.addEventListener('change', function() {
-        // remove any previously created hidden inputs
-        var form = statusSelect.closest('form');
-        if (!form) return;
-        form.querySelectorAll('.partial-received-input').forEach(function(n){ n.remove(); });
-
-        if (this.value === 'partially-received') {
-            // Prompt for received qty per item and update table totals
-            rows.forEach(function(row, idx){
-                var sku = row.children[0].textContent.trim();
-                var product = row.children[1].textContent.trim();
-                var orderedQty = parseInt(row.children[2].textContent.trim()) || 0;
-                var receivedTd = row.children[3];
-                var unitPriceText = row.children[5].textContent.trim();
-                var unitPrice = parseFloat(unitPriceText.replace(/,/g,'').replace(/[^0-9.\-]/g,'')) || 0;
-
-                // ask user for received qty (default to current received or ordered)
-                var defaultVal = parseInt(receivedTd.textContent.trim()) || orderedQty;
-                var entered = prompt('Enter received quantity for "'+ product + '" (SKU: ' + sku + ', ordered: ' + orderedQty + '):', defaultVal);
-                var recQty = parseInt(entered);
-                if (isNaN(recQty) || recQty < 0) recQty = 0;
-                if (recQty > orderedQty) recQty = orderedQty;
-
-                // update displayed received qty and total price (unit * recQty)
-                if (receivedTd) receivedTd.textContent = recQty;
-                var totalTd = row.children[6];
-                if (totalTd) totalTd.textContent = (unitPrice * recQty).toFixed(2);
-
-                // append hidden input so backend can receive per-item received quantities
-                var hidden = document.createElement('input');
-                hidden.type = 'hidden';
-                // use index-based name; adjust server to read received_qty[] or change to use item ids if available
-                hidden.name = 'received_qty['+ idx +']';
-                hidden.value = recQty;
-                hidden.className = 'partial-received-input';
-                form.appendChild(hidden);
-            });
-        } else {
-            // revert displayed values to original when not partially-received
-            rows.forEach(function(row){
-                var receivedTd = row.children[3];
-                var totalTd = row.children[6];
-                if (receivedTd && row.dataset.originalReceived !== undefined) receivedTd.textContent = row.dataset.originalReceived;
-                if (totalTd && row.dataset.originalTotal !== undefined) totalTd.textContent = row.dataset.originalTotal;
-            });
-        }
-    });
-
-    // if the page initially loads with 'partially-received' selected, trigger change to prompt or restore values
-    if (statusSelect.value === 'partially-received') {
-        // slight delay so UI is ready
-        setTimeout(function(){ statusSelect.dispatchEvent(new Event('change')); }, 200);
-    }
-});
-</script>
 <?php require_once '../../includes/footer.php'; ?>

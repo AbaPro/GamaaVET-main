@@ -18,45 +18,41 @@ $roles = $conn->query("SELECT id, name, slug FROM roles WHERE is_active=1 ORDER 
 $canManageTickets = hasPermission('tickets.manage');
 $canUpdateTicketStatus = $canManageTickets || hasPermission('tickets.update_status');
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && $canUpdateTicketStatus) {
 $userId = $_SESSION['user_id'] ?? null;
 if (!isset($_SESSION['role_id']) && $userId) {
     loadUserAccessToSession($userId);
 }
 $roleId = $_SESSION['role_id'] ?? null;
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_note']) && (hasPermission('tickets.manage') || hasPermission('tickets.create'))) {
-    $note = trim($_POST['note'] ?? '');
-    if ($note !== '') {
-        $stmt = $conn->prepare("INSERT INTO ticket_notes (ticket_id, user_id, note) VALUES (?, ?, ?)");
-        $stmt->bind_param('iis', $id, $userId, $note);
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Add Note logic
+    if (isset($_POST['add_note']) && (hasPermission('tickets.manage') || hasPermission('tickets.create'))) {
+        $note = trim($_POST['note'] ?? '');
+        if ($note !== '') {
+            $stmt = $conn->prepare("INSERT INTO ticket_notes (ticket_id, user_id, note) VALUES (?, ?, ?)");
+            $stmt->bind_param('iis', $id, $userId, $note);
+            $stmt->execute();
+            $stmt->close();
+            setAlert('success', 'Note added.');
+        } else {
+            setAlert('warning', 'Note cannot be empty.');
+        }
+        redirect('view.php?id=' . $id);
+    }
+
+    // Update status logic
+    if (isset($_POST['update_ticket']) && $canUpdateTicketStatus) {
+        $status = $_POST['status'] ?? 'open';
+        $stmt = $conn->prepare("UPDATE tickets SET status=? WHERE id=?");
+        $stmt->bind_param('si', $status, $id);
         $stmt->execute();
         $stmt->close();
-        setAlert('success', 'Note added.');
-    } else {
-        setAlert('warning', 'Note cannot be empty.');
+        setAlert('success', 'Ticket status updated.');
+        redirect('view.php?id=' . $id);
     }
-    redirect('view.php?id=' . $id);
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_ticket']) && $canUpdateTicketStatus) {
-    $status = $_POST['status'] ?? 'open';
-    $stmt = $conn->prepare("UPDATE tickets SET status=? WHERE id=?");
-    $stmt->bind_param('si', $status, $id);
-    $stmt->execute();
-    $stmt->close();
-    setAlert('success','Ticket status updated.');
-    redirect('view.php?id=' . $id);
-}
-
-$attachmentStmt = $conn->prepare("SELECT id, file_path, original_name, created_at FROM ticket_attachments WHERE ticket_id = ? ORDER BY created_at ASC");
-$attachmentStmt->bind_param('i', $id);
-$attachmentStmt->execute();
-$attachments = $attachmentStmt->get_result()->fetch_all(MYSQLI_ASSOC);
-$attachmentStmt->close();
-$ticket = $conn->query("SELECT t.*, r.name AS assigned_role FROM tickets t LEFT JOIN roles r ON r.id=t.assigned_to_role_id WHERE t.id=".$id)->fetch_assoc();
-if (!$ticket) redirect('index.php');
-
+// Access control check
 if (!hasPermission('tickets.manage')) {
     $allowed = ((int)($ticket['assigned_to_role_id'] ?? 0) === (int)$roleId)
         || ((int)($ticket['assigned_to_user_id'] ?? 0) === (int)$userId)
@@ -67,14 +63,19 @@ if (!hasPermission('tickets.manage')) {
     }
 }
 
-$roles = $conn->query("SELECT id, name, slug FROM roles WHERE is_active=1 ORDER BY name")->fetch_all(MYSQLI_ASSOC);
+// Fetch attachments
+$attachmentStmt = $conn->prepare("SELECT id, file_path, original_name, created_at FROM ticket_attachments WHERE ticket_id = ? ORDER BY created_at ASC");
+$attachmentStmt->bind_param('i', $id);
+$attachmentStmt->execute();
+$attachments = $attachmentStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+$attachmentStmt->close();
+
+// Fetch notes
 $notesStmt = $conn->prepare("SELECT tn.*, u.name AS user_name FROM ticket_notes tn LEFT JOIN users u ON u.id = tn.user_id WHERE tn.ticket_id = ? ORDER BY tn.created_at DESC");
 $notesStmt->bind_param('i', $id);
 $notesStmt->execute();
 $notes = $notesStmt->get_result()->fetch_all(MYSQLI_ASSOC);
 $notesStmt->close();
-
-}
 
 $page_title = 'Ticket #' . $id;
 require_once '../../includes/header.php';

@@ -48,7 +48,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         
         // Update received quantities
         foreach ($items as $item) {
-            $received_qty = (int)$_POST['received_qty'][$item['product_id']] ?? 0;
+            $received_qty = (int)($_POST['received_qty'][$item['id']] ?? 0);
             $max_qty = $item['quantity'] - ($item['received_quantity'] ?? 0);
             
             if ($received_qty > 0 && $received_qty <= $max_qty) {
@@ -58,9 +58,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $stmt = $pdo->prepare("
                     UPDATE purchase_order_items 
                     SET received_quantity = received_quantity + ? 
-                    WHERE purchase_order_id = ? AND product_id = ?
+                    WHERE id = ?
                 ");
-                $stmt->execute([$received_qty, $po_id, $item['product_id']]);
+                $stmt->execute([$received_qty, $item['id']]);
                 
                 // Update inventory
                 $stmt = $pdo->prepare("
@@ -71,6 +71,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $stmt->execute([$item['product_id'], $received_qty, $received_qty]);
             }
             
+            // Check if this item is now fully received (considering the new quantity)
             if (($item['received_quantity'] + $received_qty) < $item['quantity']) {
                 $all_received = false;
             }
@@ -140,14 +141,14 @@ require_once '../../includes/header.php';
                                 <tr>
                                     <td>
                                         <?= htmlspecialchars($item['product_name']) ?>
-                                        <input type="hidden" name="product_ids[]" value="<?= $item['product_id'] ?>">
+                                        <input type="hidden" name="item_ids[]" value="<?= $item['id'] ?>">
                                     </td>
                                     <td><?= $item['quantity'] ?></td>
                                     <td><?= $item['received_quantity'] ?? 0 ?></td>
                                     <td><?= $pending_qty ?></td>
                                     <td>
                                         <input type="number" class="form-control" 
-                                               name="received_qty[<?= $item['product_id'] ?>]" 
+                                               name="received_qty[<?= $item['id'] ?>]" 
                                                min="0" max="<?= $pending_qty ?>" value="0">
                                     </td>
                                     <td>Main Warehouse</td>

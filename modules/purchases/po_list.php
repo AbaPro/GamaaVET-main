@@ -155,7 +155,7 @@ $vendors = $pdo->query("SELECT id, name FROM vendors ORDER BY name")->fetchAll(P
                                 </td>
                                 <td>
                                     <a href="po_details.php?id=<?= $po['id'] ?>" class="btn btn-sm btn-info">View</a>
-                                    <?php if ($po['status'] == 'new' || $po['status'] == 'ordered') : ?>
+                                    <?php if (in_array($po['status'], ['new', 'ordered', 'partially-received'])) : ?>
                                         <a href="receive_items.php?po_id=<?= $po['id'] ?>" class="btn btn-sm btn-success">Receive</a>
                                     <?php endif; ?>
                                     <?php if ($balance > 0) : ?>

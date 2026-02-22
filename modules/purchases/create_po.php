@@ -9,6 +9,19 @@ if (!hasPermission('purchases.create')) {
     exit();
 }
 
+// Block editing if the status is not 'new' (if the edit param is provided)
+if (isset($_GET['edit'])) {
+    $e_id = (int)$_GET['edit'];
+    $stmt = $pdo->prepare("SELECT status FROM purchase_orders WHERE id = ?");
+    $stmt->execute([$e_id]);
+    $st = $stmt->fetchColumn();
+    if ($st && $st !== 'new') {
+        $_SESSION['error'] = "Only purchase orders in 'New' (draft) status can be edited.";
+        header("Location: po_details.php?id=" . $e_id);
+        exit();
+    }
+}
+
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     try {
@@ -82,7 +95,7 @@ $vendors = $pdo->query("SELECT id, name FROM vendors ORDER BY name")->fetchAll(P
 
 // Get products for dropdown (include type and customer_id for filtering)
 $products = $pdo->query("
-    SELECT p.id, p.name, p.sku, p.cost_price, p.type, p.customer_id, c.name as category 
+    SELECT p.id, p.name, p.sku, p.cost_price, p.type, p.customer_id, p.category_id, c.name as category 
     FROM products p
     JOIN categories c ON p.category_id = c.id
     ORDER BY p.name
@@ -90,6 +103,9 @@ $products = $pdo->query("
 
 // Get customers for product filter
 $customers = $pdo->query("SELECT id, name FROM customers ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+
+// Get categories for product filter
+$categories = $pdo->query("SELECT id, name FROM categories ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 
 // Set default date
 $order_date = date('Y-m-d');
@@ -207,7 +223,7 @@ require_once '../../includes/header.php';
             <div class="modal-body">
                 <div class="bg-light p-3 rounded mb-3">
                     <div class="row g-2">
-                        <div class="col-md-4">
+                        <div class="col-md-3">
                             <label for="filter_type_modal" class="form-label small">Product Type</label>
                             <select class="form-select form-select-sm" id="filter_type_modal">
                                 <option value="">All types</option>
@@ -216,7 +232,16 @@ require_once '../../includes/header.php';
                                 <option value="material">Material</option>
                             </select>
                         </div>
-                        <div class="col-md-4">
+                        <div class="col-md-3">
+                            <label for="filter_category_modal" class="form-label small">Category</label>
+                            <select class="form-select form-select-sm" id="filter_category_modal">
+                                <option value="">All categories</option>
+                                <?php foreach ($categories as $cat) : ?>
+                                    <option value="<?= (int)$cat['id'] ?>"><?= htmlspecialchars($cat['name']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
                             <label for="filter_customer_modal" class="form-label small">Customer</label>
                             <select class="form-select form-select-sm" id="filter_customer_modal">
                                 <option value="">All customers</option>
@@ -225,7 +250,7 @@ require_once '../../includes/header.php';
                                 <?php endforeach; ?>
                             </select>
                         </div>
-                        <div class="col-md-4">
+                        <div class="col-md-3">
                             <label for="productSearchModal" class="form-label small">Search</label>
                             <input type="text" id="productSearchModal" class="form-control form-control-sm" placeholder="Type name or SKU...">
                         </div>
@@ -244,7 +269,9 @@ require_once '../../includes/header.php';
                     </thead>
                     <tbody>
                         <?php foreach ($products as $product) : ?>
-                            <tr data-type="<?= htmlspecialchars($product['type'] ?? '') ?>" data-customer-id="<?= (int)($product['customer_id'] ?? 0) ?>">
+                            <tr data-type="<?= htmlspecialchars($product['type'] ?? '') ?>" 
+                                data-customer-id="<?= (int)($product['customer_id'] ?? 0) ?>"
+                                data-category-id="<?= (int)($product['category_id'] ?? 0) ?>">
                                 <td><?= htmlspecialchars($product['sku']) ?></td>
                                 <td><?= htmlspecialchars($product['name']) ?></td>
                                 <td><?= htmlspecialchars($product['category']) ?></td>
@@ -307,6 +334,7 @@ require_once '../../includes/header.php';
         const productSearch = document.getElementById('productSearch');
         const productSearchModal = document.getElementById('productSearchModal');
         const productTypeFilter = document.getElementById('filter_type_modal');
+        const productCategoryFilter = document.getElementById('filter_category_modal');
         const productCustomerFilter = document.getElementById('filter_customer_modal');
 
         const getProductRows = () => Array.from(document.querySelectorAll('#productsTable tbody tr'));
@@ -314,18 +342,21 @@ require_once '../../includes/header.php';
         const filterProducts = () => {
             const term = ((productSearchModal && productSearchModal.value) || (productSearch && productSearch.value) || '').toLowerCase();
             const type = (productTypeFilter && productTypeFilter.value) || '';
+            const category = (productCategoryFilter && productCategoryFilter.value) || '';
             const customer = (productCustomerFilter && productCustomerFilter.value) || '';
             const rows = getProductRows();
             rows.forEach(row => {
                 const content = row.textContent.toLowerCase();
                 const rowType = (row.dataset.type || '').toLowerCase();
+                const rowCategory = String(row.dataset.categoryId || '');
                 const rowCustomer = String(row.dataset.customerId || '');
 
                 const matchesTerm = term === '' || content.includes(term);
                 const matchesType = type === '' || rowType === type;
+                const matchesCategory = category === '' || rowCategory === category;
                 const matchesCustomer = customer === '' || rowCustomer === customer;
 
-                row.style.display = (matchesTerm && matchesType && matchesCustomer) ? '' : 'none';
+                row.style.display = (matchesTerm && matchesType && matchesCategory && matchesCustomer) ? '' : 'none';
             });
         };
 
@@ -337,6 +368,9 @@ require_once '../../includes/header.php';
         }
         if (productTypeFilter) {
             productTypeFilter.addEventListener('change', filterProducts);
+        }
+        if (productCategoryFilter) {
+            productCategoryFilter.addEventListener('change', filterProducts);
         }
         if (productCustomerFilter) {
             productCustomerFilter.addEventListener('change', filterProducts);
@@ -350,6 +384,7 @@ require_once '../../includes/header.php';
                 productSearchModal.value = '';
             }
             if (productTypeFilter) productTypeFilter.value = '';
+            if (productCategoryFilter) productCategoryFilter.value = '';
             if (productCustomerFilter) productCustomerFilter.value = '';
             productModal.show();
         });
