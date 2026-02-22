@@ -17,12 +17,47 @@ if (isset($_GET['customer_id']) && is_numeric($_GET['customer_id']) && (int)$_GE
     $customerFilter = (int)$_GET['customer_id'];
 }
 
+$categoryFilter = null;
+if (isset($_GET['category_id']) && is_numeric($_GET['category_id']) && (int)$_GET['category_id'] > 0) {
+    $categoryFilter = (int)$_GET['category_id'];
+}
+
+$subcategoryFilter = null;
+if (isset($_GET['subcategory_id']) && is_numeric($_GET['subcategory_id']) && (int)$_GET['subcategory_id'] > 0) {
+    $subcategoryFilter = (int)$_GET['subcategory_id'];
+}
+
+$searchFilter = null;
+if (isset($_GET['search']) && !empty(trim($_GET['search']))) {
+    $searchFilter = trim($_GET['search']);
+}
+
 $customers = [];
 $customerResult = $conn->query("SELECT id, name FROM customers ORDER BY name");
 if ($customerResult) {
     while ($customerRow = $customerResult->fetch_assoc()) {
         $customers[] = $customerRow;
     }
+}
+
+$categoriesList = [];
+$catResult = $conn->query("SELECT id, name FROM categories WHERE parent_id IS NULL ORDER BY name");
+if ($catResult) {
+    while ($catRow = $catResult->fetch_assoc()) {
+        $categoriesList[] = $catRow;
+    }
+}
+
+$subcategoriesList = [];
+if ($categoryFilter) {
+    $stmt = $conn->prepare("SELECT id, name FROM categories WHERE parent_id = ? ORDER BY name");
+    $stmt->bind_param("i", $categoryFilter);
+    $stmt->execute();
+    $subResult = $stmt->get_result();
+    while ($subRow = $subResult->fetch_assoc()) {
+        $subcategoriesList[] = $subRow;
+    }
+    $stmt->close();
 }
 
 $page_title = $filterType === 'material'
@@ -91,6 +126,28 @@ if ($customerFilter !== null) {
     $paramValues[] = $customerFilter;
 }
 
+if ($categoryFilter !== null) {
+    $whereClauses[] = 'p.category_id = ?';
+    $paramTypes .= 'i';
+    $paramValues[] = $categoryFilter;
+}
+
+if ($subcategoryFilter !== null) {
+    $whereClauses[] = 'p.subcategory_id = ?';
+    $paramTypes .= 'i';
+    $paramValues[] = $subcategoryFilter;
+}
+
+if ($searchFilter !== null) {
+    $whereClauses[] = '(p.name LIKE ? OR p.sku LIKE ? OR p.barcode LIKE ? OR p.description LIKE ?)';
+    $paramTypes .= 'ssss';
+    $likeSearch = '%' . $searchFilter . '%';
+    $paramValues[] = $likeSearch;
+    $paramValues[] = $likeSearch;
+    $paramValues[] = $likeSearch;
+    $paramValues[] = $likeSearch;
+}
+
 $sql = "SELECT p.*, c1.name as category_name, c2.name as subcategory_name, cust.name as customer_name
         FROM products p
         LEFT JOIN categories c1 ON p.category_id = c1.id
@@ -156,6 +213,9 @@ $productsTableColspan = 8 + ($showUnitPriceColumn ? 1 : 0) + ($showCostPriceColu
         <a href="upload.php" class="btn btn-info me-2">
             <i class="fas fa-upload"></i> Bulk Upload
         </a>
+        <a href="export.php<?php echo '?' . http_build_query($_GET); ?>" class="btn btn-success me-2">
+            <i class="fas fa-file-csv"></i> Export CSV
+        </a>
         <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addProductModal">
             <i class="fas fa-plus"></i> Add Product
         </button>
@@ -169,7 +229,7 @@ $productsTableColspan = 8 + ($showUnitPriceColumn ? 1 : 0) + ($showCostPriceColu
         <?php endif; ?>
         <div class="me-1">
             <label class="form-label mb-1 small text-muted">Customer</label>
-            <select class="form-select form-select-sm" name="customer_id">
+            <select class="form-select form-select-sm js-searchable-select" name="customer_id" style="min-width: 150px;">
                 <option value="">All Customers</option>
                 <?php foreach ($customers as $customer): ?>
                     <option value="<?php echo (int)$customer['id']; ?>" <?php echo ($customerFilter !== null && $customerFilter === (int)$customer['id']) ? 'selected' : ''; ?>>
@@ -178,10 +238,36 @@ $productsTableColspan = 8 + ($showUnitPriceColumn ? 1 : 0) + ($showCostPriceColu
                 <?php endforeach; ?>
             </select>
         </div>
+        <div class="me-1">
+            <label class="form-label mb-1 small text-muted">Category</label>
+            <select class="form-select form-select-sm js-searchable-select" name="category_id" id="filter_category_id" style="min-width: 150px;">
+                <option value="">All Categories</option>
+                <?php foreach ($categoriesList as $cat): ?>
+                    <option value="<?php echo $cat['id']; ?>" <?php echo ($categoryFilter === (int)$cat['id']) ? 'selected' : ''; ?>>
+                        <?php echo htmlspecialchars($cat['name']); ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div class="me-1">
+            <label class="form-label mb-1 small text-muted">Subcategory</label>
+            <select class="form-select form-select-sm js-searchable-select" name="subcategory_id" id="filter_subcategory_id" style="min-width: 150px;">
+                <option value="">All Subcategories</option>
+                <?php foreach ($subcategoriesList as $sub): ?>
+                    <option value="<?php echo $sub['id']; ?>" <?php echo ($subcategoryFilter === (int)$sub['id']) ? 'selected' : ''; ?>>
+                        <?php echo htmlspecialchars($sub['name']); ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div class="me-1">
+            <label class="form-label mb-1 small text-muted">Search (Name/SKU/Barcode)</label>
+            <input type="text" name="search" class="form-control form-control-sm" value="<?php echo htmlspecialchars($searchFilter ?? ''); ?>" placeholder="Search...">
+        </div>
         <button type="submit" class="btn btn-sm btn-outline-primary">Filter</button>
-        <?php if ($customerFilter !== null): ?>
+        <?php if ($customerFilter !== null || $categoryFilter !== null || $subcategoryFilter !== null || $searchFilter !== null): ?>
             <a href="index.php<?php echo $filterType !== null ? '?type=' . urlencode($filterType) : ''; ?>" class="btn btn-sm btn-outline-secondary">
-                Reset Customer
+                Reset
             </a>
         <?php endif; ?>
     </form>
@@ -601,8 +687,10 @@ $productsTableColspan = 8 + ($showUnitPriceColumn ? 1 : 0) + ($showCostPriceColu
         }
 
         // Load subcategories when category changes
-        $('#category_id').change(function() {
+        $('#category_id, #filter_category_id').change(function() {
             var category_id = $(this).val();
+            var target = $(this).attr('id') === 'filter_category_id' ? '#filter_subcategory_id' : '#subcategory_id';
+            var default_text = $(this).attr('id') === 'filter_category_id' ? 'All Subcategories' : '-- Select Subcategory --';
             if (category_id) {
                 $.ajax({
                     url: '../../ajax/get_subcategories.php',
@@ -612,15 +700,15 @@ $productsTableColspan = 8 + ($showUnitPriceColumn ? 1 : 0) + ($showCostPriceColu
                     },
                     dataType: 'json',
                     success: function(response) {
-                        var options = '<option value="">-- Select Subcategory --</option>';
+                        var options = '<option value="">' + default_text + '</option>';
                         $.each(response.subcategories, function(index, subcategory) {
                             options += '<option value="' + subcategory.id + '">' + subcategory.name + '</option>';
                         });
-                        $('#subcategory_id').html(options);
+                        $(target).html(options);
                     }
                 });
             } else {
-                $('#subcategory_id').html('<option value="">-- Select Subcategory --</option>');
+                $(target).html('<option value="">' + default_text + '</option>');
             }
         });
 

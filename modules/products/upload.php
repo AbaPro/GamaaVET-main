@@ -58,6 +58,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
         // Process CSV file
         $file = fopen($file_path, 'r');
         $header = fgetcsv($file); // Get header row
+
+        if (!$header) {
+            setAlert('danger', 'The CSV file is empty.');
+            redirect('upload.php');
+        }
+
+        // Remove UTF-8 BOM if present from the first header element
+        if (isset($header[0])) {
+            $header[0] = preg_replace('/^\xEF\xBB\xBF/', '', $header[0]);
+        }
+
+        // Normalize header names to lowercase for comparison and trim whitespace/hidden chars
+        $header = array_map(function($h) { 
+            return strtolower(trim($h, " \t\n\r\0\x0B\xEF\xBB\xBF")); 
+        }, $header);
         
         // Check required columns
         $required_columns = ['name', 'type', 'category', 'unit_price'];
@@ -316,7 +331,21 @@ if (isset($_SESSION['bulk_upload']['step']) && $_SESSION['bulk_upload']['step'] 
 
 $page_title = 'Bulk Product Upload';
 require_once '../../includes/header.php';
+?>
 
+<script>
+$(document).ready(function() {
+    if ($.fn.select2) {
+        $('.js-searchable-select').select2({
+            placeholder: "-- Select --",
+            allowClear: true,
+            width: '100%'
+        });
+    }
+});
+</script>
+
+<?php
 // Display logic based on current step
 $current_step = $_SESSION['bulk_upload']['step'] ?? 1;
 
@@ -425,7 +454,7 @@ elseif ($current_step == 2) {
                                         <label class="form-label">CSV Customer: <strong><?php echo htmlspecialchars($customer_name); ?></strong></label>
                                     </div>
                                     <div class="col-md-8">
-                                        <select class="form-select" name="customer_<?php echo md5($customer_name); ?>" required>
+                                        <select class="form-select js-searchable-select" name="customer_<?php echo md5($customer_name); ?>" required>
                                             <option value="">Select existing customer...</option>
                                             <?php foreach ($existing_customers as $customer): ?>
                                                 <option value="<?php echo $customer['id']; ?>">
@@ -499,7 +528,7 @@ elseif ($current_step == 3) {
                                         <label class="form-label">CSV Category: <strong><?php echo htmlspecialchars($category_name); ?></strong></label>
                                     </div>
                                     <div class="col-md-8">
-                                        <select class="form-select" name="category_<?php echo md5($category_name); ?>" required>
+                                        <select class="form-select js-searchable-select" name="category_<?php echo md5($category_name); ?>" required>
                                             <option value="">Select existing category...</option>
                                             <?php foreach ($existing_categories as $category): ?>
                                                 <option value="<?php echo $category['id']; ?>">

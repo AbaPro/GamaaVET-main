@@ -4,7 +4,7 @@ require_once '../includes/functions.php';
 
 header('Content-Type: application/json');
 
-if (!hasPermission('categories.manage')) {
+if (!hasPermission('categories.manage') && !hasPermission('products.view')) {
     echo json_encode(['success' => false, 'message' => 'Unauthorized']);
     exit;
 }
