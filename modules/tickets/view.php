@@ -11,7 +11,11 @@ global $conn;
 $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 if ($id <= 0) redirect('index.php');
 
-$ticket = $conn->query("SELECT t.*, r.name AS assigned_role FROM tickets t LEFT JOIN roles r ON r.id=t.assigned_to_role_id WHERE t.id=".$id)->fetch_assoc();
+$ticket = $conn->query("SELECT t.*, r.name AS assigned_role, u.name AS assigned_user_name 
+                        FROM tickets t 
+                        LEFT JOIN roles r ON r.id = t.assigned_to_role_id 
+                        LEFT JOIN users u ON u.id = t.assigned_to_user_id 
+                        WHERE t.id = " . $id)->fetch_assoc();
 if (!$ticket) redirect('index.php');
 
 $roles = $conn->query("SELECT id, name, slug FROM roles WHERE is_active=1 ORDER BY name")->fetch_all(MYSQLI_ASSOC);
@@ -122,7 +126,7 @@ require_once '../../includes/header.php';
               <div class="small text-muted">
                 <div><strong>Priority:</strong> <?= htmlspecialchars($ticket['priority']) ?></div>
                 <div><strong>Assigned Role:</strong> <?= htmlspecialchars($ticket['assigned_role'] ?? 'None') ?></div>
-                <div><strong>Assigned User:</strong> <?= (int)($ticket['assigned_to_user_id'] ?? 0) ?: 'None' ?></div>
+                <div><strong>Assigned User:</strong> <?= htmlspecialchars($ticket['assigned_user_name'] ?? 'None') ?></div>
               </div>
               <div class="pt-2">
                 <button class="btn btn-primary" type="submit">Save</button>
@@ -133,7 +137,7 @@ require_once '../../includes/header.php';
               <div><strong>Status:</strong> <?= htmlspecialchars($ticket['status']) ?></div>
               <div><strong>Priority:</strong> <?= htmlspecialchars($ticket['priority']) ?></div>
               <div><strong>Assigned Role:</strong> <?= htmlspecialchars($ticket['assigned_role'] ?? 'None') ?></div>
-              <div><strong>Assigned User:</strong> <?= (int)($ticket['assigned_to_user_id'] ?? 0) ?: 'None' ?></div>
+              <div><strong>Assigned User:</strong> <?= htmlspecialchars($ticket['assigned_user_name'] ?? 'None') ?></div>
             </div>
           <?php endif; ?>
         </div>

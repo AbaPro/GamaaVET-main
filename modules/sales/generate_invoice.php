@@ -99,8 +99,6 @@ if ($viewMode === 'statement') {
     $pdf->Cell(0, 6, $order['internal_id'], 0, 1, 'R');
     $pdf->Cell(40, 6, 'تاريخ الطلب:', 0, 0, 'L');
     $pdf->Cell(0, 6, date('Y-m-d', strtotime($order['order_date'])), 0, 1, 'R');
-    $pdf->Cell(40, 6, 'المصنع:', 0, 0, 'L');
-    $pdf->Cell(0, 6, $order['factory_name'] ? $order['factory_name'] : 'غير محدد', 0, 1, 'R');
     $pdf->Ln(5);
     $pdf->SetFont('aealarabiya', 'B', 12);
     $pdf->Cell(120, 7, 'المنتج', 1, 0, 'C');
@@ -124,6 +122,12 @@ if ($viewMode === 'statement') {
 // Add a page for the detailed invoice
 $pdf->AddPage();
 
+// Logo
+$logoPath = '../../logo.png';
+if (file_exists($logoPath)) {
+    $pdf->Image($logoPath, 15, 18, 15, '', 'PNG');
+}
+
 // Invoice title
 $pdf->SetFont($primaryFont, 'B', 16);
 $pdf->Ln(10);
@@ -138,8 +142,6 @@ $pdf->Cell(50, 5, 'Invoice Date:', 0, 0);
 $pdf->Cell(0, 5, date('F j, Y', strtotime($order['order_date'])), 0, 1);
 $pdf->Cell(50, 5, 'Customer:', 0, 0);
 $pdf->Cell(0, 5, $order['customer_name'], 0, 1);
-$pdf->Cell(50, 5, 'Tax Number:', 0, 0);
-$pdf->Cell(0, 5, $order['tax_number'] ?? '', 0, 1);
 $pdf->Cell(50, 5, 'Address:', 0, 0);
 $pdf->MultiCell(0, 5, $order['address'] ?? '', 0, 1);
 $pdf->Cell(50, 5, 'Contact:', 0, 0);
@@ -148,8 +150,6 @@ if ($canViewInvoiceContactPhone && !empty($order['contact_phone'])) {
     $contactLine .= ' (' . $order['contact_phone'] . ')';
 }
 $pdf->Cell(0, 5, $contactLine, 0, 1);
-$pdf->Cell(50, 5, 'Factory:', 0, 0);
-$pdf->Cell(0, 5, $order['factory_name'] ? $order['factory_name'] : 'Not assigned', 0, 1);
 $pdf->Ln(5);
 
 // Items table
@@ -198,7 +198,7 @@ if ($hasDiscountSection) {
 
 $pdf->SetFont($primaryFont, '', 10);
 $pdf->Cell(50, 6, 'Shipping:', 0, 0);
-$pdf->Cell(0, 6, $shippingLabel . ' - ' . number_format($shippingAmount, 2), 0, 1);
+$pdf->Cell(0, 6, number_format($shippingAmount, 2), 0, 1);
 
 // Summary
 $pdf->SetFont($primaryFont, 'B', 10);
@@ -206,7 +206,7 @@ $pdf->Cell(140, 7, 'Items Subtotal:', 1, 0, 'R');
 $pdf->Cell(30, 7, number_format($itemsSubtotal, 2), 1, 1, 'R');
 $pdf->Cell(140, 7, 'Discount Amount:', 1, 0, 'R');
 $pdf->Cell(30, 7, '-' . number_format($order['discount_amount'], 2), 1, 1, 'R');
-$pdf->Cell(140, 7, 'Shipping (' . $shippingLabel . '):', 1, 0, 'R');
+$pdf->Cell(140, 7, 'Shipping:', 1, 0, 'R');
 $pdf->Cell(30, 7, number_format($shippingAmount, 2), 1, 1, 'R');
 $pdf->Cell(140, 7, 'Total:', 1, 0, 'R');
 $pdf->Cell(30, 7, number_format($order['total_amount'], 2), 1, 1, 'R');

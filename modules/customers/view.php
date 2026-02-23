@@ -55,7 +55,8 @@ $primary_address = $address_stmt->get_result()->fetch_assoc();
 $address_stmt->close();
 
 // Get recent orders (limit 5)
-$orders_sql = "SELECT o.id, o.internal_id, o.order_date, o.total_amount, o.paid_amount, o.status 
+$orders_sql = "SELECT o.id, o.internal_id, o.order_date, o.total_amount, o.paid_amount, o.status,
+               (SELECT SUM(quantity) FROM order_items WHERE order_id = o.id) as total_quantity 
                FROM orders o 
                WHERE o.customer_id = ? 
                ORDER BY o.order_date DESC 
@@ -64,6 +65,22 @@ $orders_stmt = $conn->prepare($orders_sql);
 $orders_stmt->bind_param("i", $customer_id);
 $orders_stmt->execute();
 $orders_result = $orders_stmt->get_result();
+
+// Get customer products with inventory details
+$customer_products_sql = "SELECT p.id, p.name, p.sku, p.type, 
+                                 i.name as inventory_name, 
+                                 l.name as location_name, 
+                                 ip.quantity
+                          FROM products p
+                          LEFT JOIN inventory_products ip ON p.id = ip.product_id
+                          LEFT JOIN inventories i ON ip.inventory_id = i.id
+                          LEFT JOIN locations l ON i.location_id = l.id
+                          WHERE p.customer_id = ?
+                          ORDER BY p.name ASC, i.name ASC";
+$cp_stmt = $conn->prepare($customer_products_sql);
+$cp_stmt->bind_param("i", $customer_id);
+$cp_stmt->execute();
+$customer_products_result = $cp_stmt->get_result();
 
 $factories_data = [];
 $factories_result = $conn->query("SELECT id, name FROM factories ORDER BY name");
@@ -198,6 +215,7 @@ if ($factories_result) {
                             <tr>
                                 <th>Order ID</th>
                                 <th>Date</th>
+                                <th>Quantity</th>
                                 <th>Total Amount</th>
                                 <th>Paid Amount</th>
                                 <th>Status</th>
@@ -210,6 +228,7 @@ if ($factories_result) {
                                     <tr>
                                         <td><?php echo e($order['internal_id']); ?></td>
                                         <td><?php echo date('M d, Y', strtotime($order['order_date'])); ?></td>
+                                        <td><?php echo number_format($order['total_quantity'] ?? 0); ?></td>
                                         <td><?php echo number_format($order['total_amount'], 2); ?></td>
                                         <td><?php echo number_format($order['paid_amount'], 2); ?></td>
                                         <td>
@@ -226,7 +245,61 @@ if ($factories_result) {
                                 <?php endwhile; ?>
                             <?php else: ?>
                                 <tr>
-                                    <td colspan="6" class="text-center">No recent orders found</td>
+                                    <td colspan="7" class="text-center">No recent orders found</td>
+                                </tr>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4 mb-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">Customer Products & Inventory</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Product Name</th>
+                                <th>SKU</th>
+                                <th>Type</th>
+                                <th>Inventory</th>
+                                <th>Location</th>
+                                <th>Quantity</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if ($customer_products_result->num_rows > 0): ?>
+                                <?php while ($item = $customer_products_result->fetch_assoc()): ?>
+                                    <tr>
+                                        <td><?php echo e($item['name']); ?></td>
+                                        <td><?php echo e($item['sku'] ?? '-'); ?></td>
+                                        <td>
+                                            <span class="badge bg-<?php echo getProductTypeColor($item['type']); ?>">
+                                                <?php echo ucfirst($item['type']); ?>
+                                            </span>
+                                        </td>
+                                        <td><?php echo $item['inventory_name'] ? e($item['inventory_name']) : '<span class="text-muted">No inventory records</span>'; ?></td>
+                                        <td><?php echo $item['location_name'] ? e($item['location_name']) : '-'; ?></td>
+                                        <td><?php echo $item['quantity'] !== null ? number_format($item['quantity']) : '-'; ?></td>
+                                        <td>
+                                            <a href="../products/index.php?search=<?php echo urlencode($item['sku']); ?>" class="btn btn-sm btn-outline-info">
+                                                <i class="fas fa-search"></i> Find
+                                            </a>
+                                        </td>
+                                    </tr>
+                                <?php endwhile; ?>
+                            <?php else: ?>
+                                <tr>
+                                    <td colspan="7" class="text-center">No linked products found for this customer</td>
                                 </tr>
                             <?php endif; ?>
                         </tbody>

@@ -30,9 +30,10 @@ $inventory = $inventory_result->fetch_assoc();
 $inventory_stmt->close();
 
 // Get inventory products
-$products_sql = "SELECT p.id, p.name, p.sku, p.barcode, ip.quantity, p.min_stock_level 
+$products_sql = "SELECT p.id, p.name, p.sku, p.barcode, ip.quantity, p.min_stock_level, c.name AS customer_name 
                  FROM inventory_products ip 
                  JOIN products p ON ip.product_id = p.id 
+                 LEFT JOIN customers c ON p.customer_id = c.id
                  WHERE ip.inventory_id = ? 
                  ORDER BY p.name";
 $products_stmt = $conn->prepare($products_sql);
@@ -82,6 +83,7 @@ header('Content-Type: text/html; charset=utf-8');
             <tr>
                 <th>SKU</th>
                 <th>Product Name</th>
+                <th>Customer Name</th>
                 <th>Barcode</th>
                 <th>Quantity</th>
                 <th>Min Stock</th>
@@ -94,6 +96,7 @@ header('Content-Type: text/html; charset=utf-8');
                     <tr>
                         <td><?php echo htmlspecialchars($product['sku']); ?></td>
                         <td><?php echo htmlspecialchars($product['name']); ?></td>
+                        <td><?php echo $product['customer_name'] ? htmlspecialchars($product['customer_name']) : 'N/A'; ?></td>
                         <td><?php echo htmlspecialchars($product['barcode']); ?></td>
                         <td><?php echo $product['quantity']; ?></td>
                         <td><?php echo $product['min_stock_level']; ?></td>
@@ -108,7 +111,7 @@ header('Content-Type: text/html; charset=utf-8');
                 <?php endwhile; ?>
             <?php else: ?>
                 <tr>
-                    <td colspan="6" class="text-center">No products found in this inventory</td>
+                    <td colspan="7" class="text-center">No products found in this inventory</td>
                 </tr>
             <?php endif; ?>
         </tbody>

@@ -100,7 +100,7 @@ require_once '../../includes/header.php';
       </div>
       <div class="col-md-4">
         <label class="form-label">Assign to Role</label>
-        <select name="assigned_to_role_id" class="form-select">
+        <select name="assigned_to_role_id" id="assigned_to_role_id" class="form-select">
           <option value="">—</option>
           <?php foreach ($roles as $r): ?>
             <option value="<?= (int)$r['id'] ?>"><?= htmlspecialchars($r['name']) ?> (<?= htmlspecialchars($r['slug']) ?>)</option>
@@ -109,7 +109,9 @@ require_once '../../includes/header.php';
       </div>
       <div class="col-md-4">
         <label class="form-label">Assign to User (optional)</label>
-        <input type="number" name="assigned_to_user_id" class="form-control" placeholder="User ID">
+        <select name="assigned_to_user_id" id="assigned_to_user_id" class="form-select">
+          <option value="">—</option>
+        </select>
       </div>
     </div>
     <div class="mt-4">
@@ -118,5 +120,42 @@ require_once '../../includes/header.php';
     </div>
   </form>
 </div>
+
+<script>
+document.getElementById('assigned_to_role_id').addEventListener('change', function() {
+    const roleId = this.value;
+    const userSelect = document.getElementById('assigned_to_user_id');
+    
+    // Clear and disable user dropdown while fetching
+    userSelect.innerHTML = '<option value="">Loading...</option>';
+    userSelect.disabled = true;
+
+    if (!roleId) {
+        userSelect.innerHTML = '<option value="">—</option>';
+        userSelect.disabled = false;
+        return;
+    }
+
+    fetch('../../ajax/get_users_by_role.php?role_id=' + roleId)
+        .then(response => response.json())
+        .then(data => {
+            userSelect.innerHTML = '<option value="">—</option>';
+            if (data.success && data.users) {
+                data.users.forEach(user => {
+                    const option = document.createElement('option');
+                    option.value = user.id;
+                    option.textContent = user.name;
+                    userSelect.appendChild(option);
+                });
+            }
+            userSelect.disabled = false;
+        })
+        .catch(error => {
+            console.error('Error fetching users:', error);
+            userSelect.innerHTML = '<option value="">— Error loading users —</option>';
+            userSelect.disabled = false;
+        });
+});
+</script>
 
 <?php require_once '../../includes/footer.php'; ?>
