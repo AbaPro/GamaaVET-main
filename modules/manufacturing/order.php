@@ -36,32 +36,56 @@ if (!is_array($formulaComponents)) {
     $formulaComponents = [];
 }
 
-// Initialize sourcing components if they don't exist yet
-$checkSourcingStmt = $conn->prepare("SELECT COUNT(*) as count FROM manufacturing_sourcing_components WHERE manufacturing_order_id = ?");
-$checkSourcingStmt->bind_param("i", $orderId);
-$checkSourcingStmt->execute();
-$sourcingCheckResult = $checkSourcingStmt->get_result();
-$sourcingCheckRow = $sourcingCheckResult->fetch_assoc();
-$checkSourcingStmt->close();
+// Check and sync sourcing components to match current formula components
+$existingSourcing = [];
+$getSourcingStmt = $conn->prepare("SELECT id, formula_component_index FROM manufacturing_sourcing_components WHERE manufacturing_order_id = ?");
+$getSourcingStmt->bind_param("i", $orderId);
+$getSourcingStmt->execute();
+$res = $getSourcingStmt->get_result();
+while ($row = $res->fetch_assoc()) {
+    $existingSourcing[$row['formula_component_index']] = $row['id'];
+}
+$getSourcingStmt->close();
 
-if ($sourcingCheckRow['count'] == 0 && !empty($formulaComponents)) {
-    // Insert sourcing components for this order
-    $insertSourcingStmt = $conn->prepare("
-        INSERT INTO manufacturing_sourcing_components 
-        (manufacturing_order_id, formula_component_index, product_id, component_name, required_quantity, unit, available_quantity)
-        VALUES (?, ?, ?, ?, ?, ?, 0)
-    ");
-    
-    foreach ($formulaComponents as $index => $component) {
-        $productId = $component['product_id'] ?? null;
-        $componentName = $component['name'] ?? '';
-        $requiredQty = $component['quantity'] ?? 0;
-        $unit = $component['unit'] ?? '';
-        
+$formulaIndices = [];
+foreach ($formulaComponents as $index => $component) {
+    $formulaIndices[] = $index;
+    $productId = $component['product_id'] ?? null;
+    $componentName = $component['name'] ?? '';
+    $requiredQty = $component['quantity'] ?? $component['ratio'] ?? 0;
+    $unit = $component['unit'] ?? '';
+
+    if (isset($existingSourcing[$index])) {
+        // Update existing record to match current formula data
+        $updateSourcingStmt = $conn->prepare("
+            UPDATE manufacturing_sourcing_components 
+            SET product_id = ?, component_name = ?, required_quantity = ?, unit = ?
+            WHERE id = ?
+        ");
+        $updateSourcingStmt->bind_param("isdsi", $productId, $componentName, $requiredQty, $unit, $existingSourcing[$index]);
+        $updateSourcingStmt->execute();
+        $updateSourcingStmt->close();
+    } else {
+        // Insert new record for new formula component
+        $insertSourcingStmt = $conn->prepare("
+            INSERT INTO manufacturing_sourcing_components 
+            (manufacturing_order_id, formula_component_index, product_id, component_name, required_quantity, unit, available_quantity)
+            VALUES (?, ?, ?, ?, ?, ?, 0)
+        ");
         $insertSourcingStmt->bind_param("iiisds", $orderId, $index, $productId, $componentName, $requiredQty, $unit);
         $insertSourcingStmt->execute();
+        $insertSourcingStmt->close();
     }
-    $insertSourcingStmt->close();
+}
+
+// Remove sourcing components that are no longer in the formula
+foreach ($existingSourcing as $index => $id) {
+    if (!in_array($index, $formulaIndices)) {
+        $deleteSourcingStmt = $conn->prepare("DELETE FROM manufacturing_sourcing_components WHERE id = ?");
+        $deleteSourcingStmt->bind_param("i", $id);
+        $deleteSourcingStmt->execute();
+        $deleteSourcingStmt->close();
+    }
 }
 
 // Initialize quality validation checklist if it doesn't exist yet for quality step
