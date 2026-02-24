@@ -38,6 +38,9 @@ $stmt = $pdo->prepare("
 $stmt->execute([$po_id]);
 $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+// Fetch inventories for the location dropdown
+$inventories = $pdo->query("SELECT id, name FROM inventories WHERE is_active = 1 ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+
 // Handle item receipt
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     try {
@@ -49,6 +52,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         // Update received quantities
         foreach ($items as $item) {
             $received_qty = (int)($_POST['received_qty'][$item['id']] ?? 0);
+            $inventory_id = (int)($_POST['inventory_id'][$item['id']] ?? 1);
             $max_qty = $item['quantity'] - ($item['received_quantity'] ?? 0);
             
             if ($received_qty > 0 && $received_qty <= $max_qty) {
@@ -65,10 +69,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 // Update inventory
                 $stmt = $pdo->prepare("
                     INSERT INTO inventory_products (inventory_id, product_id, quantity)
-                    VALUES (1, ?, ?)
+                    VALUES (?, ?, ?)
                     ON DUPLICATE KEY UPDATE quantity = quantity + ?
                 ");
-                $stmt->execute([$item['product_id'], $received_qty, $received_qty]);
+                $stmt->execute([$inventory_id, $item['product_id'], $received_qty, $received_qty]);
             }
             
             // Check if this item is now fully received (considering the new quantity)
@@ -151,9 +155,17 @@ require_once '../../includes/header.php';
                                                name="received_qty[<?= $item['id'] ?>]" 
                                                min="0" max="<?= $pending_qty ?>" value="0">
                                     </td>
-                                    <td>Main Warehouse</td>
+                                    <td>
+                                        <select class="form-select" name="inventory_id[<?= $item['id'] ?>]">
+                                            <?php foreach ($inventories as $inv) : ?>
+                                                <option value="<?= $inv['id'] ?>" <?= $inv['id'] == 1 ? 'selected' : '' ?>>
+                                                    <?= htmlspecialchars($inv['name']) ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </td>
                                 </tr>
-                            <?php endforeach; ?>
+<?php endforeach; ?>
                         </tbody>
                     </table>
                 </div>
@@ -175,3 +187,21 @@ require_once '../../includes/header.php';
 </div>
 
 <?php require_once '../../includes/footer.php'; ?>
+
+<script>
+$(document).ready(function() {
+    $('form').on('submit', function(e) {
+        let someReceived = false;
+        $('input[name^="received_qty"]').each(function() {
+            if (parseInt($(this).val()) > 0) {
+                someReceived = true;
+            }
+        });
+        
+        if (!someReceived) {
+            e.preventDefault();
+            alert('Please enter a quantity for at least one item.');
+        }
+    });
+});
+</script>

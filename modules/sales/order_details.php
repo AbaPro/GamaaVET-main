@@ -402,7 +402,7 @@ require_once '../../includes/header.php';
                             <tr>
                                 <td colspan="5" class="text-end"><strong>Balance:</strong></td>
                                 <td class="<?= $balance > 0 ? 'text-danger' : 'text-success' ?>">
-                                    <?= $canViewFinalPrices ? number_format($balance, 2) : '<span class="text-muted">Hidden</span>' ?>
+                                    <?= $canViewFinalPrices ? number_format($balance * -1, 2) : '<span class="text-muted">Hidden</span>' ?>
                                 </td>
                                 <td></td>
                             </tr>

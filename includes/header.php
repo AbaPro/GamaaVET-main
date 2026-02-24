@@ -260,10 +260,32 @@
                         <?php endif; ?>
 
                         <?php if (hasPermission('manufacturing.view') && $login_region === 'factory'): ?>
-                            <li class="nav-item">
-                                <a class="nav-link" href="<?= BASE_URL ?>modules/manufacturing/">
+                            <li class="nav-item dropdown">
+                                <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
                                     <i class="fas fa-industry me-1"></i> Manufacturing
                                 </a>
+                                <ul class="dropdown-menu">
+                                    <li>
+                                        <a class="dropdown-item" href="<?= BASE_URL ?>modules/manufacturing/">
+                                            <i class="fas fa-list me-2"></i> Orders List
+                                        </a>
+                                    </li>
+                                    <li>
+                                        <a class="dropdown-item" href="<?= BASE_URL ?>modules/manufacturing/formulas.php">
+                                            <i class="fas fa-flask me-2"></i> Formulas
+                                        </a>
+                                    </li>
+                                    <?php if (hasPermission('manufacturing.orders.create')): ?>
+                                        <li>
+                                            <hr class="dropdown-divider">
+                                        </li>
+                                        <li>
+                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/manufacturing/create.php">
+                                                <i class="fas fa-plus me-2"></i> New Order
+                                            </a>
+                                        </li>
+                                    <?php endif; ?>
+                                </ul>
                             </li>
                         <?php endif; ?>
 

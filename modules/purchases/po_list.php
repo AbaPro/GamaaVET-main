@@ -18,7 +18,7 @@ $date_to = $_GET['date_to'] ?? '';
 
 // Build query
 $query = "SELECT po.id, po.order_date, po.total_amount, po.paid_amount, 
-                 po.status, v.name AS vendor_name 
+                 po.status, po.warehouse_location, v.name AS vendor_name 
           FROM purchase_orders po
           JOIN vendors v ON po.vendor_id = v.id
           WHERE 1=1";
@@ -113,6 +113,7 @@ $vendors = $pdo->query("SELECT id, name FROM vendors ORDER BY name")->fetchAll(P
                         <tr>
                             <th>PO #</th>
                             <th>Vendor</th>
+                            <th>Destination</th>
                             <th>Date</th>
                             <th>Total</th>
                             <th>Paid</th>
@@ -142,6 +143,7 @@ $vendors = $pdo->query("SELECT id, name FROM vendors ORDER BY name")->fetchAll(P
                                     </button>
                                 </td>
                                 <td><?= htmlspecialchars($po['vendor_name']) ?></td>
+                                <td><?= htmlspecialchars($po['warehouse_location'] ?? 'N/A') ?></td>
                                 <td><?= date('M d, Y', strtotime($po['order_date'])) ?></td>
                                 <td><?= number_format($po['total_amount'], 2) ?></td>
                                 <td><?= number_format($po['paid_amount'], 2) ?></td>

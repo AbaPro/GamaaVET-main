@@ -175,7 +175,7 @@ $customers = $pdo->query("SELECT id, name FROM customers ORDER BY name")->fetchA
                                 <td><?= number_format($order['total_amount'], 2) ?></td>
                                 <td><?= number_format($order['paid_amount'], 2) ?></td>
                                 <td class="<?= $balance > 0 ? 'text-danger' : 'text-success' ?>">
-                                    <?= number_format($balance, 2) ?>
+                                    <?= number_format($balance * -1, 2) ?>
                                 </td>
                                 <td>
                                     <span class="badge <?= $status_class[$order['status']] ?>">

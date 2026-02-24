@@ -25,6 +25,21 @@ if (isset($_GET['edit'])) {
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     try {
+        if (empty($_POST['items'])) {
+            throw new Exception("Please add at least one item to the purchase order.");
+        }
+
+        $valid_items_count = 0;
+        foreach ($_POST['items'] as $item) {
+            if ($item['product_id'] && $item['quantity'] > 0) {
+                $valid_items_count++;
+            }
+        }
+
+        if ($valid_items_count === 0) {
+            throw new Exception("Please ensure at least one item has a quantity greater than zero.");
+        }
+
         $pdo->beginTransaction();
 
         // Insert purchase order
@@ -84,8 +99,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $pdo->commit();
         header("Location: po_details.php?id=" . $po_id);
         exit();
-    } catch (PDOException $e) {
-        $pdo->rollBack();
+    } catch (Exception $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
         $_SESSION['error'] = "Error creating purchase order: " . $e->getMessage();
     }
 }
@@ -109,6 +126,9 @@ $categories = $pdo->query("SELECT id, name FROM categories WHERE parent_id IS NU
 
 // Get subcategories for product filter
 $subcategories = $pdo->query("SELECT id, name, parent_id FROM categories WHERE parent_id IS NOT NULL ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+
+// Get warehouse locations for dropdown
+$locations = $pdo->query("SELECT id, name FROM locations WHERE is_active = 1 ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 
 // Set default date
 $order_date = date('Y-m-d');
@@ -155,7 +175,12 @@ require_once '../../includes/header.php';
                     <div class="col-md-3">
                         <div class="mb-3">
                             <label for="warehouse_location" class="form-label">Warehouse Destination</label>
-                            <input type="text" class="form-control" id="warehouse_location" name="warehouse_location" placeholder="e.g. Warehouse A / Dock 4">
+                            <select class="form-select" id="warehouse_location" name="warehouse_location" required>
+                                <option value="">Select Warehouse</option>
+                                <?php foreach ($locations as $loc) : ?>
+                                    <option value="<?= htmlspecialchars($loc['name']) ?>"><?= htmlspecialchars($loc['name']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
                             <small class="text-muted">Where this PO should be delivered.</small>
                         </div>
                     </div>
@@ -495,6 +520,29 @@ require_once '../../includes/header.php';
         $(document).on('change', '.item-qty, .item-price', function() {
             updateRowTotal($(this).closest('tr'));
             updatePOTotal();
+        });
+
+        // Validate form on submit
+        $('#poForm').on('submit', function(e) {
+            const itemCount = $('#itemsTable tbody tr').length;
+            if (itemCount === 0) {
+                e.preventDefault();
+                alert('Please add at least one item to the purchase order.');
+                return false;
+            }
+
+            let validQty = false;
+            $('.item-qty').each(function() {
+                if (parseFloat($(this).val()) > 0) {
+                    validQty = true;
+                }
+            });
+
+            if (!validQty) {
+                e.preventDefault();
+                alert('Please ensure at least one item has a quantity greater than zero.');
+                return false;
+            }
         });
 
         function updateRowTotal(row) {

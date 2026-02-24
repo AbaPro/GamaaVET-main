@@ -191,7 +191,7 @@ $selectedFormulaId = $old['formula_id'] ?? '';
             <div class="row g-3">
                 <div class="col-md-3">
                     <label class="form-label">Provider / Customer</label>
-                    <select class="form-select" name="customer_id" id="customer_id" required>
+                    <select class="form-select select2" name="customer_id" id="customer_id" required>
                         <option value="">Select provider</option>
                         <?php foreach ($customers as $customer): ?>
                             <option value="<?php echo $customer['id']; ?>" <?php echo $selectedProvider == $customer['id'] ? 'selected' : ''; ?>>
@@ -229,7 +229,7 @@ $selectedFormulaId = $old['formula_id'] ?? '';
             <div class="row g-3 mt-3">
                 <div class="col-md-4">
                     <label class="form-label">Final Product</label>
-                    <select class="form-select" name="product_id" id="product_id" required disabled>
+                    <select class="form-select select2" name="product_id" id="product_id" required disabled>
                         <option value="">Select provider first</option>
                     </select>
                 </div>
@@ -253,7 +253,7 @@ $selectedFormulaId = $old['formula_id'] ?? '';
                     <p class="text-muted small">Each provider maintains unique formulas for their orders. Pick one to reuse their ratios, or build a bespoke version using the builder on the right.</p>
                     <div class="mb-3">
                         <label class="form-label">Existing formula</label>
-                        <select class="form-select" name="formula_id" id="formula_id" disabled>
+                        <select class="form-select select2" name="formula_id" id="formula_id" disabled>
                             <option value="">Select provider first</option>
                         </select>
                     </div>
@@ -388,7 +388,7 @@ $selectedFormulaId = $old['formula_id'] ?? '';
         const row = `
             <tr data-index="${idx}">
                 <td>
-                    <select class="form-select form-select-sm component-product" name="components[${idx}][product_id]" required ${selectDisabled}>
+                    <select class="form-select form-select-sm component-product select2-ingredients" name="components[${idx}][product_id]" required ${selectDisabled}>
                         ${optionsHtml}
                     </select>
                     <input type="hidden" class="component-name" name="components[${idx}][name]" value="${nameValue}">
@@ -405,6 +405,14 @@ $selectedFormulaId = $old['formula_id'] ?? '';
         `;
         componentsBody.append(row);
         const addedRow = componentsBody.find(`tr[data-index="${idx}"]`);
+        
+        if ($.fn.select2) {
+            addedRow.find('.select2-ingredients').select2({
+                width: '100%',
+                placeholder: 'Search product...'
+            });
+        }
+
         syncComponentName(addedRow);
     }
 
@@ -452,8 +460,14 @@ $selectedFormulaId = $old['formula_id'] ?? '';
                 });
                 productSelect.html(options);
                 productSelect.prop('disabled', resp.products.length === 0);
+                if ($.fn.select2) {
+                    productSelect.trigger('change.select2');
+                }
                 if (pendingProductSelection) {
                     productSelect.val(pendingProductSelection);
+                    if ($.fn.select2) {
+                        productSelect.trigger('change.select2');
+                    }
                 }
             })
             .fail(function () {
@@ -483,8 +497,14 @@ $selectedFormulaId = $old['formula_id'] ?? '';
                 });
                 formulaSelect.html(options);
                 formulaSelect.prop('disabled', loadedFormulas.length === 0);
+                if ($.fn.select2) {
+                    formulaSelect.trigger('change.select2');
+                }
                 if (pendingFormulaSelection) {
                     formulaSelect.val(pendingFormulaSelection);
+                    if ($.fn.select2) {
+                        formulaSelect.trigger('change.select2');
+                    }
                     const match = loadedFormulas.find(f => String(f.id) === String(pendingFormulaSelection));
                     if (match) {
                         renderFormulaPreview(match);
@@ -509,6 +529,12 @@ $selectedFormulaId = $old['formula_id'] ?? '';
     });
 
     $(document).ready(function () {
+        if ($.fn.select2) {
+            $('.select2').select2({
+                width: '100%'
+            });
+        }
+
         addComponentButton.on('click', function () {
             if (!availableProducts.length) {
                 return;

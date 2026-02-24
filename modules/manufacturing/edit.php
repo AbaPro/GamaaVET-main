@@ -140,7 +140,7 @@ $statuses = ['getting' => 'Getting', 'preparing' => 'Preparing', 'delivering' =>
                 </div>
                 <div class="col-md-4">
                     <label class="form-label">Location</label>
-                    <select class="form-select" name="location_id" required>
+                    <select class="form-select select2" name="location_id" required>
                         <option value="">Select location</option>
                         <?php foreach ($locations as $location): ?>
                             <option value="<?php echo $location['id']; ?>" <?php echo (isset($old['location_id']) ? $old['location_id'] : $order['location_id']) == $location['id'] ? 'selected' : ''; ?>>
@@ -151,7 +151,7 @@ $statuses = ['getting' => 'Getting', 'preparing' => 'Preparing', 'delivering' =>
                 </div>
                 <div class="col-md-4">
                     <label class="form-label">Final Product</label>
-                    <select class="form-select" name="product_id">
+                    <select class="form-select select2" name="product_id">
                         <option value="">Select product</option>
                         <?php foreach ($products as $product): ?>
                             <option value="<?php echo $product['id']; ?>" <?php echo (isset($old['product_id']) ? $old['product_id'] : $order['product_id']) == $product['id'] ? 'selected' : ''; ?>>
@@ -213,3 +213,13 @@ $statuses = ['getting' => 'Getting', 'preparing' => 'Preparing', 'delivering' =>
 </form>
 
 <?php require_once '../../includes/footer.php'; ?>
+
+<script>
+$(document).ready(function () {
+    if ($.fn.select2) {
+        $('.select2').select2({
+            width: '100%'
+        });
+    }
+});
+</script>

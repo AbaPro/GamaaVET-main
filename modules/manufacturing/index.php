@@ -14,6 +14,7 @@ require_once '../../includes/header.php';
 
 $statusFilter = sanitize($_GET['status'] ?? '');
 $providerFilter = isset($_GET['provider_id']) ? (int)$_GET['provider_id'] : 0;
+$productFilter = isset($_GET['product_id']) ? (int)$_GET['product_id'] : 0;
 
 $customers = [];
 $customerResult = $conn->query("SELECT id, name FROM customers ORDER BY name");
@@ -22,6 +23,15 @@ if ($customerResult) {
         $customers[] = $customerRow;
     }
 }
+
+$allProducts = [];
+$productResult = $conn->query("SELECT id, name, sku FROM products ORDER BY name");
+if ($productResult) {
+    while ($pRow = $productResult->fetch_assoc()) {
+        $allProducts[] = $pRow;
+    }
+}
+
 $whereClauses = [];
 
 if ($statusFilter) {
@@ -29,6 +39,9 @@ if ($statusFilter) {
 }
 if ($providerFilter > 0) {
     $whereClauses[] = "mo.customer_id = " . (int)$providerFilter;
+}
+if ($productFilter > 0) {
+    $whereClauses[] = "mo.product_id = " . (int)$productFilter;
 }
 
 $ordersQuery = "
@@ -98,6 +111,9 @@ if (!empty($stepIds)) {
         <p class="text-muted mb-0">Track every staged order from getting materials through preparation and delivery, with automatic Excel/PDF handoffs at each transition.</p>
     </div>
     <div class="d-flex gap-2 flex-wrap">
+        <a href="formulas.php" class="btn btn-outline-primary">
+            <i class="fas fa-flask me-2"></i> Manage Formulas
+        </a>
         <a href="create.php" class="btn btn-primary">
             <i class="fas fa-plus me-2"></i> New Manufacturing Order
         </a>
@@ -109,7 +125,7 @@ if (!empty($stepIds)) {
 
 <form class="row g-3 mb-4" method="get">
     <div class="col-md-3">
-        <select class="form-select" name="provider_id">
+        <select class="form-select select2" name="provider_id">
             <option value="">Filter by provider</option>
             <?php foreach ($customers as $customer): ?>
                 <option value="<?php echo $customer['id']; ?>" <?php echo $providerFilter === (int)$customer['id'] ? 'selected' : ''; ?>>
@@ -119,6 +135,16 @@ if (!empty($stepIds)) {
         </select>
     </div>
     <div class="col-md-3">
+        <select class="form-select select2" name="product_id">
+            <option value="">Filter by final product</option>
+            <?php foreach ($allProducts as $p): ?>
+                <option value="<?php echo $p['id']; ?>" <?php echo $productFilter === (int)$p['id'] ? 'selected' : ''; ?>>
+                    <?php echo htmlspecialchars($p['name']) . ($p['sku'] ? " ({$p['sku']})" : ""); ?>
+                </option>
+            <?php endforeach; ?>
+        </select>
+    </div>
+    <div class="col-md-2">
         <select class="form-select" name="status">
             <option value="">All statuses</option>
             <?php
@@ -131,8 +157,8 @@ if (!empty($stepIds)) {
             <?php endforeach; ?>
         </select>
     </div>
-    <div class="col-md-4">
-        <input type="text" class="form-control" placeholder="Search by order number or formula" id="searchOrder">
+    <div class="col-md-2">
+        <input type="text" class="form-control" placeholder="Search orders..." id="searchOrder">
     </div>
     <div class="col-md-2 d-flex gap-2">
         <button type="submit" class="btn btn-outline-primary flex-grow-1">Apply</button>
@@ -223,6 +249,13 @@ if (!empty($stepIds)) {
 
 <script>
     $(document).ready(function () {
+        if ($.fn.select2) {
+            $('.select2').select2({
+                width: '100%',
+                placeholder: 'Click to select'
+            });
+        }
+
         if ($.fn.DataTable && !$.fn.DataTable.isDataTable('#manufacturingTable')) {
             $('#manufacturingTable').DataTable({
                 responsive: true,
