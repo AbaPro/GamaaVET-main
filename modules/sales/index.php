@@ -115,6 +115,7 @@ $stmt->close();
                         <th>Customer</th>
                         <th>Date</th>
                         <th>Amount</th>
+                        <th>Balance</th>
                         <th>Status</th>
                         <th>Actions</th>
                     </tr>
@@ -123,7 +124,7 @@ $stmt->close();
                     <?php
 
                     $query = "
-    SELECT o.id, o.internal_id, o.order_date, o.total_amount, o.status, c.name AS customer_name 
+    SELECT o.id, o.internal_id, o.order_date, o.total_amount, o.paid_amount, o.status, c.name AS customer_name 
     FROM orders o
     JOIN customers c ON o.customer_id = c.id
     ORDER BY o.order_date DESC 
@@ -153,6 +154,7 @@ $stmt->close();
                                 <td><?= htmlspecialchars($order['customer_name']) ?></td>
                                 <td><?= date('M d, Y', strtotime($order['order_date'])) ?></td>
                                 <td><?= number_format($order['total_amount'], 2) ?></td>
+                                <td><?= number_format($order['total_amount'] - $order['paid_amount'], 2) ?></td>
                                 <td>
                                     <span class="badge <?= $status_class[$order['status']] ?>">
                                         <?= ucwords(str_replace('-', ' ', $order['status'])) ?>

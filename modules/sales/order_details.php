@@ -51,9 +51,12 @@ $canViewFinalPrices = canViewProductPrice('final');
 
 // Fetch payments
 $stmt = $pdo->prepare("
-    SELECT op.*, u.name AS created_by_name
+    SELECT op.*, u.name AS created_by_name,
+           s.name AS safe_name, b.bank_name AS bank_name
     FROM order_payments op
     JOIN users u ON op.created_by = u.id
+    LEFT JOIN safes s ON op.safe_id = s.id
+    LEFT JOIN bank_accounts b ON op.bank_account_id = b.id
     WHERE op.order_id = ?
     ORDER BY op.created_at DESC
 ");
@@ -497,6 +500,7 @@ require_once '../../includes/header.php';
                                     <th>Date</th>
                                     <th>Amount</th>
                                     <th>Method</th>
+                                    <th>Destination</th>
                                     <th>By</th>
                                 </tr>
                             </thead>
@@ -506,6 +510,17 @@ require_once '../../includes/header.php';
                                         <td><?= date('M d, Y', strtotime($payment['created_at'])) ?></td>
                                         <td><?= number_format($payment['amount'], 2) ?></td>
                                         <td><?= ucfirst($payment['payment_method']) ?></td>
+                                        <td>
+                                            <?php
+                                            if ($payment['payment_method'] == 'cash') {
+                                                echo htmlspecialchars($payment['safe_name'] ?? '-');
+                                            } elseif ($payment['payment_method'] == 'transfer') {
+                                                echo htmlspecialchars($payment['bank_name'] ?? '-');
+                                            } else {
+                                                echo 'Wallet';
+                                            }
+                                            ?>
+                                        </td>
                                         <td><?= htmlspecialchars($payment['created_by_name']) ?></td>
                                     </tr>
                                 <?php endforeach; ?>
