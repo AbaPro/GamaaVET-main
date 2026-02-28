@@ -142,6 +142,26 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
         $pdo->commit();
 
+        // Notify Production Manager and Supervisor
+        $prod_roles = $pdo->query("SELECT id, slug FROM roles WHERE slug IN ('production_manager', 'production_supervisor')")->fetchAll(PDO::FETCH_ASSOC);
+        $notif_title = "New Order: " . $_POST['internal_id'];
+        $notif_msg = "A new sales order has been created. Order ID: " . $_POST['internal_id'];
+        
+        foreach ($prod_roles as $role) {
+            createNotification(
+                'sales_order_created',
+                $notif_title,
+                $notif_msg,
+                'sales',
+                'order',
+                $order_id,
+                'info',
+                $role['id'],
+                null,
+                $_SESSION['user_id']
+            );
+        }
+
         $_SESSION['success'] = "Order created successfully!";
         header("Location: order_details.php?id=" . $order_id);
         exit();
@@ -242,8 +262,8 @@ require_once '../../includes/header.php';
             <div class="card-header d-flex justify-content-between align-items-center">
                 <span>Order Items</span>
                 <div class="d-flex gap-2 flex-wrap">
-                    <input type="text" class="form-control form-control-sm" id="productSearch" placeholder="Search products..." aria-label="Search products">
-                    <button type="button" class="btn btn-sm btn-primary" id="addItemBtn">Add Item</button>
+                    <input type="text" class="form-control form-control-sm" id="productSearch" placeholder="Search products..." aria-label="Search products" disabled>
+                    <button type="button" class="btn btn-sm btn-primary" id="addItemBtn" disabled>Add Item</button>
                 </div>
             </div>
             <div class="card-body">
@@ -253,7 +273,7 @@ require_once '../../includes/header.php';
                             <tr>
                                 <th>Product</th>
                                 <th>Quantity</th>
-                                <th>Unit Price</th>
+                                <th>Selling Price</th>
                                 <th>Total</th>
                                 <th>Free Sample?</th>
                                 <th>Action</th>
@@ -267,47 +287,60 @@ require_once '../../includes/header.php';
             </div>
         </div>
 
-        <div class="card mb-4">
-            <div class="card-header">Discounts &amp; Shipping</div>
-            <div class="card-body">
-                <div class="row g-3">
-                    <div class="col-md-3">
-                        <label for="discount_percentage" class="form-label">Discount %</label>
-                        <input type="number" class="form-control" id="discount_percentage" name="discount_percentage"
-                            value="0" step="0.01" min="0" max="100">
+        <div class="row">
+            <div class="col-md-6 mb-4">
+                <div class="card h-100">
+                    <div class="card-header">Discount Information</div>
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-sm-6">
+                                <label for="discount_percentage" class="form-label">Discount %</label>
+                                <input type="number" class="form-control" id="discount_percentage" name="discount_percentage"
+                                    value="0" step="0.01" min="0" max="100">
+                            </div>
+                            <div class="col-sm-6">
+                                <label for="discount_basis" class="form-label">Discount Type</label>
+                                <select class="form-select" id="discount_basis" name="discount_basis">
+                                    <option value="none">No Discount</option>
+                                    <option value="product_quantity">Product Count</option>
+                                    <option value="cash">Cash Discount</option>
+                                    <option value="free_sample">Free Samples</option>
+                                    <option value="mixed">Mixed</option>
+                                </select>
+                            </div>
+                            <div class="col-sm-6">
+                                <label for="discount_cash_amount" class="form-label">Discount (Cash)</label>
+                                <input type="number" class="form-control" id="discount_cash_amount" name="discount_cash_amount"
+                                    value="0" step="0.01" min="0">
+                            </div>
+                            <div class="col-sm-6">
+                                <label for="discount_product_count" class="form-label">Discounted Products</label>
+                                <input type="number" class="form-control" id="discount_product_count" name="discount_product_count"
+                                    value="0" min="0" step="1">
+                            </div>
+                        </div>
                     </div>
-                    <div class="col-md-3">
-                        <label for="discount_basis" class="form-label">Discount Type</label>
-                        <select class="form-select" id="discount_basis" name="discount_basis">
-                            <option value="none">No Discount</option>
-                            <option value="product_quantity">Product Count</option>
-                            <option value="cash">Cash Discount</option>
-                            <option value="free_sample">Free Samples</option>
-                            <option value="mixed">Mixed</option>
-                        </select>
-                    </div>
-                    <div class="col-md-3">
-                        <label for="discount_cash_amount" class="form-label">Discount (Cash)</label>
-                        <input type="number" class="form-control" id="discount_cash_amount" name="discount_cash_amount"
-                            value="0" step="0.01" min="0">
-                    </div>
-                    <div class="col-md-3">
-                        <label for="discount_product_count" class="form-label">Discounted Products</label>
-                        <input type="number" class="form-control" id="discount_product_count" name="discount_product_count"
-                            value="0" min="0" step="1">
-                    </div>
-                    <div class="col-md-3">
-                        <label for="shipping_cost_type" class="form-label">Shipping Cost</label>
-                        <select class="form-select" id="shipping_cost_type" name="shipping_cost_type">
-                            <option value="none">No Shipping (لا يوجد)</option>
-                            <option value="manual">Manual (يدوي)</option>
-                        </select>
-                    </div>
-                    <div class="col-md-3">
-                        <label for="shipping_cost" class="form-label">Shipping Amount</label>
-                        <input type="number" class="form-control" id="shipping_cost" name="shipping_cost"
-                            value="0" step="0.01" min="0" disabled>
-                        <small class="text-muted">Enabled only when shipping is manual.</small>
+                </div>
+            </div>
+            <div class="col-md-6 mb-4">
+                <div class="card h-100">
+                    <div class="card-header">Shipping Information</div>
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-sm-12">
+                                <label for="shipping_cost_type" class="form-label">Shipping Cost</label>
+                                <select class="form-select" id="shipping_cost_type" name="shipping_cost_type">
+                                    <option value="none">No Shipping (لا يوجد)</option>
+                                    <option value="manual">Manual (يدوي)</option>
+                                </select>
+                            </div>
+                            <div class="col-sm-12">
+                                <label for="shipping_cost" class="form-label">Shipping Amount</label>
+                                <input type="number" class="form-control" id="shipping_cost" name="shipping_cost"
+                                    value="0" step="0.01" min="0" disabled>
+                                <small class="text-muted d-block mt-1">Enabled only when shipping is manual.</small>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -360,7 +393,7 @@ require_once '../../includes/header.php';
             <div class="modal-body">
                 <div class="bg-light p-3 rounded mb-3">
                     <div class="row g-2">
-                        <div class="col-md-3">
+                        <div class="col-md-4">
                             <label for="filter_category_modal" class="form-label small">Category</label>
                             <select class="form-select form-select-sm" id="filter_category_modal">
                                 <option value="">All categories</option>
@@ -369,7 +402,7 @@ require_once '../../includes/header.php';
                                 <?php endforeach; ?>
                             </select>
                         </div>
-                        <div class="col-md-3">
+                        <div class="col-md-4">
                             <label for="filter_subcategory_modal" class="form-label small">Sub-Category</label>
                             <select class="form-select form-select-sm" id="filter_subcategory_modal">
                                 <option value="">All sub-categories</option>
@@ -378,16 +411,7 @@ require_once '../../includes/header.php';
                                 <?php endforeach; ?>
                             </select>
                         </div>
-                        <div class="col-md-3">
-                            <label for="filter_customer_modal" class="form-label small">Product Customer</label>
-                            <select class="form-select form-select-sm" id="filter_customer_modal">
-                                <option value="">All customers</option>
-                                <?php foreach ($all_customers as $cust) : ?>
-                                    <option value="<?= (int)$cust['id'] ?>"><?= htmlspecialchars($cust['name']) ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        <div class="col-md-3">
+                        <div class="col-md-4">
                             <label for="productSearchModal" class="form-label small">Search</label>
                             <input type="text" id="productSearchModal" class="form-control form-control-sm" placeholder="Type name or SKU...">
                         </div>
@@ -401,7 +425,7 @@ require_once '../../includes/header.php';
                                 <th>SKU</th>
                                 <th>Name</th>
                                 <th>Category</th>
-                                <th>Price</th>
+                                <th>Selling Price</th>
                                 <th>Stock</th>
                                 <th>Action</th>
                             </tr>
@@ -423,7 +447,7 @@ require_once '../../includes/header.php';
                                         FROM inventory_products 
                                         WHERE product_id = " . (int)$product['id']
                                     )->fetchColumn();
-                                    echo $stock ? number_format($stock) : '0';
+                                    echo $stock ? number_format($stock, 2) : '0.00';
                                     ?>
                                 </td>
                                 <td>
@@ -462,8 +486,11 @@ require_once '../../includes/header.php';
                     .html('<option value="">Select Customer First</option>');
                 $('#factory_id').val('');
                 $('#factory_display').val('Select customer');
+                $('#addItemBtn, #productSearch').prop('disabled', true);
                 return;
             }
+
+            $('#addItemBtn, #productSearch').prop('disabled', false);
 
             $('#contact_id').prop('disabled', false)
                 .html('<option>Loading...</option>');
@@ -524,7 +551,6 @@ require_once '../../includes/header.php';
         const productSearchModal = document.getElementById('productSearchModal');
         const productCategoryFilter = document.getElementById('filter_category_modal');
         const productSubcategoryFilter = document.getElementById('filter_subcategory_modal');
-        const productCustomerFilter = document.getElementById('filter_customer_modal');
 
         const getProductRows = () => Array.from(document.querySelectorAll('#productsTable tbody tr'));
 
@@ -532,7 +558,7 @@ require_once '../../includes/header.php';
             const term = ((productSearchModal && productSearchModal.value) || (productSearch && productSearch.value) || '').toLowerCase();
             const category = (productCategoryFilter && productCategoryFilter.value) || '';
             const subcategory = (productSubcategoryFilter && productSubcategoryFilter.value) || '';
-            const customer = (productCustomerFilter && productCustomerFilter.value) || '';
+            const customer = $('#customer_id').val() || '';
             const rows = getProductRows();
             rows.forEach(row => {
                 const content = row.textContent.toLowerCase();
@@ -587,9 +613,7 @@ require_once '../../includes/header.php';
         if (productSubcategoryFilter) {
             productSubcategoryFilter.addEventListener('change', filterProducts);
         }
-        if (productCustomerFilter) {
-            productCustomerFilter.addEventListener('change', filterProducts);
-        }
+
 
         // Product selection
         $(document).on('click', '.select-product', function() {

@@ -112,6 +112,26 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         
         $pdo->commit();
         
+        // Notify Production Manager and Supervisor
+        $prod_roles = $pdo->query("SELECT id, slug FROM roles WHERE slug IN ('production_manager', 'production_supervisor')")->fetchAll(PDO::FETCH_ASSOC);
+        $notif_title = "New Order (Converted): " . $internal_id;
+        $notif_msg = "A new sales order has been created from quotation #" . $quotation_id . ". Order ID: " . $internal_id;
+        
+        foreach ($prod_roles as $role) {
+            createNotification(
+                'sales_order_created',
+                $notif_title,
+                $notif_msg,
+                'sales',
+                'order',
+                $order_id,
+                'info',
+                $role['id'],
+                null,
+                $_SESSION['user_id']
+            );
+        }
+        
         $_SESSION['success'] = "Quotation converted to order successfully!";
         header("Location: ../order_details.php?id=" . $order_id);
         exit();
@@ -183,7 +203,7 @@ require_once '../../../includes/header.php';
                             <tr>
                                 <th>Product</th>
                                 <th>Quantity</th>
-                                <th>Unit Price</th>
+                                <th>Selling Price</th>
                                 <th>Total</th>
                             </tr>
                         </thead>

@@ -104,7 +104,7 @@ $pdf->SetFont($primaryFont, 'B', 10);
 $pdf->Cell(15, 7, '#', 1, 0, 'C');
 $pdf->Cell(75, 7, 'Product', 1, 0);
 $pdf->Cell(20, 7, 'Qty', 1, 0, 'C');
-$pdf->Cell(30, 7, 'Unit Price', 1, 0, 'R');
+$pdf->Cell(30, 7, 'Selling Price', 1, 0, 'R');
 $pdf->Cell(30, 7, 'Total', 1, 1, 'R');
 
 $pdf->SetFont($primaryFont, '', 10);

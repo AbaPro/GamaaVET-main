@@ -220,25 +220,27 @@ $ordersStmt->execute([$customerId]);
 $orders = $ordersStmt->fetchAll(PDO::FETCH_ASSOC);
 
 $walletStmt = $pdo->prepare("
-    SELECT amount, type, notes, created_at
+    SELECT id, amount, type, notes, created_at
     FROM customer_wallet_transactions
     WHERE customer_id = ?
     ORDER BY created_at DESC
-    LIMIT 8
+    LIMIT 50
 ");
 $walletStmt->execute([$customerId]);
 $walletMoves = $walletStmt->fetchAll(PDO::FETCH_ASSOC);
 
-$inventoryStmt = $pdo->prepare("
-    SELECT p.name, SUM(ip.quantity) AS qty
+$productsStmt = $pdo->prepare("
+    SELECT p.id, p.name, p.sku, p.type, p.unit_price, c.name as category_name,
+           COALESCE(SUM(ip.quantity), 0) AS stock
     FROM products p
-    JOIN inventory_products ip ON ip.product_id = p.id
+    LEFT JOIN categories c ON p.category_id = c.id
+    LEFT JOIN inventory_products ip ON ip.product_id = p.id
     WHERE p.customer_id = ?
-    GROUP BY p.id, p.name
+    GROUP BY p.id
     ORDER BY p.name
 ");
-$inventoryStmt->execute([$customerId]);
-$inventoryLines = $inventoryStmt->fetchAll(PDO::FETCH_ASSOC);
+$productsStmt->execute([$customerId]);
+$customerProducts = $productsStmt->fetchAll(PDO::FETCH_ASSOC);
 
 $balanceStmt = $pdo->prepare("
     SELECT SUM(total_amount - paid_amount) AS due
@@ -617,7 +619,7 @@ if (!empty($orders)) {
             </div>
             <div>
               <h2 class="text-lg sm:text-xl font-extrabold">حركة المحفظة</h2>
-              <p class="text-sm text-slate-500 dark:text-slate-400">آخر 8 عمليات على المحفظة.</p>
+              <p class="text-sm text-slate-500 dark:text-slate-400">آخر 50 عملية على المحفظة.</p>
             </div>
           </div>
 
@@ -660,7 +662,7 @@ if (!empty($orders)) {
         </div>
       </div>
 
-      <!-- Inventory -->
+      <!-- Products -->
       <div class="rounded-3xl bg-white border border-slate-200 shadow-soft dark:bg-slate-900 dark:border-slate-800">
         <div class="p-6 sm:p-7">
           <div class="flex items-center gap-3 mb-5">
@@ -668,23 +670,48 @@ if (!empty($orders)) {
               <i class="bx bx-package text-2xl"></i>
             </div>
             <div>
-              <h2 class="text-lg sm:text-xl font-extrabold">كميات المخزون</h2>
-              <p class="text-sm text-slate-500 dark:text-slate-400">إجمالي الكميات المتاحة لكل منتج.</p>
+              <h2 class="text-lg sm:text-xl font-extrabold">منتجاتك</h2>
+              <p class="text-sm text-slate-500 dark:text-slate-400">قائمة بجميع المنتجات المسجلة والمخزون المتاح.</p>
             </div>
           </div>
 
-          <?php if ($inventoryLines): ?>
-            <div class="divide-y divide-slate-100 text-sm dark:divide-slate-800 rounded-2xl border border-slate-200 overflow-hidden dark:border-slate-800">
-              <?php foreach ($inventoryLines as $line): ?>
-                <div class="flex items-center justify-between px-4 py-3 bg-white dark:bg-slate-950">
-                  <span class="text-slate-700 dark:text-slate-200 font-bold"><?= htmlspecialchars($line['name']); ?></span>
-                  <span class="font-extrabold text-slate-900 dark:text-slate-100"><?= number_format((float)$line['qty']); ?></span>
-                </div>
-              <?php endforeach; ?>
+          <?php if ($customerProducts): ?>
+            <div class="rounded-2xl border border-slate-200 overflow-x-auto dark:border-slate-800">
+              <table class="min-w-full divide-y divide-slate-100 text-sm dark:divide-slate-800">
+                <thead class="bg-slate-50 text-slate-600 dark:bg-slate-950 dark:text-slate-300">
+                  <tr>
+                    <th class="px-4 py-3 text-right font-bold">المنتج</th>
+                    <th class="px-4 py-3 text-center font-bold">التصنيف</th>
+                    <th class="px-4 py-3 text-center font-bold">السعر</th>
+                    <th class="px-4 py-3 text-center font-bold">المخزون</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+                  <?php foreach ($customerProducts as $product): ?>
+                    <tr class="hover:bg-slate-50 dark:hover:bg-slate-950/60 transition">
+                      <td class="px-4 py-3">
+                        <div class="font-bold"><?= htmlspecialchars($product['name']); ?></div>
+                        <div class="text-[10px] text-slate-400 font-mono"><?= htmlspecialchars($product['sku']); ?></div>
+                      </td>
+                      <td class="px-4 py-3 text-center text-slate-600 dark:text-slate-400">
+                        <?= htmlspecialchars($product['category_name'] ?? '-'); ?>
+                      </td>
+                      <td class="px-4 py-3 text-center font-bold">
+                        <?= number_format((float)$product['unit_price'], 2); ?>
+                      </td>
+                      <td class="px-4 py-3 text-center">
+                        <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-extrabold <?= $product['stock'] > 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-400'; ?>">
+                          <?= number_format((float)$product['stock']); ?>
+                        </span>
+                      </td>
+                    </tr>
+                  <?php endforeach; ?>
+                </tbody>
+              </table>
             </div>
           <?php else: ?>
             <div class="rounded-2xl bg-slate-50 border border-slate-200 p-5 text-slate-600 dark:bg-slate-950 dark:border-slate-800 dark:text-slate-300">
-              لا تتوفر بيانات مخزون حالياً.
+              لا تتوفر بيانات منتجات حالياً.
             </div>
           <?php endif; ?>
         </div>

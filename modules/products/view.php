@@ -108,7 +108,7 @@ include '../../includes/header.php';
                                         </tr>
                                         <?php if (canViewProductPrice($product['type'])): ?>
                                         <tr>
-                                            <th>Unit Price</th>
+                                            <th>Selling Price</th>
                                             <td><?= formatCurrency($product['unit_price']) ?></td>
                                         </tr>
                                         <?php endif; ?>

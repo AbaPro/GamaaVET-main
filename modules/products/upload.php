@@ -366,7 +366,7 @@ if ($current_step == 1) {
                             <li><strong>name</strong> - Product name (required)</li>
                             <li><strong>type</strong> - Product type: <code>primary</code>, <code>final</code>, or <code>material</code> (required)</li>
                             <li><strong>category</strong> - Category name (required - will be mapped to existing categories)</li>
-                            <li><strong>unit_price</strong> - Selling price (required)</li>
+                            <li><strong>selling_price</strong> - Selling price (required)</li>
                         </ul>
                         <p><strong>Optional columns:</strong></p>
                         <ul class="mb-0">
@@ -390,7 +390,7 @@ if ($current_step == 1) {
                                 <li>Category names must match existing categories in your system</li>
                                 <li>Customer names will be mapped to existing customers (leave empty for products without specific customers)</li>
                                 <li>Subcategories help organize products within categories (e.g., "استيكر" under "مطبوعات")</li>
-                                <li>Unit prices and costs should be decimal numbers (e.g., 25.99)</li>
+                                <li>Selling prices and costs should be decimal numbers (e.g., 25.99)</li>
                                 <li>You can use Arabic product names and descriptions</li>
                                 <li>For final products with components, list the components separately as material type</li>
                                 <li>Download the sample CSV file below to see the correct format</li>

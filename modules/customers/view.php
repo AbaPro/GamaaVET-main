@@ -204,13 +204,13 @@ if ($factories_result) {
         <div class="card">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <h5 class="card-title mb-0">Recent Orders</h5>
-                <a href="../sales/orders/create.php?customer_id=<?php echo $customer_id; ?>" class="btn btn-sm btn-primary">
+                <a href="../sales/create_order.php?customer_id=<?php echo $customer_id; ?>" class="btn btn-sm btn-primary">
                     <i class="fas fa-plus"></i> New Order
                 </a>
             </div>
             <div class="card-body">
                 <div class="table-responsive">
-                    <table class="table table-hover">
+                    <table class="table table-hover js-datatable">
                         <thead>
                             <tr>
                                 <th>Order ID</th>
@@ -264,7 +264,7 @@ if ($factories_result) {
             </div>
             <div class="card-body">
                 <div class="table-responsive">
-                    <table class="table table-hover">
+                    <table class="table table-hover js-datatable">
                         <thead>
                             <tr>
                                 <th>Product Name</th>

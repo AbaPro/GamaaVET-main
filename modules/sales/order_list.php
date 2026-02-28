@@ -65,6 +65,9 @@ $orders = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Get customers for filter dropdown
 $customers = $pdo->query("SELECT id, name FROM customers ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+
+// Check if user has permission to view prices
+$canViewPrices = hasPermission('sales.orders.price.view');
 ?>
 
 <div class="container mt-4">
@@ -138,9 +141,11 @@ $customers = $pdo->query("SELECT id, name FROM customers ORDER BY name")->fetchA
                             <th>Order ID</th>
                             <th>Customer</th>
                             <th>Date</th>
+                            <?php if ($canViewPrices): ?>
                             <th>Total</th>
                             <th>Paid</th>
                             <th>Balance</th>
+                            <?php endif; ?>
                             <th>Status</th>
                             <th>Actions</th>
                         </tr>
@@ -172,11 +177,13 @@ $customers = $pdo->query("SELECT id, name FROM customers ORDER BY name")->fetchA
                                 </td>
                                 <td><?= htmlspecialchars($order['customer_name']) ?></td>
                                 <td><?= date('d/m/Y', strtotime($order['order_date'])) ?></td>
+                                <?php if ($canViewPrices): ?>
                                 <td><?= number_format($order['total_amount'], 2) ?></td>
                                 <td><?= number_format($order['paid_amount'], 2) ?></td>
                                 <td class="<?= $balance > 0 ? 'text-danger' : 'text-success' ?>">
                                     <?= number_format($balance * -1, 2) ?>
                                 </td>
+                                <?php endif; ?>
                                 <td>
                                     <span class="badge <?= $status_class[$order['status']] ?>">
                                         <?= ucwords(str_replace('-', ' ', $order['status'])) ?>
@@ -296,7 +303,7 @@ document.addEventListener('DOMContentLoaded', function () {
                                         <th>#</th>
                                         <th>Product</th>
                                         <th class="text-center">Qty</th>
-                                        <th class="text-end">Unit Price</th>
+                                        <th class="text-end">Selling Price</th>
                                         <th class="text-end">Line Total</th>
                                     </tr>
                                 </thead>

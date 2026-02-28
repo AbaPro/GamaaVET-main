@@ -37,11 +37,11 @@ try {
 
     // Insert manufacturing order
     $stmt = $pdo->prepare("
-        INSERT INTO manufacturing_orders 
-            (order_number, customer_id, product_id, formula_id, location_id, batch_size, due_date, priority, notes, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO manufacturing_orders
+            (order_number, customer_id, product_id, formula_id, location_id, batch_size, due_date, priority, notes, sales_order_id, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ");
-    
+
     $stmt->execute([
         $orderNumber,
         $customerId,
@@ -51,7 +51,8 @@ try {
         $batchSize,
         $dueDate ?: null,
         $priority,
-        $notes . ($salesOrderId ? "\nLinked to Sales Order #$salesOrderId" : ""),
+        $notes,
+        $salesOrderId ?: null,
         $createdBy
     ]);
     

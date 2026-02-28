@@ -14,11 +14,18 @@ if (!isset($_SESSION['role_id'])) {
 $roleId = $_SESSION['role_id'];
 $userId = $_SESSION['user_id'];
 
-// Handle actions
 if (isset($_GET['mark']) && is_numeric($_GET['mark'])) {
     $nid = (int)$_GET['mark'];
-    $stmt = $conn->prepare("UPDATE notifications SET is_read = 1 WHERE id = ? AND (created_for_role_id = ? OR created_for_user_id = ?)");
-    $stmt->bind_param('iii', $nid, $roleId, $userId);
+    $roleSlug = $_SESSION['role_slug'] ?? null;
+    
+    if ($roleSlug === 'admin') {
+        $stmt = $conn->prepare("UPDATE notifications SET is_read = 1 WHERE id = ?");
+        $stmt->bind_param('i', $nid);
+    } else {
+        $stmt = $conn->prepare("UPDATE notifications SET is_read = 1 WHERE id = ? AND (created_for_role_id = ? OR created_for_user_id = ?)");
+        $stmt->bind_param('iii', $nid, $roleId, $userId);
+    }
+    
     $stmt->execute();
     $stmt->close();
     redirect('index.php');
@@ -44,8 +51,13 @@ if (isset($_GET['ticket']) && is_numeric($_GET['ticket']) && hasPermission('tick
     }
 }
 
-$result = $conn->prepare("SELECT * FROM notifications WHERE (created_for_role_id = ? OR created_for_user_id = ?) ORDER BY created_at DESC LIMIT 200");
-$result->bind_param('ii', $roleId, $userId);
+$roleSlug = $_SESSION['role_slug'] ?? null;
+if ($roleSlug === 'admin') {
+    $result = $conn->prepare("SELECT * FROM notifications ORDER BY created_at DESC LIMIT 200");
+} else {
+    $result = $conn->prepare("SELECT * FROM notifications WHERE (created_for_role_id = ? OR created_for_user_id = ?) ORDER BY created_at DESC LIMIT 200");
+    $result->bind_param('ii', $roleId, $userId);
+}
 $result->execute();
 $notifications = $result->get_result()->fetch_all(MYSQLI_ASSOC);
 $result->close();
@@ -95,6 +107,17 @@ require_once '../../includes/header.php';
               <td class="d-flex gap-2">
                 <?php if ((int)$n['is_read'] === 0): ?>
                   <a class="btn btn-sm btn-outline-secondary" href="?mark=<?= (int)$n['id'] ?>">Mark read</a>
+                <?php endif; ?>
+                <?php
+                  $viewLink = null;
+                  if ($n['entity_type'] === 'order' && !empty($n['entity_id'])) {
+                      $viewLink = "../sales/order_details.php?id=" . (int)$n['entity_id'];
+                  } elseif ($n['entity_type'] === 'product' && !empty($n['entity_id'])) {
+                      $viewLink = "../products/view_product.php?id=" . (int)$n['entity_id'];
+                  }
+                ?>
+                <?php if ($viewLink): ?>
+                  <a class="btn btn-sm btn-outline-info" href="<?= $viewLink ?>">View</a>
                 <?php endif; ?>
                 <?php
                   $showCreate = false;

@@ -28,15 +28,24 @@ if ($locationsResult) {
     }
 }
 
+$bottleSizes = [];
+$bottleSizesResult = $conn->query("SELECT id, name, size, unit, type FROM bottle_sizes WHERE is_active = 1 ORDER BY type, name");
+if ($bottleSizesResult) {
+    while ($bsRow = $bottleSizesResult->fetch_assoc()) {
+        $bottleSizes[] = $bsRow;
+    }
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $customerId = isset($_POST['customer_id']) ? (int)$_POST['customer_id'] : 0;
-    $productId = isset($_POST['product_id']) ? (int)$_POST['product_id'] : 0;
-    $selectedFormulaId = isset($_POST['formula_id']) ? (int)$_POST['formula_id'] : 0;
-    $locationId = isset($_POST['location_id']) ? (int)$_POST['location_id'] : 0;
-    $priority = $_POST['priority'] ?? 'normal';
-    $batchSize = isset($_POST['batch_size']) ? floatval($_POST['batch_size']) : 0;
-    $dueDate = $_POST['due_date'] ?? null;
-    $orderNotes = trim($_POST['notes'] ?? '');
+    $customerId    = isset($_POST['customer_id'])   ? (int)$_POST['customer_id']   : 0;
+    $productId     = isset($_POST['product_id'])    ? (int)$_POST['product_id']    : 0;
+    $selectedFormulaId = isset($_POST['formula_id']) ? (int)$_POST['formula_id']  : 0;
+    $locationId    = isset($_POST['location_id'])   ? (int)$_POST['location_id']   : 0;
+    $bottleSizeId  = isset($_POST['bottle_size_id']) && $_POST['bottle_size_id'] !== '' ? (int)$_POST['bottle_size_id'] : null;
+    $priority      = $_POST['priority'] ?? 'normal';
+    $batchSize     = isset($_POST['batch_size'])    ? floatval($_POST['batch_size']) : 0;
+    $dueDate       = $_POST['due_date'] ?? null;
+    $orderNotes    = trim($_POST['notes'] ?? '');
 
     $allowedPriorities = ['normal', 'rush', 'critical'];
     if (!in_array($priority, $allowedPriorities, true)) {
@@ -112,14 +121,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $orderNumber = generateUniqueId('MAN');
             $createdBy = $_SESSION['user_id'] ?? null;
             $orderStmt = $pdo->prepare("
-                INSERT INTO manufacturing_orders 
-                    (order_number, customer_id, product_id, formula_id, location_id, batch_size, due_date, priority, notes, created_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO manufacturing_orders
+                    (order_number, customer_id, product_id, bottle_size_id, formula_id, location_id, batch_size, due_date, priority, notes, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ");
             $orderStmt->execute([
                 $orderNumber,
                 $customerId,
                 $productId ?: null,
+                $bottleSizeId,
                 $formulaId,
                 $locationId,
                 $batchSize,
@@ -234,10 +244,42 @@ $selectedFormulaId = $old['formula_id'] ?? '';
                     </select>
                 </div>
                 <div class="col-md-4">
+                    <label class="form-label">Bottle Size</label>
+                    <select class="form-select select2" name="bottle_size_id" id="bottle_size_id">
+                        <option value="">— No bottle size —</option>
+                        <?php
+                        $bsLiquid = array_filter($bottleSizes, fn($b) => $b['type'] === 'liquid');
+                        $bsPowder = array_filter($bottleSizes, fn($b) => $b['type'] === 'powder');
+                        $selBsId  = $old['bottle_size_id'] ?? '';
+                        if ($bsLiquid): ?>
+                            <optgroup label="Liquid">
+                                <?php foreach ($bsLiquid as $bs): ?>
+                                    <option value="<?= $bs['id']; ?>" data-type="liquid"
+                                            <?= (string)$selBsId === (string)$bs['id'] ? 'selected' : ''; ?>>
+                                        <?= htmlspecialchars($bs['name']); ?> — <?= number_format($bs['size'], 3); ?> <?= htmlspecialchars($bs['unit']); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </optgroup>
+                        <?php endif;
+                        if ($bsPowder): ?>
+                            <optgroup label="Powder">
+                                <?php foreach ($bsPowder as $bs): ?>
+                                    <option value="<?= $bs['id']; ?>" data-type="powder"
+                                            <?= (string)$selBsId === (string)$bs['id'] ? 'selected' : ''; ?>>
+                                        <?= htmlspecialchars($bs['name']); ?> — <?= number_format($bs['size'], 3); ?> <?= htmlspecialchars($bs['unit']); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </optgroup>
+                        <?php endif; ?>
+                    </select>
+                </div>
+                <div class="col-md-4">
                     <label class="form-label">Batch size</label>
                     <input step="0.01" min="0" type="number" class="form-control" name="batch_size" value="<?php echo e($old['batch_size'] ?? ''); ?>" placeholder="Total units to produce">
                 </div>
-                <div class="col-md-4">
+            </div>
+            <div class="row g-3 mt-0">
+                <div class="col-12">
                     <label class="form-label">Order notes</label>
                     <textarea class="form-control" name="notes" rows="2"><?php echo e($old['notes'] ?? ''); ?></textarea>
                 </div>

@@ -4,10 +4,40 @@
   --app-font: 'Space Grotesk', 'Noto Sans Arabic', 'Plus Jakarta Sans', 'Manrope', 'Poppins', system-ui, sans-serif;
 }
 
-html, body {
+html,
+body {
   font-family: var(--app-font);
 }
 
-input, select, textarea, button, .btn {
+input,
+select,
+textarea,
+button,
+.btn {
   font-family: var(--app-font);
+}
+
+/* Clickable table rows */
+table.table-hover tbody tr,
+table.js-datatable tbody tr {
+  cursor: pointer !important;
+}
+
+/* Ensure interactive elements inside rows keep their own cursor */
+table.table-hover tbody tr a,
+table.table-hover tbody tr button,
+table.table-hover tbody tr input,
+table.table-hover tbody tr select,
+table.table-hover tbody tr .dropdown-menu,
+table.js-datatable tbody tr a,
+table.js-datatable tbody tr button,
+table.js-datatable tbody tr input,
+table.js-datatable tbody tr select,
+table.js-datatable tbody tr .dropdown-menu {
+  cursor: auto;
+}
+
+/* Add a subtle hover effect to make it feel more interactive */
+table.table-hover tbody tr:hover td {
+  background-color: rgba(0, 0, 0, 0.04) !important;
 }

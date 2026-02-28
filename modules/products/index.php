@@ -181,22 +181,22 @@ if ($result) {
     }
 }
 
-$canViewAnyUnitPrice = hasExplicitPermission('products.final.price.view') || hasExplicitPermission('products.material.price.view');
+$canViewAnySellingPrice = hasExplicitPermission('products.final.price.view');
 $canViewAnyCostPrice = hasExplicitPermission('products.final.cost.view') || hasExplicitPermission('products.material.cost.view');
-$showUnitPriceColumn = false;
+$showSellingPriceColumn = false;
 $showCostPriceColumn = false;
 foreach ($products as $productRow) {
-    if (!$showUnitPriceColumn && $canViewAnyUnitPrice && canViewProductPrice($productRow['type'])) {
-        $showUnitPriceColumn = true;
+    if (!$showSellingPriceColumn && $canViewAnySellingPrice && canViewProductPrice($productRow['type'])) {
+        $showSellingPriceColumn = true;
     }
     if (!$showCostPriceColumn && $canViewAnyCostPrice && canViewProductCost($productRow['type'])) {
         $showCostPriceColumn = true;
     }
-    if ($showUnitPriceColumn && $showCostPriceColumn) {
+    if ($showSellingPriceColumn && $showCostPriceColumn) {
         break;
     }
 }
-$productsTableColspan = 8 + ($showUnitPriceColumn ? 1 : 0) + ($showCostPriceColumn ? 1 : 0);
+$productsTableColspan = 8 + ($showSellingPriceColumn ? 1 : 0) + ($showCostPriceColumn ? 1 : 0);
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -276,7 +276,7 @@ $productsTableColspan = 8 + ($showUnitPriceColumn ? 1 : 0) + ($showCostPriceColu
 <div class="card">
     <div class="card-body">
         <div class="table-responsive">
-            <table class="table table-hover" id="productsTable">
+            <table class="table js-datatable table-hover" id="productsTable">
                 <thead>
                     <tr>
                         <th>SKU</th>
@@ -286,8 +286,8 @@ $productsTableColspan = 8 + ($showUnitPriceColumn ? 1 : 0) + ($showCostPriceColu
                         <th>Category</th>
                         <th>Subcategory</th>
                         <th>Customer</th>
-                        <?php if ($showUnitPriceColumn): ?>
-                        <th>Unit Price</th>
+                        <?php if ($showSellingPriceColumn): ?>
+                        <th>Selling Price</th>
                         <?php endif; ?>
                         <?php if ($showCostPriceColumn): ?>
                         <th>Cost Price</th>
@@ -324,7 +324,7 @@ $productsTableColspan = 8 + ($showUnitPriceColumn ? 1 : 0) + ($showCostPriceColu
                                 <td><?php echo htmlspecialchars($row['category_name']); ?></td>
                                 <td><?php echo $row['subcategory_name'] ? htmlspecialchars($row['subcategory_name']) : '-'; ?></td>
                                 <td><?php echo $row['customer_name'] ? htmlspecialchars($row['customer_name']) : '-'; ?></td>
-                                <?php if ($showUnitPriceColumn): ?>
+                                <?php if ($showSellingPriceColumn): ?>
                                 <td>
                                     <?php if (canViewProductPrice($row['type'])): ?>
                                             <?php echo isset($row['unit_price']) && $row['unit_price'] !== '' ? number_format((float)$row['unit_price'], 2) : '-'; ?>
@@ -406,7 +406,7 @@ $productsTableColspan = 8 + ($showUnitPriceColumn ? 1 : 0) + ($showCostPriceColu
                             <label for="type" class="form-label">Product Type</label>
                             <select class="form-select js-product-type" id="type" name="type" required>
                                 <option value="">-- Select Type --</option>
-                                <option value="primary">Primary Product</option>
+                                <!-- <option value="primary">Primary Product</option> -->
                                 <option value="final">Final Product</option>
                                 <option value="material">Material</option>
                             </select>
@@ -447,7 +447,7 @@ $productsTableColspan = 8 + ($showUnitPriceColumn ? 1 : 0) + ($showCostPriceColu
                     </div>
                     <div class="row">
                         <div class="col-md-6 mb-3" data-pricing-group="unit">
-                            <label for="unit_price" class="form-label">Unit Price</label>
+                            <label for="unit_price" class="form-label">Selling Price</label>
                             <input type="number" class="form-control" id="unit_price" name="unit_price" min="0" step="0.01" data-role="unit-price">
                         </div>
                         <div class="col-md-6 mb-3" data-pricing-group="cost">
@@ -509,7 +509,7 @@ $productsTableColspan = 8 + ($showUnitPriceColumn ? 1 : 0) + ($showCostPriceColu
                         <div class="col-md-6 mb-3">
                             <label for="edit_type" class="form-label">Product Type</label>
                             <select class="form-select js-product-type" id="edit_type" name="type" required>
-                                <option value="primary">Primary Product</option>
+                                <!-- <option value="primary">Primary Product</option> -->
                                 <option value="final">Final Product</option>
                                 <option value="material">Material</option>
                             </select>
@@ -550,7 +550,7 @@ $productsTableColspan = 8 + ($showUnitPriceColumn ? 1 : 0) + ($showCostPriceColu
                     </div>
                     <div class="row">
                         <div class="col-md-6 mb-3" data-pricing-group="unit">
-                            <label for="edit_unit_price" class="form-label">Unit Price</label>
+                            <label for="edit_unit_price" class="form-label">Selling Price</label>
                             <input type="number" class="form-control" id="edit_unit_price" name="unit_price" min="0" step="0.01" data-role="unit-price">
                         </div>
                         <div class="col-md-6 mb-3" data-pricing-group="cost">

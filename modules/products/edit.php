@@ -249,7 +249,7 @@ require_once '../../includes/header.php';
         </div>
         <div class="row">
             <div class="col-md-6 mb-3" data-pricing-group="unit">
-                <label class="form-label">Unit Price</label>
+                <label class="form-label">Selling Price</label>
                 <input type="number" class="form-control" name="unit_price" min="0" step="0.01" value="<?= htmlspecialchars($product['unit_price']) ?>" data-role="unit-price">
             </div>
             <div class="col-md-6 mb-3" data-pricing-group="cost">

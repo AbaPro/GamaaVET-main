@@ -254,11 +254,21 @@ require_once '../../includes/header.php';
                     <p><strong>Order Date:</strong> <?= date('M d, Y', strtotime($order['order_date'])) ?></p>
                     <p><strong>Created By:</strong> <?= htmlspecialchars($order['created_by_name']) ?></p>
                     <?php if (hasPermission('sales.orders.discount.view')): ?>
-                        <p><strong>Discount %:</strong> <?= number_format($order['discount_percentage'], 2) ?>%</p>
-                        <p><strong>Discount Type:</strong> <?= htmlspecialchars($discountBasisLabel) ?></p>
-                        <p><strong>Discount Amount:</strong> <?= number_format($discountAmount, 2) ?></p>
-                        <p><strong>Discounted Products:</strong> <?= (int)$order['discount_product_count'] ?></p>
-                        <p><strong>Free Samples:</strong> <?= (int)$order['free_sample_count'] ?></p>
+                        <?php if ($order['discount_percentage'] > 0 || $discountAmount > 0 || $order['discount_product_count'] > 0 || $order['free_sample_count'] > 0): ?>
+                            <?php if ($order['discount_percentage'] > 0): ?>
+                                <p><strong>Discount %:</strong> <?= number_format($order['discount_percentage'], 2) ?>%</p>
+                            <?php endif; ?>
+                            <?php if ($discountAmount > 0 || $order['discount_percentage'] > 0): ?>
+                                <p><strong>Discount Type:</strong> <?= htmlspecialchars($discountBasisLabel) ?></p>
+                                <p><strong>Discount Amount:</strong> <?= number_format($discountAmount, 2) ?></p>
+                            <?php endif; ?>
+                            <?php if ((int)$order['discount_product_count'] > 0): ?>
+                                <p><strong>Discounted Products:</strong> <?= (int)$order['discount_product_count'] ?></p>
+                            <?php endif; ?>
+                            <?php if ((int)$order['free_sample_count'] > 0): ?>
+                                <p><strong>Free Samples:</strong> <?= (int)$order['free_sample_count'] ?></p>
+                            <?php endif; ?>
+                        <?php endif; ?>
                     <?php endif; ?>
                     <?php if (hasPermission('sales.orders.shipping.view')): ?>
                         <p><strong>Shipping:</strong> <?= $order['shipping_cost_type'] === 'manual' ? number_format($shippingAmount, 2) . ' (Manual)' : 'No Shipping' ?></p>
@@ -310,14 +320,14 @@ require_once '../../includes/header.php';
             <div class="row mb-4">
                 <div class="col-md-12">
                     <h5>Order Items</h5>
-                    <table class="table table-striped">
+                    <table class="table js-datatable table-striped">
                         <thead>
                             <tr>
                                 <th>SKU</th>
                                 <th>Product</th>
                                 <th>Quantity</th>
                                 <th>Stock</th>
-                                <th>Unit Price</th>
+                                <th>Selling Price</th>
                                 <th>Total</th>
                                 <th>Actions</th>
                             </tr>
@@ -328,7 +338,7 @@ require_once '../../includes/header.php';
                                     <td><?= htmlspecialchars($item['sku']) ?></td>
                                     <td>
                                         <?= htmlspecialchars($item['product_name']) ?>
-                                        <?php if (!empty($item['is_free_sample'])) : ?>
+                                        <?php if (!empty($item['is_free_sample']) && hasPermission('sales.orders.discount.view')) : ?>
                                             <span class="badge bg-info ms-2">Free Sample</span>
                                         <?php endif; ?>
                                     </td>
@@ -420,7 +430,7 @@ require_once '../../includes/header.php';
                     <?php if (empty($returns)) : ?>
                         <p class="text-muted">No returns recorded for this order.</p>
                     <?php else : ?>
-                        <table class="table table-sm table-bordered">
+                        <table class="table js-datatable table-sm table-bordered">
                             <thead>
                                 <tr>
                                     <th>Product</th>
@@ -494,7 +504,7 @@ require_once '../../includes/header.php';
                     <?php if (empty($payments)) : ?>
                         <p>No payments recorded yet.</p>
                     <?php else : ?>
-                        <table class="table table-sm">
+                        <table class="table js-datatable table-sm">
                             <thead>
                                 <tr>
                                     <th>Date</th>
@@ -533,26 +543,9 @@ require_once '../../includes/header.php';
                     <h5>Order Notes</h5>
                     <p><?= nl2br(htmlspecialchars($order['notes'] ?? 'No notes available')) ?></p>
                     
-                    <?php if ($canUpdateOrderStatus) : ?>
+                    <?php if ($canUpdateOrderStatus && ($order['total_amount'] - $order['paid_amount']) > 0) : ?>
                         <hr>
-                        <h5>Update Status</h5>
-                        <form method="post">
-                            <div class="input-group mb-3">
-                                <select class="form-select" name="status">
-                                    <option value="new" <?= $order['status'] == 'new' ? 'selected' : '' ?>>New</option>
-                                    <option value="in-production" <?= $order['status'] == 'in-production' ? 'selected' : '' ?>>In Production</option>
-                                    <option value="in-packing" <?= $order['status'] == 'in-packing' ? 'selected' : '' ?>>In Packing</option>
-                                    <option value="delivering" <?= $order['status'] == 'delivering' ? 'selected' : '' ?>>Delivering</option>
-                                    <option value="delivered" <?= $order['status'] == 'delivered' ? 'selected' : '' ?>>Delivered</option>
-                                    <option value="returned" <?= $order['status'] == 'returned' ? 'selected' : '' ?>>Returned</option>
-                                </select>
-                                <button type="submit" name="update_status" class="btn btn-primary">Update</button>
-                            </div>
-                        </form>
-                        
-                        <?php if (($order['total_amount'] - $order['paid_amount']) > 0) : ?>
-                            <a href="process_payment.php?order_id=<?= $order_id ?>" class="btn btn-success">Record Payment</a>
-                        <?php endif; ?>
+                        <a href="process_payment.php?order_id=<?= $order_id ?>" class="btn btn-success">Record Payment</a>
                     <?php endif; ?>
                 </div>
             </div>

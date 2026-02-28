@@ -49,6 +49,8 @@ $items = $itemsStmt->fetchAll(PDO::FETCH_ASSOC);
 $balance = (float)$order['total_amount'] - (float)$order['paid_amount'];
 $statusLabel = ucwords(str_replace('-', ' ', $order['status']));
 
+$canViewPrices = hasPermission('purchases.po.price.view');
+
 echo json_encode([
     'success' => true,
     'order' => [
@@ -60,17 +62,17 @@ echo json_encode([
         'contact_name' => hasPermission('contacts.view') ? $order['contact_name'] : null,
         'contact_phone' => hasPermission('contacts.view') ? $order['contact_phone'] : null,
         'created_by' => $order['created_by_name'],
-        'total_amount' => number_format((float)$order['total_amount'], 2),
-        'paid_amount' => number_format((float)$order['paid_amount'], 2),
-        'balance' => number_format($balance, 2),
+        'total_amount' => $canViewPrices ? number_format((float)$order['total_amount'], 2) : 'Hidden',
+        'paid_amount' => $canViewPrices ? number_format((float)$order['paid_amount'], 2) : 'Hidden',
+        'balance' => $canViewPrices ? number_format($balance, 2) : 'Hidden',
         'notes' => $order['notes'] ?? ''
     ],
-    'items' => array_map(function ($item) {
+    'items' => array_map(function ($item) use ($canViewPrices) {
         return [
             'product_name' => $item['product_name'],
             'quantity' => (float)$item['quantity'],
-            'unit_price' => number_format((float)$item['unit_price'], 2),
-            'total_price' => number_format((float)$item['total_price'], 2)
+            'unit_price' => $canViewPrices ? number_format((float)$item['unit_price'], 2) : 'Hidden',
+            'total_price' => $canViewPrices ? number_format((float)$item['total_price'], 2) : 'Hidden'
         ];
     }, $items)
 ]);

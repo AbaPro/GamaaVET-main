@@ -53,6 +53,8 @@ $purchase_orders = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Get vendors for filter dropdown
 $vendors = $pdo->query("SELECT id, name FROM vendors ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+
+$canViewPrices = hasPermission('purchases.po.price.view');
 ?>
 
 <div class="container mt-4">
@@ -115,9 +117,11 @@ $vendors = $pdo->query("SELECT id, name FROM vendors ORDER BY name")->fetchAll(P
                             <th>Vendor</th>
                             <th>Destination</th>
                             <th>Date</th>
+                            <?php if ($canViewPrices): ?>
                             <th>Total</th>
                             <th>Paid</th>
                             <th>Balance</th>
+                            <?php endif; ?>
                             <th>Status</th>
                             <th>Actions</th>
                         </tr>
@@ -145,11 +149,13 @@ $vendors = $pdo->query("SELECT id, name FROM vendors ORDER BY name")->fetchAll(P
                                 <td><?= htmlspecialchars($po['vendor_name']) ?></td>
                                 <td><?= htmlspecialchars($po['warehouse_location'] ?? 'N/A') ?></td>
                                 <td><?= date('M d, Y', strtotime($po['order_date'])) ?></td>
+                                <?php if ($canViewPrices): ?>
                                 <td><?= number_format($po['total_amount'], 2) ?></td>
                                 <td><?= number_format($po['paid_amount'], 2) ?></td>
                                 <td class="<?= $balance > 0 ? 'text-danger' : 'text-success' ?>">
                                     <?= number_format($balance, 2) ?>
                                 </td>
+                                <?php endif; ?>
                                 <td>
                                     <span class="badge <?= $status_class[$po['status']] ?>">
                                         <?= ucwords(str_replace('-', ' ', $po['status'])) ?>

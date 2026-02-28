@@ -99,6 +99,8 @@ if ($viewMode === 'statement') {
     $pdf->Cell(0, 6, $order['internal_id'], 0, 1, 'R');
     $pdf->Cell(40, 6, 'تاريخ الطلب:', 0, 0, 'L');
     $pdf->Cell(0, 6, date('Y-m-d', strtotime($order['order_date'])), 0, 1, 'R');
+    $pdf->Cell(40, 6, 'اسم العميل:', 0, 0, 'L');
+    $pdf->Cell(0, 6, $order['customer_name'], 0, 1, 'R');
     $pdf->Ln(5);
     $pdf->SetFont('aealarabiya', 'B', 12);
     $pdf->Cell(120, 7, 'المنتج', 1, 0, 'C');
@@ -112,6 +114,38 @@ if ($viewMode === 'statement') {
         $pdf->Cell(120, 7, $label, 1, 0, 'C');
         $pdf->Cell(40, 7, $item['quantity'], 1, 1, 'C');
     }
+    // Dispatch Prep section
+    $pdf->Ln(8);
+    $pdf->SetFont('aealarabiya', 'B', 13);
+    $pdf->Cell(0, 8, 'تجهيز الشحن (Dispatch Prep)', 0, 1, 'C');
+    $pdf->Ln(3);
+
+    // Details
+    $pdf->SetFont('aealarabiya', 'B', 11);
+    $pdf->Cell(0, 7, 'تفاصيل الشحن', 0, 1, 'R');
+    $pdf->SetFont('aealarabiya', '', 11);
+    $detailFields = ['عدد المنتج النهائي', 'عدد الكراتين', 'وحدات/كرتونة'];
+    foreach ($detailFields as $field) {
+        $pdf->Cell(100, 7, $field . ':', 0, 0, 'R');
+        $pdf->Cell(60, 7, '', 'B', 1, 'L');
+    }
+
+    $pdf->Ln(4);
+
+    // Before Loading checkboxes
+    $pdf->SetFont('aealarabiya', 'B', 11);
+    $pdf->Cell(0, 7, 'قبل التحميل', 0, 1, 'R');
+    $pdf->SetFont('aealarabiya', '', 11);
+    $checkFields = [
+        'تم استلام إذن صرف/أمر تسليم',
+        'تم عدّ الكمية قبل التحميل',
+        'تم تصوير الحمولة (صور مرفقة)',
+    ];
+    foreach ($checkFields as $field) {
+        $pdf->Cell(10, 7, '', 1, 0, 'C');
+        $pdf->Cell(0, 7, '  ' . $field, 0, 1, 'R');
+    }
+
     $pdf->Ln(8);
     $pdf->SetFont('aealarabiya', 'B', 13);
     $pdf->setRTL(false);
@@ -157,7 +191,7 @@ $pdf->SetFont($primaryFont, 'B', 10);
 $pdf->Cell(15, 7, '#', 1, 0, 'C');
 $pdf->Cell(75, 7, 'Product', 1, 0);
 $pdf->Cell(20, 7, 'Qty', 1, 0, 'C');
-$pdf->Cell(30, 7, 'Unit Price', 1, 0, 'R');
+$pdf->Cell(30, 7, 'Selling Price', 1, 0, 'R');
 $pdf->Cell(30, 7, 'Total', 1, 1, 'R');
 
 $pdf->SetFont($primaryFont, '', 10);
@@ -204,8 +238,11 @@ $pdf->Cell(0, 6, number_format($shippingAmount, 2), 0, 1);
 $pdf->SetFont($primaryFont, 'B', 10);
 $pdf->Cell(140, 7, 'Items Subtotal:', 1, 0, 'R');
 $pdf->Cell(30, 7, number_format($itemsSubtotal, 2), 1, 1, 'R');
-$pdf->Cell(140, 7, 'Discount Amount:', 1, 0, 'R');
-$pdf->Cell(30, 7, '-' . number_format($order['discount_amount'], 2), 1, 1, 'R');
+if ((float)$order['discount_amount'] > 0) {
+    // Only display the cash discount row if an amount was subtracted
+    $pdf->Cell(140, 7, 'Discount Amount:', 1, 0, 'R');
+    $pdf->Cell(30, 7, '-' . number_format($order['discount_amount'], 2), 1, 1, 'R');
+}
 $pdf->Cell(140, 7, 'Shipping:', 1, 0, 'R');
 $pdf->Cell(30, 7, number_format($shippingAmount, 2), 1, 1, 'R');
 $pdf->Cell(140, 7, 'Total:', 1, 0, 'R');

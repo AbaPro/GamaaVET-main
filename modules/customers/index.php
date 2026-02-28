@@ -139,7 +139,7 @@ if ($factories_result) {
 <div class="card">
     <div class="card-body h-100 d-flex flex-column" style="min-height:400px;">
         <div class="table-responsive flex-grow-1">
-            <table class="table table-hover mb-0" id="customersTable">
+            <table class="table js-datatable table-hover mb-0" id="customersTable">
                 <thead>
                     <tr>
                         <th>ID</th>

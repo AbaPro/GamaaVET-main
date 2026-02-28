@@ -99,7 +99,7 @@ $result = $conn->query($sql);
 <div class="card">
     <div class="card-body">
         <div class="table-responsive">
-            <table class="table table-hover" id="vendorsTable">
+            <table class="table js-datatable table-hover" id="vendorsTable">
                 <thead>
                     <tr>
                         <th>ID</th>

@@ -105,8 +105,8 @@ $output = fopen('php://output', 'w');
 // Header row
 $headers = ['SKU', 'Barcode', 'Name', 'Description', 'Type', 'Category', 'Subcategory', 'Customer'];
 
-if (hasExplicitPermission('products.final.price.view') || hasExplicitPermission('products.material.price.view')) {
-    $headers[] = 'Unit Price';
+if (hasExplicitPermission('products.final.price.view')) {
+    $headers[] = 'Selling Price';
 }
 if (hasExplicitPermission('products.final.cost.view') || hasExplicitPermission('products.material.cost.view')) {
     $headers[] = 'Cost Price';
@@ -129,7 +129,7 @@ if ($result) {
         ];
 
         // View logic for prices
-        if (hasExplicitPermission('products.final.price.view') || hasExplicitPermission('products.material.price.view')) {
+        if (hasExplicitPermission('products.final.price.view')) {
             $csvRow[] = canViewProductPrice($row['type']) ? $row['unit_price'] : 'N/A';
         }
         if (hasExplicitPermission('products.final.cost.view') || hasExplicitPermission('products.material.cost.view')) {

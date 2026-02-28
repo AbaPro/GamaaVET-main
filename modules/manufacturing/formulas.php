@@ -6,6 +6,50 @@ if (!hasPermission('manufacturing.view')) {
     setAlert('danger', 'Access denied.');
     redirect('../../dashboard.php');
 }
+$canViewFormula = hasPermission('manufacturing.formula.view_all');
+if (!$canViewFormula) {
+    setAlert('danger', 'Access denied. You do not have permission to view formulas.');
+    redirect('../../dashboard.php');
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['unlock_formula_password'])) {
+    if ($_POST['unlock_formula_password'] === '123456') {
+        $_SESSION['formula_unlocked'] = true;
+        setAlert('success', 'Formulas unlocked.');
+    } else {
+        setAlert('danger', 'Incorrect password.');
+    }
+    // Redirect to clear POST
+    header("Location: formulas.php");
+    exit;
+}
+
+if (empty($_SESSION['formula_unlocked'])) {
+    $page_title = 'Unlock Formulas';
+    require_once '../../includes/header.php';
+    ?>
+    <div class="row justify-content-center mt-5">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header border-bottom">
+                    <h5 class="mb-0">Unlock Formulas</h5>
+                </div>
+                <div class="card-body">
+                    <form method="post">
+                        <div class="mb-3">
+                            <label class="form-label">Password</label>
+                            <input type="password" name="unlock_formula_password" class="form-control" required autofocus>
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100">Unlock</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    <?php
+    require_once '../../includes/footer.php';
+    exit;
+}
 
 $page_title = 'Manufacturing Formulas';
 require_once '../../includes/header.php';
@@ -43,9 +87,10 @@ if ($search) {
 }
 
 $query = "
-    SELECT f.*, c.name AS customer_name
+    SELECT f.*, c.name AS customer_name, p.name AS product_name, p.sku AS product_sku
     FROM manufacturing_formulas f
     JOIN customers c ON c.id = f.customer_id
+    LEFT JOIN products p ON p.id = f.product_id
 ";
 if (!empty($whereClauses)) {
     $query .= ' WHERE ' . implode(' AND ', $whereClauses);
@@ -121,6 +166,9 @@ if ($result) {
                     <tr>
                         <th>Name</th>
                         <th>Provider</th>
+                        <th>Product</th>
+                        <th>SKU</th>
+                        <th>Type</th>
                         <th>Batch Size</th>
                         <th>Status</th>
                         <th>Created</th>
@@ -138,7 +186,35 @@ if ($result) {
                                     <?php endif; ?>
                                 </td>
                                 <td><?= htmlspecialchars($formula['customer_name']); ?></td>
-                                <td><?= number_format($formula['batch_size'], 2); ?></td>
+                                <td>
+                                    <?php if ($formula['product_name']): ?>
+                                        <?= htmlspecialchars($formula['product_name']); ?>
+                                    <?php else: ?>
+                                        <span class="text-muted">—</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <?php if ($formula['product_sku']): ?>
+                                        <?= htmlspecialchars($formula['product_sku']); ?>
+                                    <?php else: ?>
+                                        <span class="text-muted">—</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <?php if ($formula['type']): ?>
+                                        <span class="badge <?= $formula['type'] === 'liquid' ? 'bg-info' : 'bg-warning text-dark'; ?>">
+                                            <?= ucfirst($formula['type']); ?>
+                                        </span>
+                                    <?php else: ?>
+                                        <span class="text-muted">—</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <?= number_format($formula['batch_size'], 2); ?>
+                                    <?php if (!empty($formula['batch_unit'])): ?>
+                                        <small class="text-muted"><?= htmlspecialchars($formula['batch_unit']); ?></small>
+                                    <?php endif; ?>
+                                </td>
                                 <td>
                                     <?php if ($formula['is_active']): ?>
                                         <span class="badge bg-success">Active</span>
@@ -164,7 +240,7 @@ if ($result) {
                         <?php endforeach; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="6" class="text-center py-4 text-muted">No formulas found matching your criteria.</td>
+                            <td colspan="8" class="text-center py-4 text-muted">No formulas found matching your criteria.</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>

@@ -262,7 +262,7 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
     // Add Packaging & Labeling Checklist for packaging step
     if ($stepKey === 'packaging' && $conn) {
         $packagingStmt = $conn->prepare("
-            SELECT section_name, item_key, item_text, item_type, item_value
+            SELECT section_name, item_key, item_text, item_type, item_value, item_notes
             FROM manufacturing_packaging_checklist
             WHERE manufacturing_order_id = ?
             ORDER BY item_order
@@ -364,6 +364,7 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
                 $html .= '</tr></thead><tbody>';
                 
                 $materials = [
+                    'prints' => 'مطبوعات',
                     'boxes' => 'العلب',
                     'stickers' => 'الاستيكر',
                     'leaflets' => 'نشره'
@@ -451,6 +452,67 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
             }
             
             $html .= '</div>';
+            
+            // Material Tracking Table (from Packaging) for Dispatch Verification
+            $packagingStmt = $conn->prepare("
+                SELECT section_name, item_key, item_text, item_value, item_notes
+                FROM manufacturing_packaging_checklist
+                WHERE manufacturing_order_id = ?
+                ORDER BY item_order
+            ");
+            $packagingStmt->bind_param("i", $orderId);
+            $packagingStmt->execute();
+            $pkgResult = $packagingStmt->get_result();
+            $pkgData = ['after' => []];
+            while ($pRow = $pkgResult->fetch_assoc()) {
+                if ($pRow['section_name'] === 'after') {
+                    $pkgData['after'][] = $pRow;
+                }
+            }
+            $packagingStmt->close();
+            
+            if (!empty($pkgData['after'])) {
+                $html .= '<div style="direction:rtl; text-align:right; margin-top:20px;">';
+                $html .= '<h5 style="color:#0d6efd;">تتبع مواد التعبئة (Packaging Material Tracking)</h5>';
+                $html .= '<table border="1" cellpadding="5" style="width:100%; border-collapse:collapse; margin-bottom:15px;">';
+                $html .= '<thead><tr style="background:#e9ecef;">';
+                $html .= '<th style="text-align:right;">المادة</th>';
+                $html .= '<th style="text-align:center;">مصروف</th>';
+                $html .= '<th style="text-align:center;">مستخدم</th>';
+                $html .= '<th style="text-align:center;">راجع</th>';
+                $html .= '<th style="text-align:center;">الهالك</th>';
+                $html .= '</tr></thead><tbody>';
+                
+                $materials = [
+                    'prints' => 'مطبوعات',
+                    'boxes' => 'العلب',
+                    'stickers' => 'الاستيكر',
+                    'leaflets' => 'نشره'
+                ];
+                
+                foreach ($materials as $matKey => $matLabel) {
+                    $issued = ''; $issuedNote = '';
+                    $used = ''; $usedNote = '';
+                    $returned = ''; $returnedNote = '';
+                    $waste = ''; $wasteNote = '';
+                    
+                    foreach ($pkgData['after'] as $pi) {
+                        if ($pi['item_key'] === $matKey . '_issued') { $issued = $pi['item_value']; $issuedNote = $pi['item_notes']; }
+                        if ($pi['item_key'] === $matKey . '_used') { $used = $pi['item_value']; $usedNote = $pi['item_notes']; }
+                        if ($pi['item_key'] === $matKey . '_returned') { $returned = $pi['item_value']; $returnedNote = $pi['item_notes']; }
+                        if ($pi['item_key'] === $matKey . '_waste') { $waste = $pi['item_value']; $wasteNote = $pi['item_notes']; }
+                    }
+                    
+                    $html .= '<tr>';
+                    $html .= '<td style="text-align:right;"><strong>' . $matLabel . '</strong></td>';
+                    $html .= '<td style="text-align:center;">' . htmlspecialchars($issued ?: '0') . ($issuedNote ? '<br><small>' . htmlspecialchars($issuedNote) . '</small>' : '') . '</td>';
+                    $html .= '<td style="text-align:center;">' . htmlspecialchars($used ?: '0') . ($usedNote ? '<br><small>' . htmlspecialchars($usedNote) . '</small>' : '') . '</td>';
+                    $html .= '<td style="text-align:center;">' . htmlspecialchars($returned ?: '0') . ($returnedNote ? '<br><small>' . htmlspecialchars($returnedNote) . '</small>' : '') . '</td>';
+                    $html .= '<td style="text-align:center;">' . htmlspecialchars($waste ?: '0') . ($wasteNote ? '<br><small>' . htmlspecialchars($wasteNote) . '</small>' : '') . '</td>';
+                    $html .= '</tr>';
+                }
+                $html .= '</tbody></table></div>';
+            }
         }
         $dispatchStmt->close();
     }
@@ -684,4 +746,188 @@ function manufacturing_get_document_url($relativePath) {
     $relativePath = str_replace('\\', '/', $relativePath);
     $relativePath = ltrim($relativePath, '/');
     return rtrim(BASE_URL, '/') . '/' . $relativePath;
+}
+
+/**
+ * Builds a comprehensive HTML report for all steps in a manufacturing order.
+ */
+function manufacturing_build_full_report_html($conn, $orderId) {
+    // Get Order Details
+    $orderStmt = $conn->prepare("
+        SELECT mo.*, c.name AS customer_name, f.name AS formula_name, f.description AS formula_description, f.components_json,
+               l.name AS location_name, l.address AS location_address, p.name AS product_name, p.sku AS product_sku,
+               bs.name AS bottle_size_name, bs.size AS bottle_size_value, bs.unit AS bottle_size_unit, bs.type AS bottle_size_type
+        FROM manufacturing_orders mo
+        JOIN customers c ON c.id = mo.customer_id
+        JOIN manufacturing_formulas f ON f.id = mo.formula_id
+        LEFT JOIN locations l ON l.id = mo.location_id
+        LEFT JOIN products p ON p.id = mo.product_id
+        LEFT JOIN bottle_sizes bs ON bs.id = mo.bottle_size_id
+        WHERE mo.id = ?
+        LIMIT 1
+    ");
+    $orderStmt->bind_param('i', $orderId);
+    $orderStmt->execute();
+    $order = $orderStmt->get_result()->fetch_assoc();
+    $orderStmt->close();
+
+    if (!$order) return "Order not found.";
+
+    $formulaComponents = json_decode($order['components_json'] ?? '[]', true);
+    if (!is_array($formulaComponents)) $formulaComponents = [];
+
+    // Get All Steps
+    $steps = [];
+    $stepStmt = $conn->prepare("
+        SELECT * FROM manufacturing_order_steps 
+        WHERE manufacturing_order_id = ? 
+        ORDER BY FIELD(step_key, 'sourcing', 'receipt', 'preparation', 'quality', 'packaging', 'dispatch', 'delivering')
+    ");
+    $stepStmt->bind_param('i', $orderId);
+    $stepStmt->execute();
+    $res = $stepStmt->get_result();
+    while ($row = $res->fetch_assoc()) $steps[] = $row;
+    $stepStmt->close();
+
+    $orderNumber = htmlspecialchars($order['order_number'] ?? 'UNKNOWN');
+    $customerName = htmlspecialchars($order['customer_name'] ?? 'Unknown provider');
+    $formulaName = htmlspecialchars($order['formula_name'] ?? 'Custom formula');
+    $priority = htmlspecialchars(ucfirst($order['priority'] ?? 'normal'));
+    $dueDate = $order['due_date'] ? htmlspecialchars($order['due_date']) : 'TBD';
+
+    $html = '<style>
+        body { font-family: "aealarabiya", "Arial Unicode MS", Arial, sans-serif; font-size: 10pt; color: #222; line-height: 1.4; }
+        .report-header { text-align: center; margin-bottom: 30px; border-bottom: 3px solid #0d6efd; padding-bottom: 10px; }
+        .header-title { color: #0d6efd; font-size: 22pt; margin-bottom: 5px; font-weight: bold; }
+        .header-subtitle { color: #555; font-size: 14pt; margin-top: 0; }
+        
+        .info-box { background-color: #fcfcfc; border: 1px solid #eee; padding: 15px; margin-bottom: 25px; }
+        .section-header { background-color: #0d6efd; color: white; padding: 8px 15px; margin: 30px 0 15px 0; font-size: 13pt; font-weight: bold; border-radius: 4px; }
+        .step-info { background-color: #f8f9fa; border-left: 5px solid #0dcaf0; padding: 10px 15px; margin-bottom: 15px; }
+        
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        th, td { border: 1px solid #e0e0e0; padding: 8px 10px; text-align: left; }
+        th { background-color: #f5f5f5; font-weight: bold; color: #333; }
+        .col-label { background-color: #f9f9f9; font-weight: bold; width: 25%; }
+        
+        .status-badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 9pt; font-weight: bold; text-transform: uppercase; }
+        .status-completed { background-color: #d1e7dd; color: #0f5132; }
+        .status-in-progress { background-color: #cff4fc; color: #055160; }
+        .status-pending { background-color: #f8f9fa; color: #444; border: 1px solid #ddd; }
+        
+        .arabic-text { direction: rtl; text-align: right; }
+        .status-approved { background-color: #d1e7dd; color: #0f5132; font-weight: bold; }
+        .status-rejected { background-color: #f8d7da; color: #842029; font-weight: bold; }
+        .footer { margin-top: 50px; border-top: 1px solid #ddd; padding-top: 15px; font-size: 9pt; color: #777; text-align: center; }
+        .page-break { page-break-after: always; }
+        .notes-box { background-color: #fff9db; border: 1px solid #ffec99; padding: 10px; margin: 10px 0; border-radius: 4px; }
+    </style>';
+
+    $html .= '<div class="report-header">';
+    $html .= '<div class="header-title">Manufacturing Operations Report</div>';
+    $html .= '<div class="header-subtitle">Order Reference: ' . $orderNumber . '</div>';
+    $html .= '</div>';
+
+    // Order Summary
+    $html .= '<div class="section-header">Order Summary</div>';
+    $html .= '<div class="info-box">';
+    $html .= '<table><tbody>';
+    $html .= "<tr><td class=\"col-label\">Order Number</td><td>{$orderNumber}</td><td class=\"col-label\">Provider / Client</td><td>{$customerName}</td></tr>";
+    $html .= "<tr><td class=\"col-label\">Formula Name</td><td>{$formulaName}</td><td class=\"col-label\">Overall Priority</td><td>{$priority}</td></tr>";
+    $html .= "<tr><td class=\"col-label\">Batch Size</td><td>" . htmlspecialchars($order['batch_size'] ?? '0') . "</td><td class=\"col-label\">Due Date</td><td>{$dueDate}</td></tr>";
+    $html .= "<tr><td class=\"col-label\">Target Product</td><td>" . htmlspecialchars($order['product_name'] ?? 'N/A') . "</td><td class=\"col-label\">Product SKU</td><td>" . htmlspecialchars($order['product_sku'] ?? 'N/A') . "</td></tr>";
+    $html .= "<tr><td class=\"col-label\">Production Site</td><td>" . htmlspecialchars($order['location_name'] ?? 'N/A') . "</td><td class=\"col-label\">Current Stage</td><td>" . htmlspecialchars(ucfirst($order['status'])) . "</td></tr>";
+    $html .= '</tbody></table>';
+    $html .= '</div>';
+
+    // Formula Components
+    $html .= '<div class="section-header">1. Material Formulation</div>';
+    $html .= '<table><thead><tr><th>Component Name</th><th style="width:20%; text-align:center;">Quantity / Ratio</th><th style="width:15%; text-align:center;">Unit</th></tr></thead><tbody>';
+    foreach ($formulaComponents as $comp) {
+        $html .= "<tr><td>" . htmlspecialchars($comp['name'] ?? 'TBD') . "</td><td style=\"text-align:center;\">" . htmlspecialchars($comp['quantity'] ?? ($comp['ratio'] ?? '0')) . "</td><td style=\"text-align:center;\">" . htmlspecialchars($comp['unit'] ?? '-') . "</td></tr>";
+    }
+    $html .= '</tbody></table>';
+
+    $stepCounter = 2;
+    // Step Details
+    foreach ($steps as $step) {
+        $html .= '<div class="page-break"></div>';
+        
+        $stepLabel = manufacturing_get_step_label($step['step_key']);
+        $stepStatus = ucfirst($step['status']);
+        $statusClass = 'status-' . str_replace('_', '-', $step['status']);
+        
+        $html .= '<div class="section-header">' . ($stepCounter++) . '. ' . $stepLabel . '</div>';
+        
+        $html .= '<div class="step-info">';
+        $html .= '<table><tbody><tr>';
+        $html .= '<td style="border:none; width:33%;"><strong>Status:</strong> <span class="status-badge ' . $statusClass . '">' . $stepStatus . '</span></td>';
+        if ($step['started_at']) $html .= '<td style="border:none; width:33%;"><strong>Start:</strong> ' . date('d/m/Y H:i', strtotime($step['started_at'])) . '</td>';
+        if ($step['completed_at']) $html .= '<td style="border:none; width:33%;"><strong>End:</strong> ' . date('d/m/Y H:i', strtotime($step['completed_at'])) . '</td>';
+        $html .= '</tr></tbody></table>';
+        
+        if ($step['notes']) {
+            $html .= '<div class="notes-box"><strong>Operation Logs / Notes:</strong><br>' . nl2br(htmlspecialchars($step['notes'])) . '</div>';
+        }
+        $html .= '</div>';
+
+        // Inject step-specific detailed logic
+        $stepHtml = manufacturing_build_step_document_html($order, $step, ['name' => $order['formula_name']], $formulaComponents, $step['notes'], $stepLabel, $conn);
+        
+        // Strip out the parts we don't want to repeat
+        $stepHtml = preg_replace('/<style.*?>.*?<\/style>/is', '', $stepHtml);
+        $stepHtml = preg_replace('/<h3>.*?<\/h3>/is', '', $stepHtml);
+        $stepHtml = preg_replace('/<table class="header-table">.*?<\/table>/is', '', $stepHtml);
+        $stepHtml = preg_replace('/<table><tbody><tr><th>Order<\/th>.*?<\/table>/is', '', $stepHtml);
+        $stepHtml = preg_replace('/<p><strong>Step Notes .*?<\/p>/is', '', $stepHtml);
+        $stepHtml = preg_replace('/<p><strong>Step Handover .*?<\/p>/is', '', $stepHtml);
+        $stepHtml = preg_replace('/<table><thead><tr><th>Component<\/th>.*?<\/table>/is', '', $stepHtml);
+
+        $html .= $stepHtml;
+        
+        // Add spacing between steps
+        $html .= '<div style="margin-bottom:30px;"></div>';
+    }
+
+    $html .= '<div class="footer">';
+    $html .= 'Final Assessment Report | Order: ' . $orderNumber . ' | Site: ' . htmlspecialchars($order['location_name'] ?? 'GammaVET') . '<br>';
+    $html .= 'Document generated automatically on ' . date('d/m/Y H:i:s') . ' | Page [page_no] of [total_pages]';
+    $html .= '</div>';
+
+    return $html;
+}
+
+/**
+ * Generates the full PDF report and returns the absolute path.
+ */
+function manufacturing_generate_full_order_pdf($conn, $orderId) {
+    $orderStmt = $conn->prepare("SELECT order_number FROM manufacturing_orders WHERE id = ?");
+    $orderStmt->bind_param('i', $orderId);
+    $orderStmt->execute();
+    $orderNumber = $orderStmt->get_result()->fetch_assoc()['order_number'] ?? 'order_' . $orderId;
+    $orderStmt->close();
+
+    $htmlContent = manufacturing_build_full_report_html($conn, $orderId);
+    
+    $storageDir = manufacturing_get_storage_base_path() . '/reports';
+    if (!is_dir($storageDir)) mkdir($storageDir, 0777, true);
+    
+    $fileName = "Full_Report_{$orderNumber}.pdf";
+    $filePath = $storageDir . '/' . $fileName;
+
+    require_once __DIR__ . '/../../tcpdf/tcpdf.php';
+    $pdf = new TCPDF('P', 'mm', 'A4', true, 'UTF-8', false);
+    $pdf->SetCreator('GammaVET Manufacturing Module');
+    $pdf->SetTitle("Full Report - {$orderNumber}");
+    $pdf->setPrintHeader(false);
+    $pdf->setPrintFooter(true);
+    $pdf->SetMargins(15, 15, 15);
+    $pdf->SetAutoPageBreak(TRUE, 15);
+    
+    $pdf->SetFont('aealarabiya', '', 11);
+    $pdf->AddPage();
+    $pdf->writeHTML($htmlContent, true, false, true, false, '');
+    
+    $pdf->Output($filePath, 'F');
+    return $filePath;
 }

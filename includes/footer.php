@@ -28,6 +28,36 @@
                         }
                     });
                 }
+
+                // Global table row click logic
+                if (window.jQuery) {
+                    jQuery(document).on('click', 'table.table-hover tbody tr', function(e) {
+                        // Don't trigger if clicking on an interactive element
+                        if (jQuery(e.target).closest('a, button, input, select, textarea, .dropdown-menu, .js-order-preview').length) {
+                            return;
+                        }
+
+                        const $row = jQuery(this);
+                        // Search for the "View" or "Details" link first
+                        let $link = $row.find('a').filter(function() {
+                            const text = jQuery(this).text().trim().toLowerCase();
+                            const href = (jQuery(this).attr('href') || '').toLowerCase();
+                            return text.includes('view') || text.includes('details') || href.includes('view.php') || href.includes('details.php');
+                        }).first();
+
+                        // Fallback to first non-destructive link
+                        if (!$link.length) {
+                            $link = $row.find('a:not(.btn-danger, .btn-warning, .dropdown-toggle, .delete-item, .remove-item)').first();
+                        }
+
+                        if ($link.length) {
+                            const href = $link.attr('href');
+                            if (href && href !== '#' && !href.startsWith('javascript:')) {
+                                window.location.href = href;
+                            }
+                        }
+                    });
+                }
             });
         </script>
         <!-- Custom JS -->

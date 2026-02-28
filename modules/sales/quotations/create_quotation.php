@@ -162,7 +162,7 @@ $expiry_date = date('Y-m-d', strtotime('+30 days'));
                         <tr>
                             <th>Product</th>
                             <th>Quantity</th>
-                            <th>Unit Price</th>
+                            <th>Selling Price</th>
                             <th>Total</th>
                             <th>Action</th>
                         </tr>

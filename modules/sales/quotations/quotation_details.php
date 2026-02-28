@@ -118,7 +118,7 @@ require_once '../../../includes/header.php';
                                 <th>SKU</th>
                                 <th>Product</th>
                                 <th>Quantity</th>
-                                <th>Unit Price</th>
+                                <th>Selling Price</th>
                                 <th>Total</th>
                             </tr>
                         </thead>

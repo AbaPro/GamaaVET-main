@@ -189,11 +189,7 @@
                                         <li>
                                             <hr class="dropdown-divider">
                                         </li>
-                                        <li>
-                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/products/">
-                                                <i class="fas fa-list me-2"></i> All Products
-                                            </a>
-                                        </li>
+                                       
                                     <?php endif; ?>
                                     <?php if (hasPermission('products.create')): ?>
                                         <li>
@@ -273,6 +269,11 @@
                                     <li>
                                         <a class="dropdown-item" href="<?= BASE_URL ?>modules/manufacturing/formulas.php">
                                             <i class="fas fa-flask me-2"></i> Formulas
+                                        </a>
+                                    </li>
+                                    <li>
+                                        <a class="dropdown-item" href="<?= BASE_URL ?>modules/manufacturing/bottle_sizes.php">
+                                            <i class="fas fa-wine-bottle me-2"></i> Bottle Sizes
                                         </a>
                                     </li>
                                     <?php if (hasPermission('manufacturing.orders.create')): ?>

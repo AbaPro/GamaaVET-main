@@ -154,7 +154,7 @@ require_once '../../includes/header.php';
                                 <th>Ordered Qty</th>
                                 <th>Received Qty</th>
                                 <th>Current Stock</th>
-                                <th>Unit Price</th>
+                                <th>Selling Price</th>
                                 <th>Total</th>
                             </tr>
                         </thead>
@@ -165,7 +165,7 @@ require_once '../../includes/header.php';
                                     <td><?= htmlspecialchars($item['product_name']) ?></td>
                                     <td><?= $item['quantity'] ?></td>
                                     <td><?= $item['received_quantity'] ?? 0 ?></td>
-                                    <td><?= number_format($item['current_stock'] ?? 0) ?></td>
+                                    <td><?= number_format($item['current_stock'] ?? 0, 2) ?></td>
                                     <td>
                                         <?php if (canViewProductCost($item['type'])): ?>
                                             <?= number_format($item['unit_price'], 2) ?>

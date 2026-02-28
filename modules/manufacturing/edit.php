@@ -54,14 +54,23 @@ if ($locationsResult) {
     }
 }
 
+$bottleSizes = [];
+$bottleSizesResult = $conn->query("SELECT id, name, size, unit, type FROM bottle_sizes WHERE is_active = 1 ORDER BY type, name");
+if ($bottleSizesResult) {
+    while ($bsRow = $bottleSizesResult->fetch_assoc()) {
+        $bottleSizes[] = $bsRow;
+    }
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $locationId = isset($_POST['location_id']) ? (int)$_POST['location_id'] : 0;
-    $productId = isset($_POST['product_id']) ? (int)$_POST['product_id'] : 0;
-    $priority = $_POST['priority'] ?? 'normal';
-    $batchSize = isset($_POST['batch_size']) ? floatval($_POST['batch_size']) : 0;
-    $dueDate = $_POST['due_date'] ?? null;
-    $orderNotes = trim($_POST['notes'] ?? '');
-    $status = $_POST['status'] ?? 'getting';
+    $locationId   = isset($_POST['location_id'])   ? (int)$_POST['location_id']   : 0;
+    $productId    = isset($_POST['product_id'])    ? (int)$_POST['product_id']    : 0;
+    $bottleSizeId = isset($_POST['bottle_size_id']) && $_POST['bottle_size_id'] !== '' ? (int)$_POST['bottle_size_id'] : null;
+    $priority     = $_POST['priority'] ?? 'normal';
+    $batchSize    = isset($_POST['batch_size'])    ? floatval($_POST['batch_size']) : 0;
+    $dueDate      = $_POST['due_date'] ?? null;
+    $orderNotes   = trim($_POST['notes'] ?? '');
+    $status       = $_POST['status'] ?? 'getting';
 
     $allowedPriorities = ['normal', 'rush', 'critical'];
     if (!in_array($priority, $allowedPriorities, true)) {
@@ -81,12 +90,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $dueDateValue = $dueDate ?: null;
             
             $updateStmt = $conn->prepare("
-                UPDATE manufacturing_orders 
-                SET location_id = ?, product_id = ?, batch_size = ?, due_date = ?, priority = ?, notes = ?, status = ?
+                UPDATE manufacturing_orders
+                SET location_id = ?, product_id = ?, bottle_size_id = ?, batch_size = ?, due_date = ?, priority = ?, notes = ?, status = ?
                 WHERE id = ?
             ");
             $productIdValue = $productId ?: null;
-            $updateStmt->bind_param("iidssssi", $locationId, $productIdValue, $batchSize, $dueDateValue, $priority, $orderNotes, $status, $orderId);
+            $updateStmt->bind_param("iiidssssi", $locationId, $productIdValue, $bottleSizeId, $batchSize, $dueDateValue, $priority, $orderNotes, $status, $orderId);
             
             if ($updateStmt->execute()) {
                 setAlert('success', 'Manufacturing order updated successfully.');
@@ -158,6 +167,40 @@ $statuses = ['getting' => 'Getting', 'preparing' => 'Preparing', 'delivering' =>
                                 <?php echo e($product['name']); ?> <?= $product['sku'] ? '(' . e($product['sku']) . ')' : ''; ?>
                             </option>
                         <?php endforeach; ?>
+                    </select>
+                </div>
+            </div>
+
+            <div class="row g-3 mt-0">
+                <div class="col-md-4">
+                    <label class="form-label">Bottle Size</label>
+                    <?php
+                    $selBsId    = isset($old['bottle_size_id']) ? $old['bottle_size_id'] : ($order['bottle_size_id'] ?? '');
+                    $bsLiquid   = array_filter($bottleSizes, fn($b) => $b['type'] === 'liquid');
+                    $bsPowder   = array_filter($bottleSizes, fn($b) => $b['type'] === 'powder');
+                    ?>
+                    <select class="form-select select2" name="bottle_size_id">
+                        <option value="">— No bottle size —</option>
+                        <?php if ($bsLiquid): ?>
+                            <optgroup label="Liquid">
+                                <?php foreach ($bsLiquid as $bs): ?>
+                                    <option value="<?= $bs['id']; ?>" data-type="liquid"
+                                            <?= (string)$selBsId === (string)$bs['id'] ? 'selected' : ''; ?>>
+                                        <?= htmlspecialchars($bs['name']); ?> — <?= number_format($bs['size'], 3); ?> <?= htmlspecialchars($bs['unit']); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </optgroup>
+                        <?php endif; ?>
+                        <?php if ($bsPowder): ?>
+                            <optgroup label="Powder">
+                                <?php foreach ($bsPowder as $bs): ?>
+                                    <option value="<?= $bs['id']; ?>" data-type="powder"
+                                            <?= (string)$selBsId === (string)$bs['id'] ? 'selected' : ''; ?>>
+                                        <?= htmlspecialchars($bs['name']); ?> — <?= number_format($bs['size'], 3); ?> <?= htmlspecialchars($bs['unit']); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </optgroup>
+                        <?php endif; ?>
                     </select>
                 </div>
             </div>

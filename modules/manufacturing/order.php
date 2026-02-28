@@ -11,12 +11,14 @@ if ($orderId <= 0) {
 
 $orderStmt = $conn->prepare("
     SELECT mo.*, c.name AS customer_name, f.name AS formula_name, f.description AS formula_description, f.components_json,
-           l.name AS location_name, l.address AS location_address, p.name AS product_name, p.sku AS product_sku
+           l.name AS location_name, l.address AS location_address, p.name AS product_name, p.sku AS product_sku,
+           bs.name AS bottle_size_name, bs.size AS bottle_size_value, bs.unit AS bottle_size_unit, bs.type AS bottle_size_type
     FROM manufacturing_orders mo
     JOIN customers c ON c.id = mo.customer_id
     JOIN manufacturing_formulas f ON f.id = mo.formula_id
     LEFT JOIN locations l ON l.id = mo.location_id
     LEFT JOIN products p ON p.id = mo.product_id
+    LEFT JOIN bottle_sizes bs ON bs.id = mo.bottle_size_id
     WHERE mo.id = ?
     LIMIT 1
 ");
@@ -34,6 +36,23 @@ if (!$order) {
 $formulaComponents = json_decode($order['components_json'] ?? '[]', true);
 if (!is_array($formulaComponents)) {
     $formulaComponents = [];
+}
+
+$canViewFormula = hasPermission('manufacturing.formula.view_all');
+$canViewComponentName = hasPermission('manufacturing.component.name.view');
+
+$compProductIds = [];
+foreach ($formulaComponents as $fc) {
+    if (!empty($fc['product_id'])) {
+        $compProductIds[] = (int)$fc['product_id'];
+    }
+}
+$formulaSkus = [];
+if (!empty($compProductIds)) {
+    $skuResult = $conn->query("SELECT id, sku FROM products WHERE id IN (" . implode(',', $compProductIds) . ")");
+    while ($r = $skuResult->fetch_assoc()) {
+        $formulaSkus[$r['id']] = $r['sku'];
+    }
 }
 
 // Check and sync sourcing components to match current formula components
@@ -176,6 +195,7 @@ if ($packagingCheckRow['count'] == 0) {
             ['key' => 'prints_issued', 'text' => 'مطبوعات: مصروف', 'type' => 'number'],
             ['key' => 'prints_used', 'text' => 'مطبوعات: مستخدم', 'type' => 'number'],
             ['key' => 'prints_returned', 'text' => 'مطبوعات: راجع', 'type' => 'number'],
+            ['key' => 'prints_waste', 'text' => 'مطبوعات: الهالك', 'type' => 'number'],
             ['key' => 'prints_returned_to_stock', 'text' => 'إعادة المطبوعات الراجعة للمخزن فورًا', 'type' => 'checkbox'],
             ['key' => 'breakage_recorded', 'text' => 'أي كسر تم تسجيله', 'type' => 'checkbox'],
             ['key' => 'breakage_count', 'text' => 'الكسر: العدد', 'type' => 'number'],
@@ -229,7 +249,7 @@ if ($dispatchCount == 0) {
         'before_loading' => [
             ['key' => 'release_order_received', 'text' => 'تم استلام إذن صرف/أمر تسليم', 'type' => 'checkbox'],
             ['key' => 'quantity_counted', 'text' => 'تم عدّ الكمية قبل التحميل', 'type' => 'checkbox'],
-            ['key' => 'load_photographed', 'text' => 'تم تصوير الحمولة (صور مرفقة)', 'type' => 'checkbox']
+            ['key' => 'load_photographed', 'text' => 'تم تصوير الحمولة (صور مرفقة)', 'type' => 'image']
         ]
     ];
     
@@ -260,6 +280,17 @@ if ($deliveryCount == 0) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (isset($_POST['unlock_formula_password'])) {
+        if ($_POST['unlock_formula_password'] === '123456') {
+            $_SESSION['formula_unlocked'] = true;
+            setAlert('success', 'Formula view unlocked.');
+        } else {
+            setAlert('danger', 'Incorrect password.');
+        }
+        header("Location: order.php?id=$orderId");
+        exit;
+    }
+
     $stepKey = $_POST['step_key'] ?? '';
     $action = $_POST['action'] ?? 'update';
     $statusInput = $_POST['status'] ?? '';
@@ -325,13 +356,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $qualityNotes = $_POST['quality_notes'] ?? [];
         
         if (is_array($qualityStatuses)) {
+            $updateQualityStmt = $conn->prepare("UPDATE manufacturing_quality_checklist SET status = ?, notes = ? WHERE id = ? AND manufacturing_order_id = ?");
             foreach ($qualityStatuses as $itemId => $status) {
                 $note = $qualityNotes[$itemId] ?? '';
-                $updateQualityStmt = $conn->prepare("UPDATE manufacturing_quality_checklist SET status = ?, notes = ? WHERE id = ? AND manufacturing_order_id = ?");
-                $updateQualityStmt->bind_param("ssii", $status, $note, $itemId, $orderId);
+                $itemIdInt = (int)$itemId;
+                $updateQualityStmt->bind_param("ssii", $status, $note, $itemIdInt, $orderId);
                 $updateQualityStmt->execute();
-                $updateQualityStmt->close();
             }
+            $updateQualityStmt->close();
         }
     }
 
@@ -341,6 +373,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         
         if (is_array($packagingValues)) {
             foreach ($packagingValues as $itemKey => $value) {
+                // In packaging step, we only update values. Notes are handled in Dispatch Prep.
                 $updatePackagingStmt = $conn->prepare("UPDATE manufacturing_packaging_checklist SET item_value = ? WHERE item_key = ? AND manufacturing_order_id = ?");
                 $updatePackagingStmt->bind_param("ssi", $value, $itemKey, $orderId);
                 $updatePackagingStmt->execute();
@@ -355,10 +388,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         
         if (is_array($dispatchValues)) {
             foreach ($dispatchValues as $itemKey => $value) {
+                // Skip if it's an image item, as it's handled separately via $_FILES
+                $checkTypeStmt = $conn->prepare("SELECT item_type FROM manufacturing_dispatch_checklist WHERE item_key = ? AND manufacturing_order_id = ? LIMIT 1");
+                $checkTypeStmt->bind_param("si", $itemKey, $orderId);
+                $checkTypeStmt->execute();
+                $itemType = $checkTypeStmt->get_result()->fetch_assoc()['item_type'] ?? '';
+                $checkTypeStmt->close();
+                
+                if ($itemType === 'image') continue;
+
                 $updateDispatchStmt = $conn->prepare("UPDATE manufacturing_dispatch_checklist SET item_value = ? WHERE item_key = ? AND manufacturing_order_id = ?");
                 $updateDispatchStmt->bind_param("ssi", $value, $itemKey, $orderId);
                 $updateDispatchStmt->execute();
                 $updateDispatchStmt->close();
+            }
+        }
+        
+        // Handle image uploads for dispatch checklist items
+        if (isset($_FILES['dispatch_photos']) && is_array($_FILES['dispatch_photos']['name'])) {
+            $uploadDir = __DIR__ . '/../../assets/uploads/dispatch/';
+            if (!is_dir($uploadDir)) mkdir($uploadDir, 0755, true);
+            foreach ($_FILES['dispatch_photos']['name'] as $itemKey => $fileName) {
+                if ($_FILES['dispatch_photos']['error'][$itemKey] === UPLOAD_ERR_OK) {
+                    $fileExt = pathinfo($fileName, PATHINFO_EXTENSION);
+                    $newFileName = 'dispatch_' . $orderId . '_' . $itemKey . '_' . time() . '.' . $fileExt;
+                    $uploadPath = $uploadDir . $newFileName;
+                    if (move_uploaded_file($_FILES['dispatch_photos']['tmp_name'][$itemKey], $uploadPath)) {
+                        $photoPathRelative = 'assets/uploads/dispatch/' . $newFileName;
+                        $updateDispatchPhotoStmt = $conn->prepare("UPDATE manufacturing_dispatch_checklist SET item_value = ? WHERE item_key = ? AND manufacturing_order_id = ?");
+                        $updateDispatchPhotoStmt->bind_param("ssi", $photoPathRelative, $itemKey, $orderId);
+                        $updateDispatchPhotoStmt->execute();
+                        $updateDispatchPhotoStmt->close();
+                    }
+                }
+            }
+        }
+        
+        // Handle material tracking notes from dispatch step
+        $packagingNotes = $_POST['packaging_notes'] ?? [];
+        if (is_array($packagingNotes)) {
+            foreach ($packagingNotes as $itemKey => $note) {
+                // We only update the notes from dispatch step, as the values should have been set in packaging
+                $updatePackagingStmt = $conn->prepare("UPDATE manufacturing_packaging_checklist SET item_notes = ? WHERE item_key = ? AND manufacturing_order_id = ?");
+                $updatePackagingStmt->bind_param("ssi", $note, $itemKey, $orderId);
+                $updatePackagingStmt->execute();
+                $updatePackagingStmt->close();
             }
         }
     }
@@ -470,7 +544,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // Special validation for quality step when completing
     if ($stepKey === 'quality' && $statusInput === 'completed') {
-        // Check if all checklist items are approved
+        // Check if all checklist items are approved (case-insensitive and trimmed)
         $qualityCheckStmt = $conn->prepare("
             SELECT item_text, status
             FROM manufacturing_quality_checklist
@@ -483,15 +557,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $hasUnapproved = false;
         $unapprovedItems = [];
         while ($item = $qualityCheckResult->fetch_assoc()) {
-            if ($item['status'] !== 'approved') {
+            $statusVal = strtolower(trim($item['status'] ?? ''));
+            if ($statusVal !== 'approved') {
                 $hasUnapproved = true;
-                $unapprovedItems[] = substr($item['item_text'], 0, 50) . '... (' . ($item['status'] ?? 'pending') . ')';
+                $unapprovedItems[] = '[' . ($statusVal ?: 'pending') . '] ' . mb_substr($item['item_text'], 0, 40) . '...';
             }
         }
         $qualityCheckStmt->close();
         
         if ($hasUnapproved) {
-            setAlert('danger', 'Cannot complete quality step: All checklist items must be approved. Pending/Rejected items found.');
+            setAlert('danger', 'Cannot complete quality step: ' . count($unapprovedItems) . ' items are not approved. Missing: ' . implode(', ', $unapprovedItems));
             redirect('order.php?id=' . $orderId);
         }
     }
@@ -588,6 +663,59 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $overallStatus = manufacturing_determine_order_status_from_steps($stepsForStatus);
         $updateOrder = $pdo->prepare("UPDATE manufacturing_orders SET status = ?, updated_at = NOW() WHERE id = ?");
         $updateOrder->execute([$overallStatus, $orderId]);
+
+        // Auto-sync linked sales order status.
+        // Uses the MINIMUM (least advanced) status across ALL manufacturing orders
+        // tied to the same sales order, so the order only advances when every MO has.
+        $soRow = $pdo->prepare("SELECT sales_order_id FROM manufacturing_orders WHERE id = ?");
+        $soRow->execute([$orderId]);
+        $soData = $soRow->fetch(PDO::FETCH_ASSOC);
+
+        if (!empty($soData['sales_order_id']) && $action !== 'regenerate') {
+            $linkedSalesOrderId = $soData['sales_order_id'];
+
+            $stepToSalesStatus = [
+                'sourcing'    => ['in_progress' => 'in-production', 'completed' => 'in-production'],
+                'receipt'     => ['in_progress' => 'in-production', 'completed' => 'in-production'],
+                'preparation' => ['in_progress' => 'in-production', 'completed' => 'in-production'],
+                'quality'     => ['in_progress' => 'in-production', 'completed' => 'in-production'],
+                'packaging'   => ['in_progress' => 'in-packing',    'completed' => 'in-packing'],
+                'dispatch'    => ['in_progress' => 'in-packing',    'completed' => 'in-packing'],
+                'delivering'  => ['in_progress' => 'delivering',    'completed' => 'delivered'],
+            ];
+            $statusPriority = ['in-production' => 1, 'in-packing' => 2, 'delivering' => 3, 'delivered' => 4];
+
+            // All MOs linked to this sales order
+            $allMfgStmt = $pdo->prepare("SELECT id FROM manufacturing_orders WHERE sales_order_id = ?");
+            $allMfgStmt->execute([$linkedSalesOrderId]);
+            $allMfgIds = $allMfgStmt->fetchAll(PDO::FETCH_COLUMN);
+
+            $minSalesStatus = null;
+            foreach ($allMfgIds as $mfgId) {
+                // Most advanced non-pending step for this MO
+                $stepStmt = $pdo->prepare("
+                    SELECT step_key, status FROM manufacturing_order_steps
+                    WHERE manufacturing_order_id = ? AND status != 'pending'
+                    ORDER BY FIELD(step_key,'sourcing','receipt','preparation','quality','packaging','dispatch','delivering') DESC
+                    LIMIT 1
+                ");
+                $stepStmt->execute([$mfgId]);
+                $lastStep = $stepStmt->fetch(PDO::FETCH_ASSOC);
+
+                $mfgSalesStatus = $lastStep
+                    ? ($stepToSalesStatus[$lastStep['step_key']][$lastStep['status']] ?? 'in-production')
+                    : 'in-production';
+
+                if ($minSalesStatus === null || $statusPriority[$mfgSalesStatus] < $statusPriority[$minSalesStatus]) {
+                    $minSalesStatus = $mfgSalesStatus;
+                }
+            }
+
+            if ($minSalesStatus !== null) {
+                $pdo->prepare("UPDATE orders SET status = ? WHERE id = ?")
+                    ->execute([$minSalesStatus, $linkedSalesOrderId]);
+            }
+        }
 
         $pdo->commit();
     } catch (Exception $ex) {
@@ -690,6 +818,11 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                 <i class="fas fa-trash me-1"></i> Delete
             </button>
         <?php endif; ?>
+        <?php if ($progressPercent === 100 && hasPermission('manufacturing.view_report')): ?>
+            <a href="view_report.php?id=<?= $orderId; ?>" class="btn btn-success" target="_blank">
+                <i class="fas fa-file-pdf me-1"></i> Full Report
+            </a>
+        <?php endif; ?>
         <a href="index.php" class="btn btn-outline-secondary">
             <i class="fas fa-arrow-left me-1"></i> Back to dashboard
         </a>
@@ -706,6 +839,17 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                 <p class="mb-1"><strong>Location:</strong> <?= $order['location_name'] ? htmlspecialchars($order['location_name']) . ' - ' . htmlspecialchars($order['location_address'])  : '<span class="text-muted">Not set</span>'; ?></p>
                 <p class="mb-1"><strong>Due Date:</strong> <?= $order['due_date'] ? htmlspecialchars($order['due_date']) : '<span class="text-muted">Not set</span>'; ?></p>
                 <p class="mb-1"><strong>Batch size:</strong> <?= htmlspecialchars($order['batch_size']); ?></p>
+                <p class="mb-1"><strong>Bottle Size:</strong>
+                    <?php if ($order['bottle_size_name']): ?>
+                        <?= htmlspecialchars($order['bottle_size_name']); ?>
+                        — <?= number_format((float)$order['bottle_size_value'], 3); ?> <?= htmlspecialchars($order['bottle_size_unit']); ?>
+                        <span class="badge <?= $order['bottle_size_type'] === 'liquid' ? 'bg-info' : 'bg-warning text-dark'; ?> ms-1">
+                            <?= ucfirst($order['bottle_size_type']); ?>
+                        </span>
+                    <?php else: ?>
+                        <span class="text-muted">Not set</span>
+                    <?php endif; ?>
+                </p>
                 <p class="mb-1"><strong>Notes:</strong><br><?= nl2br(htmlspecialchars($order['notes'] ?? 'No notes provided.')); ?></p>
                 <div class="mt-3">
                     <div class="progress" style="height:10px;">
@@ -720,12 +864,23 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
         <div class="card h-100">
             <div class="card-header">Formula components</div>
             <div class="card-body">
-                <?php if (!empty($formulaComponents)): ?>
+                <?php if (!$canViewFormula): ?>
+                    <p class="text-muted small mb-0">You do not have permission to view the entire formula details.</p>
+                <?php elseif (empty($_SESSION['formula_unlocked'])): ?>
+                    <p class="text-muted small mb-3">Formula is locked. Enter password to view.</p>
+                    <form method="post">
+                        <div class="input-group">
+                            <input type="password" name="unlock_formula_password" class="form-control" placeholder="Password" required>
+                            <button class="btn btn-primary" type="submit">Unlock</button>
+                        </div>
+                    </form>
+                <?php elseif (!empty($formulaComponents)): ?>
                     <div class="table-responsive">
                         <table class="table table-sm mb-0">
                             <thead>
                                 <tr>
                                     <th class="ps-0">Component</th>
+                                    <th>SKU</th>
                                     <th>Qty / Ratio</th>
                                     <th>Unit</th>
                                     <th>Notes</th>
@@ -733,8 +888,24 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                             </thead>
                             <tbody>
                                 <?php foreach ($formulaComponents as $fComponent): ?>
+                                    <?php $fSku = !empty($fComponent['product_id']) && isset($formulaSkus[$fComponent['product_id']]) ? $formulaSkus[$fComponent['product_id']] : '-'; ?>
                                     <tr>
-                                        <td class="ps-0"><?= htmlspecialchars($fComponent['name'] ?? '-'); ?></td>
+                                        <td class="ps-0">
+                                            <?php if ($canViewComponentName): ?>
+                                                <?= htmlspecialchars($fComponent['name'] ?? '-'); ?>
+                                            <?php else: ?>
+                                                <span class="text-muted">Hidden</span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td>
+                                            <?php if ($canViewComponentName && $fSku !== '-'): ?>
+                                                <?= htmlspecialchars($fSku); ?>
+                                            <?php elseif (!$canViewComponentName): ?>
+                                                <span class="text-muted">Hidden</span>
+                                            <?php else: ?>
+                                                <span class="text-muted">-</span>
+                                            <?php endif; ?>
+                                        </td>
                                         <td><?= htmlspecialchars($fComponent['quantity'] ?? $fComponent['ratio'] ?? '-'); ?></td>
                                         <td><?= htmlspecialchars($fComponent['unit'] ?? '-'); ?></td>
                                         <td><?= htmlspecialchars($fComponent['notes'] ?? '-'); ?></td>
@@ -826,13 +997,13 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                     <?php
                                     $sourcingStmt = $conn->prepare("
                                         SELECT msc.id, msc.component_name, msc.product_id, msc.required_quantity, msc.unit, msc.notes,
-                                               p.barcode, COALESCE(SUM(ip.quantity), 0) AS available_qty
+                                               p.barcode, p.sku, COALESCE(SUM(ip.quantity), 0) AS available_qty
                                         FROM manufacturing_sourcing_components msc
                                         LEFT JOIN products p ON p.id = msc.product_id
                                         LEFT JOIN inventories inv ON inv.location_id = ?
                                         LEFT JOIN inventory_products ip ON ip.product_id = msc.product_id AND ip.inventory_id = inv.id
                                         WHERE msc.manufacturing_order_id = ?
-                                        GROUP BY msc.id, msc.component_name, msc.product_id, msc.required_quantity, msc.unit, msc.notes, p.barcode
+                                        GROUP BY msc.id, msc.component_name, msc.product_id, msc.required_quantity, msc.unit, msc.notes, p.barcode, p.sku
                                         ORDER BY msc.formula_component_index
                                     ");
                                     $sourcingStmt->bind_param("ii", $order['location_id'], $orderId);
@@ -849,7 +1020,7 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                             <thead class="table-light">
                                                 <tr>
                                                     <th>Item</th>
-                                                    <th>Barcode</th>
+                                                    <th>SKU / Barcode</th>
                                                     <th>Required Qty</th>
                                                     <th>Unit</th>
                                                     <th>Available in Location</th>
@@ -867,8 +1038,21 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                                     $statusText = $isValid ? '✓ OK' : '✗ Insufficient';
                                                     ?>
                                                     <tr>
-                                                        <td><?= htmlspecialchars($sc['component_name']); ?></td>
-                                                        <td><?= $sc['barcode'] ? htmlspecialchars($sc['barcode']) : '<span class="text-muted">-</span>'; ?></td>
+                                                        <td>
+                                                            <?php if ($canViewComponentName): ?>
+                                                                <?= htmlspecialchars($sc['component_name']); ?>
+                                                            <?php else: ?>
+                                                                <span class="text-muted">Hidden</span>
+                                                            <?php endif; ?>
+                                                        </td>
+                                                        <td>
+                                                            <?php if ($canViewComponentName): ?>
+                                                                <?= $sc['sku'] ? htmlspecialchars($sc['sku']) . '<br>' : ''; ?>
+                                                                <?= $sc['barcode'] ? htmlspecialchars($sc['barcode']) : '<span class="text-muted">-</span>'; ?>
+                                                            <?php else: ?>
+                                                                <span class="text-muted">Hidden</span>
+                                                            <?php endif; ?>
+                                                        </td>
                                                         <td><?= htmlspecialchars($sc['required_quantity']); ?></td>
                                                         <td><?= htmlspecialchars($sc['unit']); ?></td>
                                                         <td><?= htmlspecialchars($availableQty); ?></td>
@@ -897,7 +1081,7 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                     <?php
                                     $receiptStmt = $conn->prepare("
                                         SELECT msc.id, msc.component_name, msc.product_id, msc.required_quantity, msc.unit,
-                                               msc.receipt_status, msc.receipt_notes, p.barcode
+                                               msc.receipt_status, msc.receipt_notes, p.barcode, p.sku
                                         FROM manufacturing_sourcing_components msc
                                         LEFT JOIN products p ON p.id = msc.product_id
                                         WHERE msc.manufacturing_order_id = ?
@@ -917,7 +1101,7 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                             <thead class="table-light">
                                                 <tr>
                                                     <th>Material</th>
-                                                    <th>Barcode</th>
+                                                    <th>SKU / Barcode</th>
                                                     <th>Expected Qty</th>
                                                     <th>Unit</th>
                                                     <th style="background-color: #d1ecf1;">Quality Status</th>
@@ -936,8 +1120,21 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                                     }
                                                     ?>
                                                     <tr class="<?= $rowClass; ?>">
-                                                        <td><?= htmlspecialchars($rc['component_name']); ?></td>
-                                                        <td><?= $rc['barcode'] ? htmlspecialchars($rc['barcode']) : '<span class="text-muted">-</span>'; ?></td>
+                                                        <td>
+                                                            <?php if ($canViewComponentName): ?>
+                                                                <?= htmlspecialchars($rc['component_name']); ?>
+                                                            <?php else: ?>
+                                                                <span class="text-muted">Hidden</span>
+                                                            <?php endif; ?>
+                                                        </td>
+                                                        <td>
+                                                            <?php if ($canViewComponentName): ?>
+                                                                <?= $rc['sku'] ? htmlspecialchars($rc['sku']) . '<br>' : ''; ?>
+                                                                <?= $rc['barcode'] ? htmlspecialchars($rc['barcode']) : '<span class="text-muted">-</span>'; ?>
+                                                            <?php else: ?>
+                                                                <span class="text-muted">Hidden</span>
+                                                            <?php endif; ?>
+                                                        </td>
                                                         <td><?= htmlspecialchars($rc['required_quantity']); ?></td>
                                                         <td><?= htmlspecialchars($rc['unit']); ?></td>
                                                         <td>
@@ -999,7 +1196,7 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                                         <input type="text" class="form-control form-control-sm" 
                                                                name="prep_measurements[<?= htmlspecialchars($field); ?>]" 
                                                                value="<?= htmlspecialchars($prepMeasurements[$field] ?? ''); ?>"
-                                                               placeholder="Enter <?= htmlspecialchars($field); ?> value">
+                                                               placeholder="Enter <?= htmlspecialchars($field); ?> value" required>
                                                     </div>
                                                 </div>
                                             <?php endforeach; ?>
@@ -1010,10 +1207,10 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                                 if (!in_array($fieldName, $standardFields)) {
                                                     echo '<div class="row mb-2 align-items-center custom-field">';
                                                     echo '<div class="col-md-3">';
-                                                    echo '<input type="text" class="form-control form-control-sm field-name-input" value="' . htmlspecialchars($fieldName) . '" placeholder="Field name" readonly>';
+                                                    echo '<input type="text" class="form-control form-control-sm field-name-input" value="' . htmlspecialchars($fieldName) . '" placeholder="Field name" readonly required>';
                                                     echo '</div>';
                                                     echo '<div class="col-md-8">';
-                                                    echo '<input type="text" class="form-control form-control-sm" name="prep_measurements[' . htmlspecialchars($fieldName) . ']" value="' . htmlspecialchars($fieldValue) . '" placeholder="Enter value">';
+                                                    echo '<input type="text" class="form-control form-control-sm" name="prep_measurements[' . htmlspecialchars($fieldName) . ']" value="' . htmlspecialchars($fieldValue) . '" placeholder="Enter value" required>';
                                                     echo '</div>';
                                                     echo '<div class="col-md-1">';
                                                     echo '<button type="button" class="btn btn-sm btn-outline-danger remove-field"><i class="fas fa-times"></i></button>';
@@ -1044,12 +1241,12 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                             newField.innerHTML = `
                                                 <div class="col-md-3">
                                                     <input type="text" class="form-control form-control-sm field-name-input" 
-                                                           placeholder="Field name" data-field-id="custom_${fieldCounter}">
+                                                           placeholder="Field name" data-field-id="custom_${fieldCounter}" required>
                                                 </div>
                                                 <div class="col-md-8">
                                                     <input type="text" class="form-control form-control-sm" 
                                                            name="prep_measurements[custom_${fieldCounter}]" 
-                                                           placeholder="Enter value" disabled>
+                                                           placeholder="Enter value" disabled required>
                                                 </div>
                                                 <div class="col-md-1">
                                                     <button type="button" class="btn btn-sm btn-outline-danger remove-field">
@@ -1164,7 +1361,7 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                     <!-- Packaging & Labeling Checklist -->
                                     <?php
                                     $packagingStmt = $conn->prepare("
-                                        SELECT id, section_name, item_key, item_text, item_type, item_value
+                                        SELECT id, section_name, item_key, item_text, item_type, item_value, item_notes
                                         FROM manufacturing_packaging_checklist
                                         WHERE manufacturing_order_id = ?
                                         ORDER BY item_order
@@ -1246,20 +1443,30 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                         <h6 class="mt-4 mb-3 text-primary">بعد التعبئة</h6>
                                         <div class="row g-3 mb-3">
                                             <?php foreach ($packagingSections['after'] as $item): ?>
+                                                <?php 
+                                                // Skip items that are handled in the Material Tracking table below
+                                                $skipKeys = [
+                                                    'prints_issued', 'prints_used', 'prints_returned', 'prints_waste',
+                                                    'boxes_issued', 'boxes_used', 'boxes_returned', 'boxes_waste',
+                                                    'stickers_issued', 'stickers_used', 'stickers_returned', 'stickers_waste',
+                                                    'leaflets_issued', 'leaflets_used', 'leaflets_returned', 'leaflets_waste'
+                                                ];
+                                                if (in_array($item['item_key'], $skipKeys)) continue;
+                                                ?>
                                                 <?php if ($item['item_type'] === 'number'): ?>
                                                     <div class="col-md-6">
                                                         <label class="form-label"><?= htmlspecialchars($item['item_text']); ?></label>
                                                         <input type="number" class="form-control form-control-sm" 
                                                                name="packaging_values[<?= htmlspecialchars($item['item_key']); ?>]" 
                                                                value="<?= htmlspecialchars($item['item_value'] ?? ''); ?>"
-                                                               placeholder="0">
+                                                               placeholder="0" required>
                                                     </div>
                                                 <?php elseif ($item['item_type'] === 'text'): ?>
                                                     <div class="col-md-12">
                                                         <label class="form-label"><?= htmlspecialchars($item['item_text']); ?></label>
                                                         <textarea class="form-control form-control-sm" rows="2"
                                                                   name="packaging_values[<?= htmlspecialchars($item['item_key']); ?>]" 
-                                                                  placeholder="..."><?= htmlspecialchars($item['item_value'] ?? ''); ?></textarea>
+                                                                  placeholder="..." required><?= htmlspecialchars($item['item_value'] ?? ''); ?></textarea>
                                                     </div>
                                                 <?php elseif ($item['item_type'] === 'checkbox'): ?>
                                                     <div class="col-md-6">
@@ -1291,6 +1498,7 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                                 <tbody>
                                                     <?php
                                                     $materials = [
+                                                        'prints' => 'مطبوعات',
                                                         'boxes' => 'العلب',
                                                         'stickers' => 'الاستيكر',
                                                         'leaflets' => 'نشره'
@@ -1315,10 +1523,10 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                                     ?>
                                                         <tr>
                                                             <td style="text-align: right;"><strong><?= $matLabel; ?></strong></td>
-                                                            <td><input type="number" class="form-control form-control-sm" name="packaging_values[<?= $issuedKey; ?>]" value="<?= htmlspecialchars($issuedVal); ?>" placeholder="0"></td>
-                                                            <td><input type="number" class="form-control form-control-sm" name="packaging_values[<?= $usedKey; ?>]" value="<?= htmlspecialchars($usedVal); ?>" placeholder="0"></td>
-                                                            <td><input type="number" class="form-control form-control-sm" name="packaging_values[<?= $returnedKey; ?>]" value="<?= htmlspecialchars($returnedVal); ?>" placeholder="0"></td>
-                                                            <td><input type="number" class="form-control form-control-sm" name="packaging_values[<?= $wasteKey; ?>]" value="<?= htmlspecialchars($wasteVal); ?>" placeholder="0"></td>
+                                                            <td><input type="number" class="form-control form-control-sm" name="packaging_values[<?= $issuedKey; ?>]" value="<?= htmlspecialchars($issuedVal); ?>" placeholder="0" required></td>
+                                                            <td><input type="number" class="form-control form-control-sm" name="packaging_values[<?= $usedKey; ?>]" value="<?= htmlspecialchars($usedVal); ?>" placeholder="0" required></td>
+                                                            <td><input type="number" class="form-control form-control-sm" name="packaging_values[<?= $returnedKey; ?>]" value="<?= htmlspecialchars($returnedVal); ?>" placeholder="0" required></td>
+                                                            <td><input type="number" class="form-control form-control-sm" name="packaging_values[<?= $wasteKey; ?>]" value="<?= htmlspecialchars($wasteVal); ?>" placeholder="0" required></td>
                                                         </tr>
                                                     <?php endforeach; ?>
                                                 </tbody>
@@ -1356,6 +1564,29 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                     foreach ($dispatchItems as $item) {
                                         $dispatchSections[$item['section_name']][] = $item;
                                     }
+                                    
+                                    // Also fetch packaging items for material tracking table
+                                    $packagingStmt = $conn->prepare("
+                                        SELECT section_name, item_key, item_text, item_value, item_notes
+                                        FROM manufacturing_packaging_checklist
+                                        WHERE manufacturing_order_id = ?
+                                        ORDER BY item_order
+                                    ");
+                                    $packagingStmt->bind_param("i", $orderId);
+                                    $packagingStmt->execute();
+                                    $pkgResult = $packagingStmt->get_result();
+                                    $pkgItems = [];
+                                    while ($pi = $pkgResult->fetch_assoc()) {
+                                        $pkgItems[] = $pi;
+                                    }
+                                    $packagingStmt->close();
+                                    
+                                    $pkgSections = ['after' => []];
+                                    foreach ($pkgItems as $pi) {
+                                        if ($pi['section_name'] === 'after') {
+                                            $pkgSections['after'][] = $pi;
+                                        }
+                                    }
                                     ?>
                                     <style>
                                         .dispatch-checkbox {
@@ -1376,7 +1607,7 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                                     <input type="number" class="form-control form-control-sm" 
                                                            name="dispatch_values[<?= htmlspecialchars($item['item_key']); ?>]" 
                                                            value="<?= htmlspecialchars($item['item_value'] ?? ''); ?>"
-                                                           placeholder="0">
+                                                           placeholder="0" required>
                                                 </div>
                                             <?php endforeach; ?>
                                         </div>
@@ -1390,12 +1621,88 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                                         <tr>
                                                             <td style="width: 70%; text-align: right;"><?= htmlspecialchars($item['item_text']); ?></td>
                                                             <td style="width: 30%; text-align: center;">
-                                                                <div class="form-check d-flex justify-content-center">
-                                                                    <input class="form-check-input dispatch-checkbox" type="checkbox" 
-                                                                           name="dispatch_values[<?= htmlspecialchars($item['item_key']); ?>]" 
-                                                                           value="checked"
-                                                                           <?= $item['item_value'] === 'checked' ? 'checked' : ''; ?>>
-                                                                </div>
+                                                                <?php if ($item['item_type'] === 'checkbox'): ?>
+                                                                    <div class="form-check d-flex justify-content-center">
+                                                                        <input class="form-check-input dispatch-checkbox" type="checkbox" 
+                                                                               name="dispatch_values[<?= htmlspecialchars($item['item_key']); ?>]" 
+                                                                               value="checked"
+                                                                               <?= $item['item_value'] === 'checked' ? 'checked' : ''; ?>>
+                                                                    </div>
+                                                                <?php elseif ($item['item_type'] === 'image'): ?>
+                                                                    <div class="mb-2">
+                                                                        <input type="file" class="form-control form-control-sm" name="dispatch_photos[<?= htmlspecialchars($item['item_key']); ?>]" accept="image/*">
+                                                                        <?php if ($item['item_value']): ?>
+                                                                            <div class="mt-2 text-center">
+                                                                                <a href="../../<?= htmlspecialchars($item['item_value']); ?>" target="_blank">
+                                                                                    <img src="../../<?= htmlspecialchars($item['item_value']); ?>" class="img-thumbnail" style="max-height: 80px;">
+                                                                                </a>
+                                                                                <br><small class="text-muted">Current photo</small>
+                                                                            </div>
+                                                                        <?php endif; ?>
+                                                                    </div>
+                                                                <?php endif; ?>
+                                                            </td>
+                                                        </tr>
+                                                    <?php endforeach; ?>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                        
+                                        <!-- Material Tracking Table (from Packaging) -->
+                                        <h6 class="mt-4 mb-3 text-primary">تتبع مواد التعبئة (Packaging Material Tracking)</h6>
+                                        <div class="table-responsive mb-3">
+                                            <table class="table table-bordered table-sm">
+                                                <thead class="table-light">
+                                                    <tr>
+                                                        <th style="text-align: right;">المادة</th>
+                                                        <th style="text-align: right;">مصروف</th>
+                                                        <th style="text-align: right;">مستخدم</th>
+                                                        <th style="text-align: right;">راجع</th>
+                                                        <th style="text-align: right;">الهالك</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <?php
+                                                    $materials = [
+                                                        'prints' => 'مطبوعات',
+                                                        'boxes' => 'العلب',
+                                                        'stickers' => 'الاستيكر',
+                                                        'leaflets' => 'نشره'
+                                                    ];
+                                                    foreach ($materials as $matKey => $matLabel):
+                                                        $issuedKey = $matKey . '_issued';
+                                                        $usedKey = $matKey . '_used';
+                                                        $returnedKey = $matKey . '_returned';
+                                                        $wasteKey = $matKey . '_waste';
+                                                        
+                                                        $issuedVal = ''; $issuedNote = '';
+                                                        $usedVal = ''; $usedNote = '';
+                                                        $returnedVal = ''; $returnedNote = '';
+                                                        $wasteVal = ''; $wasteNote = '';
+                                                        foreach ($pkgSections['after'] as $item) {
+                                                            if ($item['item_key'] === $issuedKey) { $issuedVal = $item['item_value'] ?? ''; $issuedNote = $item['item_notes'] ?? ''; }
+                                                            if ($item['item_key'] === $usedKey) { $usedVal = $item['item_value'] ?? ''; $usedNote = $item['item_notes'] ?? ''; }
+                                                            if ($item['item_key'] === $returnedKey) { $returnedVal = $item['item_value'] ?? ''; $returnedNote = $item['item_notes'] ?? ''; }
+                                                            if ($item['item_key'] === $wasteKey) { $wasteVal = $item['item_value'] ?? ''; $wasteNote = $item['item_notes'] ?? ''; }
+                                                        }
+                                                    ?>
+                                                        <tr>
+                                                            <td style="text-align: right;"><strong><?= $matLabel; ?></strong></td>
+                                                            <td>
+                                                                <div class="small fw-bold mb-1"><?= htmlspecialchars($issuedVal ?: '0'); ?></div>
+                                                                <input type="text" class="form-control form-control-sm" name="packaging_notes[<?= $issuedKey; ?>]" value="<?= htmlspecialchars($issuedNote); ?>" placeholder="Note...">
+                                                            </td>
+                                                            <td>
+                                                                <div class="small fw-bold mb-1"><?= htmlspecialchars($usedVal ?: '0'); ?></div>
+                                                                <input type="text" class="form-control form-control-sm" name="packaging_notes[<?= $usedKey; ?>]" value="<?= htmlspecialchars($usedNote); ?>" placeholder="Note...">
+                                                            </td>
+                                                            <td>
+                                                                <div class="small fw-bold mb-1"><?= htmlspecialchars($returnedVal ?: '0'); ?></div>
+                                                                <input type="text" class="form-control form-control-sm" name="packaging_notes[<?= $returnedKey; ?>]" value="<?= htmlspecialchars($returnedNote); ?>" placeholder="Note...">
+                                                            </td>
+                                                            <td>
+                                                                <div class="small fw-bold mb-1"><?= htmlspecialchars($wasteVal ?: '0'); ?></div>
+                                                                <input type="text" class="form-control form-control-sm" name="packaging_notes[<?= $wasteKey; ?>]" value="<?= htmlspecialchars($wasteNote); ?>" placeholder="Note...">
                                                             </td>
                                                         </tr>
                                                     <?php endforeach; ?>
@@ -1441,7 +1748,7 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                                 <input type="text" class="form-control form-control-sm" 
                                                        name="recipient_name" 
                                                        value="<?= htmlspecialchars($deliveryInfo['recipient_name'] ?? ''); ?>"
-                                                       placeholder="__________">
+                                                       placeholder="__________" required>
                                             </div>
                                             
                                             <div class="col-md-6">
@@ -1449,21 +1756,21 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                                 <input type="tel" class="form-control form-control-sm" 
                                                        name="recipient_phone" 
                                                        value="<?= htmlspecialchars($deliveryInfo['recipient_phone'] ?? ''); ?>"
-                                                       placeholder="__________">
+                                                       placeholder="__________" required>
                                             </div>
                                             
                                             <div class="col-md-6">
                                                 <label class="form-label">تاريخ التسليم (Delivery Date)</label>
                                                 <input type="date" class="form-control form-control-sm" 
                                                        name="delivery_date" 
-                                                       value="<?= htmlspecialchars($deliveryDate); ?>">
+                                                       value="<?= htmlspecialchars($deliveryDate); ?>" required>
                                             </div>
                                             
                                             <div class="col-md-6">
                                                 <label class="form-label">وقت التسليم (Delivery Time)</label>
                                                 <input type="time" class="form-control form-control-sm" 
                                                        name="delivery_time" 
-                                                       value="<?= htmlspecialchars($deliveryTime); ?>">
+                                                       value="<?= htmlspecialchars($deliveryTime); ?>" required>
                                             </div>
                                             
                                             <div class="col-md-12">

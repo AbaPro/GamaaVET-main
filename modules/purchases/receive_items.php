@@ -51,7 +51,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         
         // Update received quantities
         foreach ($items as $item) {
-            $received_qty = (int)($_POST['received_qty'][$item['id']] ?? 0);
+            $received_qty = (float)($_POST['received_qty'][$item['id']] ?? 0);
             $inventory_id = (int)($_POST['inventory_id'][$item['id']] ?? 1);
             $max_qty = $item['quantity'] - ($item['received_quantity'] ?? 0);
             
@@ -59,9 +59,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $some_received = true;
                 
                 // Update PO item received quantity
+                // Update PO item received quantity and total price based on received quantity
                 $stmt = $pdo->prepare("
                     UPDATE purchase_order_items 
-                    SET received_quantity = received_quantity + ? 
+                    SET received_quantity = received_quantity + ?,
+                        total_price = (received_quantity) * unit_price
                     WHERE id = ?
                 ");
                 $stmt->execute([$received_qty, $item['id']]);
@@ -85,10 +87,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             throw new Exception("No items were received. Please enter quantities.");
         }
         
-        // Update PO status
+        // Recalculate the entire PO total_amount based on what has actually been received
+        $calcStmt = $pdo->prepare("
+            SELECT COALESCE(SUM(received_quantity * unit_price), 0) 
+            FROM purchase_order_items 
+            WHERE purchase_order_id = ?
+        ");
+        $calcStmt->execute([$po_id]);
+        $new_total_amount = (float)$calcStmt->fetchColumn();
+
+        // Update PO status and total amount
         $new_status = $all_received ? 'received' : 'partially-received';
-        $stmt = $pdo->prepare("UPDATE purchase_orders SET status = ? WHERE id = ?");
-        $stmt->execute([$new_status, $po_id]);
+        $stmt = $pdo->prepare("UPDATE purchase_orders SET status = ?, total_amount = ? WHERE id = ?");
+        $stmt->execute([$new_status, $new_total_amount, $po_id]);
         
         $pdo->commit();
         
@@ -158,7 +169,7 @@ require_once '../../includes/header.php';
                                     <td>
                                         <select class="form-select" name="inventory_id[<?= $item['id'] ?>]">
                                             <?php foreach ($inventories as $inv) : ?>
-                                                <option value="<?= $inv['id'] ?>" <?= $inv['id'] == 1 ? 'selected' : '' ?>>
+                                                <option value="<?= $inv['id'] ?>" <?= ($inv['name'] == ($po['warehouse_location'] ?? '')) ? 'selected' : ($inv['id'] == 1 ? 'selected' : '') ?>>
                                                     <?= htmlspecialchars($inv['name']) ?>
                                                 </option>
                                             <?php endforeach; ?>

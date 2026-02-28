@@ -299,12 +299,12 @@ function hasExplicitPermission($permissionKey) {
 
 function canViewProductPrice($productType) {
     if ($productType === 'material') {
-        return hasExplicitPermission('products.material.price.view');
+        return false; // Materials are non-sellable raw ingredients
     }
     if ($productType === 'final') {
         return hasExplicitPermission('products.final.price.view');
     }
-    return hasExplicitPermission('products.material.price.view') || hasExplicitPermission('products.final.price.view');
+    return hasExplicitPermission('products.final.price.view');
 }
 
 function canViewProductCost($productType) {
@@ -326,6 +326,14 @@ function getUnreadNotificationsCount() {
     }
     $roleId = $_SESSION['role_id'] ?? null;
     $userId = $_SESSION['user_id'];
+    $roleSlug = $_SESSION['role_slug'] ?? null;
+    
+    if ($roleSlug === 'admin') {
+        $sql = "SELECT COUNT(*) AS c FROM notifications WHERE is_read = 0";
+        $res = $conn->query($sql)->fetch_assoc();
+        return (int)($res['c'] ?? 0);
+    }
+
     if ($roleId === null) return 0;
 
     $sql = "SELECT COUNT(*) AS c FROM notifications 
@@ -343,7 +351,7 @@ function createNotification($type, $title, $message, $module = null, $entity_typ
     $sql = "INSERT INTO notifications (type,title,message,module,entity_type,entity_id,severity,created_for_role_id,created_for_user_id,created_by) 
             VALUES (?,?,?,?,?,?,?,?,?,?)";
     $stmt = $conn->prepare($sql);
-    $stmt->bind_param('sssssiissi', $type,$title,$message,$module,$entity_type,$entity_id,$severity,$for_role_id,$for_user_id,$created_by);
+    $stmt->bind_param('sssssiissi', $type, $title, $message, $module, $entity_type, $entity_id, $severity, $for_role_id, $for_user_id, $created_by);
     $stmt->execute();
     $id = $stmt->insert_id;
     $stmt->close();
