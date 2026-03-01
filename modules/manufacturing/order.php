@@ -10,7 +10,7 @@ if ($orderId <= 0) {
 }
 
 $orderStmt = $conn->prepare("
-    SELECT mo.*, c.name AS customer_name, f.name AS formula_name, f.description AS formula_description, f.components_json,
+    SELECT mo.*, c.name AS customer_name, f.name AS formula_name, f.description AS formula_description, f.components_json, f.batch_size AS formula_batch_size,
            l.name AS location_name, l.address AS location_address, p.name AS product_name, p.sku AS product_sku,
            bs.name AS bottle_size_name, bs.size AS bottle_size_value, bs.unit AS bottle_size_unit, bs.type AS bottle_size_type
     FROM manufacturing_orders mo
@@ -37,6 +37,7 @@ $formulaComponents = json_decode($order['components_json'] ?? '[]', true);
 if (!is_array($formulaComponents)) {
     $formulaComponents = [];
 }
+$formulaComponents = manufacturing_recalculate_components($order, $formulaComponents);
 
 $canViewFormula = hasPermission('manufacturing.formula.view_all');
 $canViewComponentName = hasPermission('manufacturing.component.name.view');

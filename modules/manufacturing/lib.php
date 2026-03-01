@@ -754,7 +754,7 @@ function manufacturing_get_document_url($relativePath) {
 function manufacturing_build_full_report_html($conn, $orderId) {
     // Get Order Details
     $orderStmt = $conn->prepare("
-        SELECT mo.*, c.name AS customer_name, f.name AS formula_name, f.description AS formula_description, f.components_json,
+        SELECT mo.*, c.name AS customer_name, f.name AS formula_name, f.description AS formula_description, f.components_json, f.batch_size AS formula_batch_size,
                l.name AS location_name, l.address AS location_address, p.name AS product_name, p.sku AS product_sku,
                bs.name AS bottle_size_name, bs.size AS bottle_size_value, bs.unit AS bottle_size_unit, bs.type AS bottle_size_type
         FROM manufacturing_orders mo
@@ -775,6 +775,7 @@ function manufacturing_build_full_report_html($conn, $orderId) {
 
     $formulaComponents = json_decode($order['components_json'] ?? '[]', true);
     if (!is_array($formulaComponents)) $formulaComponents = [];
+    $formulaComponents = manufacturing_recalculate_components($order, $formulaComponents);
 
     // Get All Steps
     $steps = [];
@@ -930,4 +931,40 @@ function manufacturing_generate_full_order_pdf($conn, $orderId) {
     
     $pdf->Output($filePath, 'F');
     return $filePath;
+}
+
+/**
+ * Recalculates component quantities proportional to the manufacturing order batch size
+ * against the configured formula batch size and bottle size.
+ */
+function manufacturing_recalculate_components($order, $components) {
+    if (!is_array($components) || empty($components)) return [];
+    
+    // Default to 1 if not set to avoid division by zero
+    $formulaBatchSize = (float)($order['formula_batch_size'] ?? 1);
+    if ($formulaBatchSize <= 0) $formulaBatchSize = 1;
+    
+    $orderBatchSize = (float)($order['batch_size'] ?? 0);
+    $bottleSizeValue = (float)($order['bottle_size_value'] ?? 0);
+    
+    // Target production is (number of units * size per unit) = total liters/kg produced
+    // If no bottle size, batch size is exactly the production amount
+    if ($bottleSizeValue > 0) {
+        $targetProductionAmount = $orderBatchSize * $bottleSizeValue;
+    } else {
+        $targetProductionAmount = $orderBatchSize;
+    }
+    
+    $productionRatio = $targetProductionAmount / $formulaBatchSize;
+    if ($productionRatio <= 0) $productionRatio = 1;
+    
+    foreach ($components as &$component) {
+        $baseQty = (float)($component['quantity'] ?? $component['ratio'] ?? 0);
+        $requiredQty = $baseQty * $productionRatio;
+        // Strip trailing zeros
+        $component['quantity'] = floatval(round($requiredQty, 4));
+    }
+    unset($component);
+    
+    return $components;
 }
