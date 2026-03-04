@@ -801,6 +801,13 @@ $nextStepLabel = manufacturing_get_next_step_label($steps);
 $orderBadge = manufacturing_order_status_badge($order['status']);
 ?>
 
+<style>
+    .cursor-pointer { cursor: pointer; }
+    .transition-icon { transition: transform 0.2s ease; }
+    details[open] .transition-icon { transform: rotate(90deg); }
+    details summary::-webkit-details-marker { display: none; }
+</style>
+
 <div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-3">
     <div>
         <h2>Manufacturing Order <?= htmlspecialchars($order['order_number']); ?></h2>
@@ -971,7 +978,19 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
 <div class="card">
     <div class="card-header">Step-by-step manufacturing workflow</div>
     <div class="card-body">
-        <div class="accordion" id="manufacturingSteps">
+        <div id="manufacturingSteps">
+            <?php 
+            // Identify the active step: the first one that is not 'completed'
+            $activeStepKey = null;
+            foreach ($steps as $step) {
+                if ($step['status'] !== 'completed') {
+                    $activeStepKey = $step['step_key'];
+                    break;
+                }
+            }
+            // If all are completed, show the last one? Or just keep all closed. 
+            // Let's show the first incomplete one.
+            ?>
             <?php foreach ($steps as $index => $stepRow): ?>
                 <?php 
                     // Check permission for this specific step
@@ -980,16 +999,18 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                         continue; // Skip this step if user doesn't have permission
                     }
                     $documents = $orderDocuments[$stepRow['id']] ?? []; 
+                    $isOpen = ($stepRow['step_key'] === $activeStepKey);
                 ?>
-                <div class="accordion-item">
-                    <h2 class="accordion-header" id="stepHeading<?= $stepRow['id']; ?>">
-                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#stepCollapse<?= $stepRow['id']; ?>" aria-expanded="false">
+                <details class="border rounded mb-2" <?= $isOpen ? 'open' : ''; ?>>
+                    <summary class="p-3 fw-bold cursor-pointer bg-light d-flex justify-content-between align-items-center" style="list-style: none;">
+                        <div>
+                            <i class="fas fa-chevron-right me-2 transition-icon"></i>
                             <?= manufacturing_get_step_label($stepRow['step_key']); ?>
                             <span class="badge <?= manufacturing_status_badge_class($stepRow['status']); ?> ms-3 text-uppercase"><?= $stepRow['status']; ?></span>
-                        </button>
-                    </h2>
-                    <div id="stepCollapse<?= $stepRow['id']; ?>" class="accordion-collapse collapse" aria-labelledby="stepHeading<?= $stepRow['id']; ?>" data-bs-parent="#manufacturingSteps">
-                        <div class="accordion-body">
+                        </div>
+                    </summary>
+                    <div class="p-3 border-top">
+                        <div class="step-content">
                             <p class="text-muted small mb-3"><?= manufacturing_get_step_instruction($stepRow['step_key']); ?></p>
                             
                             <form method="post" enctype="multipart/form-data">
@@ -1897,7 +1918,7 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                             </div>
                         </div>
                     </div>
-                </div>
+                </details>
             <?php endforeach; ?>
         </div>
     </div>
