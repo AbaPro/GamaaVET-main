@@ -272,9 +272,9 @@ function hasPermission($permissionKey) {
     }
 
     $roleSlug = $_SESSION['role_slug'] ?? ($_SESSION['user_role'] ?? null);
-    if ($roleSlug === 'admin') {
-        return true;
-    }
+    // if ($roleSlug === 'admin') {
+    //     return true;
+    // }
 
     if (!isset($_SESSION['permissions']) || !is_array($_SESSION['permissions'])) {
         return false;

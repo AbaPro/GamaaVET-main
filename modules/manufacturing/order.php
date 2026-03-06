@@ -902,14 +902,12 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                             <?php if ($canViewComponentName): ?>
                                                 <?= htmlspecialchars($fComponent['name'] ?? '-'); ?>
                                             <?php else: ?>
-                                                <span class="text-muted">Hidden</span>
+                                                <span class="text-muted"><?= $fSku !== '-' ? htmlspecialchars($fSku) : 'Hidden'; ?></span>
                                             <?php endif; ?>
                                         </td>
                                         <td>
-                                            <?php if ($canViewComponentName && $fSku !== '-'): ?>
+                                            <?php if ($fSku !== '-'): ?>
                                                 <?= htmlspecialchars($fSku); ?>
-                                            <?php elseif (!$canViewComponentName): ?>
-                                                <span class="text-muted">Hidden</span>
                                             <?php else: ?>
                                                 <span class="text-muted">-</span>
                                             <?php endif; ?>
@@ -1064,16 +1062,12 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                                             <?php if ($canViewComponentName): ?>
                                                                 <?= htmlspecialchars($sc['component_name']); ?>
                                                             <?php else: ?>
-                                                                <span class="text-muted">Hidden</span>
+                                                                <span class="text-muted"><?= $sc['sku'] ? htmlspecialchars($sc['sku']) : 'Hidden'; ?></span>
                                                             <?php endif; ?>
                                                         </td>
                                                         <td>
-                                                            <?php if ($canViewComponentName): ?>
-                                                                <?= $sc['sku'] ? htmlspecialchars($sc['sku']) . '<br>' : ''; ?>
-                                                                <?= $sc['barcode'] ? htmlspecialchars($sc['barcode']) : '<span class="text-muted">-</span>'; ?>
-                                                            <?php else: ?>
-                                                                <span class="text-muted">Hidden</span>
-                                                            <?php endif; ?>
+                                                            <?= $sc['sku'] ? htmlspecialchars($sc['sku']) . '<br>' : ''; ?>
+                                                            <?= $sc['barcode'] ? htmlspecialchars($sc['barcode']) : '<span class="text-muted">-</span>'; ?>
                                                         </td>
                                                         <td><?= htmlspecialchars($sc['required_quantity']); ?></td>
                                                         <td><?= htmlspecialchars($sc['unit']); ?></td>
@@ -1146,16 +1140,12 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                                             <?php if ($canViewComponentName): ?>
                                                                 <?= htmlspecialchars($rc['component_name']); ?>
                                                             <?php else: ?>
-                                                                <span class="text-muted">Hidden</span>
+                                                                <span class="text-muted"><?= $rc['sku'] ? htmlspecialchars($rc['sku']) : 'Hidden'; ?></span>
                                                             <?php endif; ?>
                                                         </td>
                                                         <td>
-                                                            <?php if ($canViewComponentName): ?>
-                                                                <?= $rc['sku'] ? htmlspecialchars($rc['sku']) . '<br>' : ''; ?>
-                                                                <?= $rc['barcode'] ? htmlspecialchars($rc['barcode']) : '<span class="text-muted">-</span>'; ?>
-                                                            <?php else: ?>
-                                                                <span class="text-muted">Hidden</span>
-                                                            <?php endif; ?>
+                                                            <?= $rc['sku'] ? htmlspecialchars($rc['sku']) . '<br>' : ''; ?>
+                                                            <?= $rc['barcode'] ? htmlspecialchars($rc['barcode']) : '<span class="text-muted">-</span>'; ?>
                                                         </td>
                                                         <td><?= htmlspecialchars($rc['required_quantity']); ?></td>
                                                         <td><?= htmlspecialchars($rc['unit']); ?></td>

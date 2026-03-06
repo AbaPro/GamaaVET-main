@@ -104,6 +104,8 @@ if ($result) {
         $formulas[] = $row;
     }
 }
+
+$canViewComponentName = hasPermission('manufacturing.component.name.view');
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-3">
@@ -188,7 +190,7 @@ if ($result) {
                                 <td><?= htmlspecialchars($formula['customer_name']); ?></td>
                                 <td>
                                     <?php if ($formula['product_name']): ?>
-                                        <?= htmlspecialchars($formula['product_name']); ?>
+                                        <?= $canViewComponentName ? htmlspecialchars($formula['product_name']) : ($formula['product_sku'] ? htmlspecialchars($formula['product_sku']) : '<span class="text-muted">Hidden</span>'); ?>
                                     <?php else: ?>
                                         <span class="text-muted">—</span>
                                     <?php endif; ?>

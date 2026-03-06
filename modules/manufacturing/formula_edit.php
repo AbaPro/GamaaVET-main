@@ -143,6 +143,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $page_title = $id > 0 ? 'Edit Formula' : 'New Formula';
 require_once '../../includes/header.php';
 
+$canViewComponentName = hasPermission('manufacturing.component.name.view');
+
 $currentComponents = [];
 if ($formula && !empty($formula['components_json'])) {
     $currentComponents = json_decode($formula['components_json'], true) ?: [];
@@ -375,6 +377,7 @@ if ($formula && !empty($formula['components_json'])) {
 
 <script>
     const availableProducts = <?= json_encode($products); ?>;
+    const canViewComponentName = <?= json_encode($canViewComponentName); ?>;
     const oldComponents = <?= json_encode($currentComponents); ?>;
     const componentsBody = $('#componentsBody');
     let componentIndex = 0;
@@ -392,7 +395,12 @@ if ($formula && !empty($formula['components_json'])) {
     function renderProductOptions(selectedId = '') {
         let html = '<option value="">Manual Entry (No track)</option>';
         availableProducts.forEach(product => {
-            const label = escapeForAttr(product.name) + (product.sku ? ' (' + escapeForAttr(product.sku) + ')' : '');
+            let label = '';
+            if (!canViewComponentName) {
+                label = product.sku ? escapeForAttr(product.sku) : ('Product ID: ' + product.id);
+            } else {
+                label = escapeForAttr(product.name) + (product.sku ? ' (' + escapeForAttr(product.sku) + ')' : '');
+            }
             const selected = selectedId && String(product.id) === String(selectedId) ? 'selected' : '';
             html += `<option value="${product.id}" data-name="${escapeForAttr(product.name)}" ${selected}>${label}</option>`;
         });
@@ -424,7 +432,7 @@ if ($formula && !empty($formula['components_json'])) {
                     <select class="form-select form-select-sm component-product select2-ingredients" name="components[${idx}][product_id]">
                         ${optionsHtml}
                     </select>
-                    <input type="text" class="form-control form-control-sm mt-1 component-name ${data.product_id ? 'd-none' : ''}" 
+                    <input type="${canViewComponentName ? 'text' : 'hidden'}" class="form-control form-control-sm mt-1 component-name ${data.product_id ? 'd-none' : ''}" 
                            name="components[${idx}][name]" value="${nameValue}" placeholder="Custom item name">
                 </td>
                 <td><input type="text" class="form-control form-control-sm" name="components[${idx}][quantity]" value="${quantity}" placeholder="0.00"></td>

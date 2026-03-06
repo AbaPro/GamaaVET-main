@@ -112,10 +112,14 @@ function manufacturing_convert_to_relative_path($fullPath) {
     return $fullPath;
 }
 
-function manufacturing_build_step_document_html($order, $orderStep, $formula, $components, $notes, $statusLabel, $conn = null) {
+function manufacturing_build_step_document_html($order, $orderStep, $formula, $components, $notes, $statusLabel, $conn = null, $canViewComponentName = true) {
     $orderNumber = htmlspecialchars($order['order_number'] ?? 'UNKNOWN');
     $customerName = htmlspecialchars($order['customer_name'] ?? 'Unknown provider');
-    $formulaName = htmlspecialchars($formula['name'] ?? 'Custom formula');
+    
+    // Hide formula name if component names should be hidden
+    $formulaNameRaw = $formula['name'] ?? 'Custom formula';
+    $formulaName = $canViewComponentName ? htmlspecialchars($formulaNameRaw) : 'Protected Formula';
+    
     $priority = htmlspecialchars(ucfirst($order['priority'] ?? 'normal'));
     $dueDate = $order['due_date'] ? htmlspecialchars($order['due_date']) : 'TBD';
     $notes = nl2br(htmlspecialchars($notes ?: $orderStep['notes'] ?? 'No notes yet.'));
@@ -167,8 +171,8 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
                 }
                 
                 $html .= '<tr>';
-                $html .= '<td>' . htmlspecialchars($rc['component_name']) . '</td>';
-                $html .= '<td>' . htmlspecialchars($rc['barcode'] ?? '-') . '</td>';
+                $html .= '<td>' . ($canViewComponentName ? htmlspecialchars($rc['component_name']) : 'Hidden') . '</td>';
+                $html .= '<td>' . ($canViewComponentName ? htmlspecialchars($rc['barcode'] ?? '-') : 'Hidden') . '</td>';
                 $html .= '<td>' . htmlspecialchars($rc['required_quantity']) . '</td>';
                 $html .= '<td>' . htmlspecialchars($rc['unit']) . '</td>';
                 $html .= '<td ' . $statusClass . '>' . $statusText . '</td>';
@@ -594,7 +598,11 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
 function manufacturing_generate_step_documents($conn, $order, $orderStep, $formula, $components, $notes, $generatedBy = null) {
     $stepKey = $orderStep['step_key'];
     $statusLabel = manufacturing_get_step_label($stepKey);
-    $documentHtml = manufacturing_build_step_document_html($order, $orderStep, $formula, $components, $notes, $statusLabel, $conn);
+    
+    // Check permission for viewing component names to decide whether to hide them in the export
+    $canViewComponentName = hasPermission('manufacturing.component.name.view');
+    
+    $documentHtml = manufacturing_build_step_document_html($order, $orderStep, $formula, $components, $notes, $statusLabel, $conn, $canViewComponentName);
 
     // Excel-like handoff
     $excelPayload = manufacturing_create_excel_document($order, $stepKey, $documentHtml);
