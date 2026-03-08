@@ -113,7 +113,7 @@ require_once '../../includes/header.php';
                   if ($n['entity_type'] === 'order' && !empty($n['entity_id'])) {
                       $viewLink = "../sales/order_details.php?id=" . (int)$n['entity_id'];
                   } elseif ($n['entity_type'] === 'product' && !empty($n['entity_id'])) {
-                      $viewLink = "../products/view_product.php?id=" . (int)$n['entity_id'];
+                      $viewLink = "../products/view.php?id=" . (int)$n['entity_id'];
                   }
                 ?>
                 <?php if ($viewLink): ?>
