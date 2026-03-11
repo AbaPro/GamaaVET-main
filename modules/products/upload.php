@@ -21,7 +21,9 @@ if (!isset($_SESSION['bulk_upload'])) {
         'unique_customers' => [],
         'customer_mapping' => [],
         'unique_categories' => [],
-        'category_mapping' => []
+        'category_mapping' => [],
+        'global_customer_mode' => false,
+        'global_customer_id' => null
     ];
 }
 
@@ -35,6 +37,8 @@ if (isset($_POST['back_to_upload'])) {
     $_SESSION['bulk_upload']['customer_mapping'] = [];
     $_SESSION['bulk_upload']['unique_categories'] = [];
     $_SESSION['bulk_upload']['category_mapping'] = [];
+    $_SESSION['bulk_upload']['global_customer_mode'] = false;
+    $_SESSION['bulk_upload']['global_customer_id'] = null;
     redirect('upload.php');
 }
 
@@ -213,10 +217,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
         $_SESSION['bulk_upload']['unique_categories'] = $unique_categories;
         $_SESSION['bulk_upload']['unique_customers'] = $unique_customers;
         
-        // If no customers in CSV, go directly to category mapping
+        // If no customers in CSV, ask user to pick a global customer (step 2 global mode)
         if (empty($unique_customers)) {
-            $_SESSION['bulk_upload']['step'] = 3;
+            $_SESSION['bulk_upload']['global_customer_mode'] = true;
+            $_SESSION['bulk_upload']['step'] = 2;
         } else {
+            $_SESSION['bulk_upload']['global_customer_mode'] = false;
             $_SESSION['bulk_upload']['step'] = 2;
         }
         
@@ -225,6 +231,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
         setAlert('danger', 'Error uploading file. Please try again.');
         redirect('upload.php');
     }
+}
+
+// Step 2 (global mode): Process Global Customer Selection
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['process_global_customer'])) {
+    $global_customer_id = isset($_POST['global_customer_id']) ? (int)$_POST['global_customer_id'] : 0;
+    if (empty($global_customer_id)) {
+        setAlert('danger', 'Please select a customer to link to all products.');
+        redirect('upload.php');
+    }
+    // Verify customer exists
+    $check_stmt = $conn->prepare("SELECT id FROM customers WHERE id = ?");
+    $check_stmt->bind_param("i", $global_customer_id);
+    $check_stmt->execute();
+    $check_stmt->store_result();
+    if ($check_stmt->num_rows === 0) {
+        $check_stmt->close();
+        setAlert('danger', 'Selected customer not found.');
+        redirect('upload.php');
+    }
+    $check_stmt->close();
+
+    $_SESSION['bulk_upload']['global_customer_id'] = $global_customer_id;
+    $_SESSION['bulk_upload']['step'] = 3;
+    redirect('upload.php');
 }
 
 // Step 2: Process Customer Mapping
@@ -282,6 +312,8 @@ if (isset($_SESSION['bulk_upload']['step']) && $_SESSION['bulk_upload']['step'] 
     $csv_data = $_SESSION['bulk_upload']['csv_data'];
     $customer_mapping = $_SESSION['bulk_upload']['customer_mapping'];
     $category_mapping = $_SESSION['bulk_upload']['category_mapping'];
+    $global_customer_mode = $_SESSION['bulk_upload']['global_customer_mode'] ?? false;
+    $global_customer_id = $_SESSION['bulk_upload']['global_customer_id'] ?? null;
     
     $success_count = 0;
     $error_count = 0;
@@ -306,9 +338,11 @@ if (isset($_SESSION['bulk_upload']['step']) && $_SESSION['bulk_upload']['step'] 
                 continue;
             }
             
-            // Get customer_id from mapping if customer_name is provided
+            // Get customer_id from mapping if customer_name is provided, or use global customer
             $customer_id = null;
-            if (isset($row['customer_name']) && $row['customer_name'] !== '') {
+            if ($global_customer_mode && $global_customer_id) {
+                $customer_id = $global_customer_id;
+            } elseif (isset($row['customer_name']) && $row['customer_name'] !== '') {
                 $customer_name = trim($row['customer_name']);
                 $customer_id = $customer_mapping[$customer_name] ?? null;
                 if (!$customer_id) {
@@ -490,11 +524,12 @@ if ($current_step == 1) {
     <?php
 }
 
-// Step 2: Customer Mapping (only if customers found in CSV)
+// Step 2: Customer Mapping / Global Customer Selection
 elseif ($current_step == 2) {
     $csv_data = $_SESSION['bulk_upload']['csv_data'];
     $unique_customers = $_SESSION['bulk_upload']['unique_customers'];
-    
+    $global_customer_mode = $_SESSION['bulk_upload']['global_customer_mode'] ?? false;
+
     // Get all existing customers
     $customers_sql = "SELECT id, name, type FROM customers ORDER BY name";
     $customers_result = $conn->query($customers_sql);
@@ -504,7 +539,49 @@ elseif ($current_step == 2) {
             $existing_customers[] = $row;
         }
     }
-    
+
+    if ($global_customer_mode) {
+        // No customer_name column in file – ask for a single customer to link to all products
+        ?>
+        <div class="container-fluid">
+            <div class="row">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h5 class="card-title mb-0">Step 2: Select Customer</h5>
+                            <form method="POST" action="upload.php" class="d-inline">
+                                <button type="submit" name="back_to_upload" class="btn btn-outline-secondary btn-sm">Back to Upload</button>
+                            </form>
+                        </div>
+                        <div class="card-body">
+                            <div class="alert alert-info">
+                                <i class="fas fa-info-circle me-2"></i>
+                                Your file does not contain a <strong>customer_name</strong> column.
+                                Please select the customer that all <strong><?php echo count($csv_data); ?> product(s)</strong> will be linked to.
+                            </div>
+
+                            <form method="POST" action="upload.php">
+                                <div class="mb-3">
+                                    <label for="global_customer_id" class="form-label fw-bold">Customer</label>
+                                    <select class="form-select js-searchable-select" id="global_customer_id" name="global_customer_id" required>
+                                        <option value="">-- Select a customer --</option>
+                                        <?php foreach ($existing_customers as $customer): ?>
+                                            <option value="<?php echo $customer['id']; ?>">
+                                                <?php echo htmlspecialchars($customer['name']); ?>
+                                                (<?php echo ucfirst($customer['type']); ?>)
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                <button type="submit" name="process_global_customer" class="btn btn-primary">Next: Map Categories</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <?php
+    } else {
     ?>
     <div class="container-fluid">
         <div class="row">
@@ -554,6 +631,7 @@ elseif ($current_step == 2) {
         </div>
     </div>
     <?php
+    } // end else (CSV customer mapping mode)
 }
 
 // Step 3: Category Mapping
