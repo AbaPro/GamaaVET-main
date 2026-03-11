@@ -216,6 +216,9 @@ $productsTableColspan = 8 + ($showSellingPriceColumn ? 1 : 0) + ($showCostPriceC
         <a href="export.php<?php echo '?' . http_build_query($_GET); ?>" class="btn btn-success me-2">
             <i class="fas fa-file-csv"></i> Export CSV
         </a>
+        <a href="export.php<?php echo '?' . http_build_query(array_merge($_GET, ['format' => 'excel'])); ?>" class="btn btn-success me-2">
+            <i class="fas fa-file-excel"></i> Export Excel
+        </a>
         <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addProductModal">
             <i class="fas fa-plus"></i> Add Product
         </button>

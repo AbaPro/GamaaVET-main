@@ -34,30 +34,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
 
     if ($_FILES['csv_file']['error'] === UPLOAD_ERR_OK) {
         $file_path = $_FILES['csv_file']['tmp_name'];
-        $file = fopen($file_path, 'r');
-        $header = fgetcsv($file);
-
-        if (!$header) {
-            setAlert('danger', 'The CSV file is empty.');
-            redirect('upload.php');
-        }
-
-        // Remove UTF-8 BOM if present from the first header element
-        if (isset($header[0])) {
-            $header[0] = preg_replace('/^\xEF\xBB\xBF/', '', $header[0]);
-        }
-
-        // Normalize header names to lowercase for comparison and trim whitespace/hidden chars
-        $header = array_map(function($h) { return strtolower(trim($h, " \t\n\r\0\x0B\xEF\xBB\xBF")); }, $header);
+        $file_ext = pathinfo($_FILES['csv_file']['name'], PATHINFO_EXTENSION);
+        $isExcel = strtolower($file_ext) === 'xlsx';
         
-        $name_idx = array_search('product name', $header);
-        if ($name_idx === false) $name_idx = array_search('name', $header);
-        
-        $qty_idx = array_search('quantity', $header);
-        if ($qty_idx === false) $qty_idx = array_search('qty', $header);
-
-        if ($name_idx === false || $qty_idx === false) {
-            setAlert('danger', 'CSV must contain "Product Name" and "Quantity" columns.');
+        if (!in_array(strtolower($file_ext), ['csv', 'xlsx'])) {
+            setAlert('danger', 'Please upload a valid CSV or Excel (.xlsx) file.');
             redirect('upload.php');
         }
 
@@ -70,32 +51,107 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
         while ($p = $prod_res->fetch_assoc()) {
             $all_products[strtolower(trim($p['name']))] = $p['id'];
         }
+        
+        if ($isExcel) {
+            require_once '../../includes/libs/SimpleXLSX.php';
+            if ( $xlsx = Shuchkin\SimpleXLSX::parse($file_path) ) {
+                $rows = $xlsx->rows();
+                if (count($rows) === 0) {
+                    setAlert('danger', 'The Excel file is empty.');
+                    redirect('upload.php');
+                }
+                
+                $header = array_shift($rows);
+                $header = array_map(function($h) { return strtolower(trim((string)$h, " \t\n\r\0\x0B\xEF\xBB\xBF")); }, $header);
+                
+                $name_idx = array_search('product name', $header);
+                if ($name_idx === false) $name_idx = array_search('name', $header);
+                
+                $qty_idx = array_search('quantity', $header);
+                if ($qty_idx === false) $qty_idx = array_search('qty', $header);
+                
+                if ($name_idx === false || $qty_idx === false) {
+                    setAlert('danger', 'File must contain "Product Name" and "Quantity" columns.');
+                    redirect('upload.php');
+                }
+                
+                foreach ($rows as $row) {
+                    if (count($row) <= max($name_idx, $qty_idx)) continue;
+                    $raw_name = trim((string)$row[$name_idx]);
+                    $qty = (float)$row[$qty_idx];
+                    
+                    if (empty($raw_name)) continue;
 
-        while (($row = fgetcsv($file)) !== FALSE) {
-            // Check if row has enough columns
-            if (count($row) <= max($name_idx, $qty_idx)) continue;
+                    $matched_id = $all_products[strtolower($raw_name)] ?? null;
+                    
+                    $csv_data[] = [
+                        'name' => $raw_name,
+                        'quantity' => $qty,
+                        'product_id' => $matched_id
+                    ];
 
-            $raw_name = trim($row[$name_idx]);
-            $qty = (float)$row[$qty_idx];
-            
-            if (empty($raw_name)) continue;
-
-            $matched_id = $all_products[strtolower($raw_name)] ?? null;
-            
-            $csv_data[] = [
-                'name' => $raw_name,
-                'quantity' => $qty,
-                'product_id' => $matched_id
-            ];
-
-            if (!$matched_id && !in_array($raw_name, $missing_products)) {
-                $missing_products[] = $raw_name;
+                    if (!$matched_id && !in_array($raw_name, $missing_products)) {
+                        $missing_products[] = $raw_name;
+                    }
+                }
+            } else {
+                setAlert('danger', 'Error parsing Excel file: ' . Shuchkin\SimpleXLSX::parseError());
+                redirect('upload.php');
             }
+        } else {
+            $file = fopen($file_path, 'r');
+            $header = fgetcsv($file);
+    
+            if (!$header) {
+                setAlert('danger', 'The CSV file is empty.');
+                redirect('upload.php');
+            }
+    
+            // Remove UTF-8 BOM if present from the first header element
+            if (isset($header[0])) {
+                $header[0] = preg_replace('/^\xEF\xBB\xBF/', '', $header[0]);
+            }
+    
+            // Normalize header names to lowercase for comparison and trim whitespace/hidden chars
+            $header = array_map(function($h) { return strtolower(trim($h, " \t\n\r\0\x0B\xEF\xBB\xBF")); }, $header);
+            
+            $name_idx = array_search('product name', $header);
+            if ($name_idx === false) $name_idx = array_search('name', $header);
+            
+            $qty_idx = array_search('quantity', $header);
+            if ($qty_idx === false) $qty_idx = array_search('qty', $header);
+    
+            if ($name_idx === false || $qty_idx === false) {
+                setAlert('danger', 'CSV must contain "Product Name" and "Quantity" columns.');
+                redirect('upload.php');
+            }
+    
+            while (($row = fgetcsv($file)) !== FALSE) {
+                // Check if row has enough columns
+                if (count($row) <= max($name_idx, $qty_idx)) continue;
+    
+                $raw_name = trim($row[$name_idx]);
+                $qty = (float)$row[$qty_idx];
+                
+                if (empty($raw_name)) continue;
+    
+                $matched_id = $all_products[strtolower($raw_name)] ?? null;
+                
+                $csv_data[] = [
+                    'name' => $raw_name,
+                    'quantity' => $qty,
+                    'product_id' => $matched_id
+                ];
+    
+                if (!$matched_id && !in_array($raw_name, $missing_products)) {
+                    $missing_products[] = $raw_name;
+                }
+            }
+            fclose($file);
         }
-        fclose($file);
 
         if (empty($csv_data)) {
-            setAlert('danger', 'No valid data found in CSV.');
+            setAlert('danger', 'No valid data found in the uploaded file.');
             redirect('upload.php');
         }
 
@@ -211,7 +267,7 @@ $step = $_SESSION['inventory_bulk_upload']['step'] ?? 1;
         <div class="col-md-8 mx-auto">
             <div class="card">
                 <div class="card-header bg-primary text-white">
-                    <h5 class="card-title mb-0">Step 1: Upload CSV and Select Inventory</h5>
+                    <h5 class="card-title mb-0">Step 1: Upload CSV or Excel and Select Inventory</h5>
                 </div>
                 <div class="card-body">
                     <form action="upload.php" method="POST" enctype="multipart/form-data">
@@ -229,7 +285,7 @@ $step = $_SESSION['inventory_bulk_upload']['step'] ?? 1;
                             </select>
                         </div>
                         <div class="mb-4">
-                            <label class="form-label fw-bold">2. CSV File</label>
+                            <label class="form-label fw-bold">2. CSV or Excel File</label>
                             <div class="alert alert-info">
                                 <p class="mb-1 small text-dark"><i class="fas fa-info-circle me-1"></i> Required columns (case-insensitive):</p>
                                 <ul class="mb-0 small text-dark">
@@ -237,7 +293,7 @@ $step = $_SESSION['inventory_bulk_upload']['step'] ?? 1;
                                     <li><strong>Quantity</strong> (or "Qty")</li>
                                 </ul>
                             </div>
-                            <input type="file" class="form-control" name="csv_file" accept=".csv" required>
+                            <input type="file" class="form-control" name="csv_file" accept=".csv, .xlsx" required>
                         </div>
                         <div class="d-grid">
                             <button type="submit" class="btn btn-primary">Continue to Review</button>
@@ -257,13 +313,13 @@ $step = $_SESSION['inventory_bulk_upload']['step'] ?? 1;
                     <form method="POST"><button type="submit" name="back_to_upload" class="btn btn-sm btn-outline-dark">Start Over</button></form>
                 </div>
                 <div class="card-body">
-                    <p>The following product names from your CSV couldn't be automatically matched. Please select the correct system product or leave as "Skip" to ignore that row.</p>
+                    <p>The following product names from your uploaded file couldn't be automatically matched. Please select the correct system product or leave as "Skip" to ignore that row.</p>
                     <form action="upload.php" method="POST">
                         <div class="table-responsive">
                             <table class="table table-bordered table-hover">
                                 <thead class="table-light">
                                     <tr>
-                                        <th style="width: 40%;">Name in CSV</th>
+                                        <th style="width: 40%;">Name in Uploaded File</th>
                                         <th>System Product Match</th>
                                     </tr>
                                 </thead>

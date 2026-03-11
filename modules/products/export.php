@@ -96,50 +96,99 @@ if (!empty($whereClauses)) {
     $result = $conn->query($sql);
 }
 
-// Generate CSV
-header('Content-Type: text/csv; charset=utf-8');
-header('Content-Disposition: attachment; filename=products_export_' . date('Y-m-d_His') . '.csv');
+// Determine format
+$isExcel = isset($_GET['format']) && $_GET['format'] === 'excel';
 
-$output = fopen('php://output', 'w');
-
-// Header row
-$headers = ['SKU', 'Barcode', 'Name', 'Description', 'Type', 'Category', 'Subcategory', 'Customer'];
-
-if (hasExplicitPermission('products.final.price.view')) {
-    $headers[] = 'Selling Price';
-}
-if (hasExplicitPermission('products.final.cost.view') || hasExplicitPermission('products.material.cost.view')) {
-    $headers[] = 'Cost Price';
-}
-$headers[] = 'Min Stock Level';
-
-fputcsv($output, $headers);
-
-if ($result) {
-    while ($row = $result->fetch_assoc()) {
-        $csvRow = [
-            $row['sku'],
-            $row['barcode'],
-            $row['name'],
-            $row['description'],
-            ucfirst($row['type']),
-            $row['category_name'],
-            $row['subcategory_name'],
-            $row['customer_name']
-        ];
-
-        // View logic for prices
-        if (hasExplicitPermission('products.final.price.view')) {
-            $csvRow[] = canViewProductPrice($row['type']) ? $row['unit_price'] : 'N/A';
-        }
-        if (hasExplicitPermission('products.final.cost.view') || hasExplicitPermission('products.material.cost.view')) {
-            $csvRow[] = canViewProductCost($row['type']) ? $row['cost_price'] : 'N/A';
-        }
-        $csvRow[] = $row['min_stock_level'];
-
-        fputcsv($output, $csvRow);
+if ($isExcel) {
+    require_once '../../includes/libs/SimpleXLSXGen.php';
+    $excelData = [];
+    
+    // Header row
+    $headers = ['SKU', 'Barcode', 'Name', 'Description', 'Type', 'Category', 'Subcategory', 'Customer'];
+    if (hasExplicitPermission('products.final.price.view')) {
+        $headers[] = 'Selling Price';
     }
-}
+    if (hasExplicitPermission('products.final.cost.view') || hasExplicitPermission('products.material.cost.view')) {
+        $headers[] = 'Cost Price';
+    }
+    $headers[] = 'Min Stock Level';
+    $excelData[] = $headers;
+    
+    if ($result) {
+        while ($row = $result->fetch_assoc()) {
+            $excelRow = [
+                $row['sku'],
+                $row['barcode'],
+                $row['name'],
+                $row['description'],
+                ucfirst($row['type']),
+                $row['category_name'],
+                $row['subcategory_name'],
+                $row['customer_name']
+            ];
+    
+            if (hasExplicitPermission('products.final.price.view')) {
+                $excelRow[] = canViewProductPrice($row['type']) ? $row['unit_price'] : 'N/A';
+            }
+            if (hasExplicitPermission('products.final.cost.view') || hasExplicitPermission('products.material.cost.view')) {
+                $excelRow[] = canViewProductCost($row['type']) ? $row['cost_price'] : 'N/A';
+            }
+            $excelRow[] = $row['min_stock_level'];
+    
+            $excelData[] = $excelRow;
+        }
+    }
+    
+    $xlsx = Shuchkin\SimpleXLSXGen::fromArray( $excelData );
+    $xlsx->downloadAs('products_export_' . date('Y-m-d_His') . '.xlsx');
+    exit();
 
-fclose($output);
-exit();
+} else {
+    // Generate CSV
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename=products_export_' . date('Y-m-d_His') . '.csv');
+    
+    $output = fopen('php://output', 'w');
+    
+    // Header row
+    $headers = ['SKU', 'Barcode', 'Name', 'Description', 'Type', 'Category', 'Subcategory', 'Customer'];
+    
+    if (hasExplicitPermission('products.final.price.view')) {
+        $headers[] = 'Selling Price';
+    }
+    if (hasExplicitPermission('products.final.cost.view') || hasExplicitPermission('products.material.cost.view')) {
+        $headers[] = 'Cost Price';
+    }
+    $headers[] = 'Min Stock Level';
+    
+    fputcsv($output, $headers);
+    
+    if ($result) {
+        while ($row = $result->fetch_assoc()) {
+            $csvRow = [
+                $row['sku'],
+                $row['barcode'],
+                $row['name'],
+                $row['description'],
+                ucfirst($row['type']),
+                $row['category_name'],
+                $row['subcategory_name'],
+                $row['customer_name']
+            ];
+    
+            // View logic for prices
+            if (hasExplicitPermission('products.final.price.view')) {
+                $csvRow[] = canViewProductPrice($row['type']) ? $row['unit_price'] : 'N/A';
+            }
+            if (hasExplicitPermission('products.final.cost.view') || hasExplicitPermission('products.material.cost.view')) {
+                $csvRow[] = canViewProductCost($row['type']) ? $row['cost_price'] : 'N/A';
+            }
+            $csvRow[] = $row['min_stock_level'];
+    
+            fputcsv($output, $csvRow);
+        }
+    }
+    
+    fclose($output);
+    exit();
+}

@@ -48,83 +48,160 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
     if ($_FILES['csv_file']['error'] === UPLOAD_ERR_OK) {
         $file_path = $_FILES['csv_file']['tmp_name'];
         
-        // Check if file is CSV
+        // Check if file is CSV or Excel
         $file_ext = pathinfo($_FILES['csv_file']['name'], PATHINFO_EXTENSION);
-        if (strtolower($file_ext) !== 'csv') {
-            setAlert('danger', 'Please upload a valid CSV file.');
+        if (!in_array(strtolower($file_ext), ['csv', 'xlsx'])) {
+            setAlert('danger', 'Please upload a valid CSV or Excel (.xlsx) file.');
             redirect('upload.php');
         }
         
-        // Process CSV file
-        $file = fopen($file_path, 'r');
-        $header = fgetcsv($file); // Get header row
-
-        if (!$header) {
-            setAlert('danger', 'The CSV file is empty.');
-            redirect('upload.php');
-        }
-
-        // Remove UTF-8 BOM if present from the first header element
-        if (isset($header[0])) {
-            $header[0] = preg_replace('/^\xEF\xBB\xBF/', '', $header[0]);
-        }
-
-        // Normalize header names to lowercase for comparison and trim whitespace/hidden chars
-        $header = array_map(function($h) { 
-            return strtolower(trim($h, " \t\n\r\0\x0B\xEF\xBB\xBF")); 
-        }, $header);
-        
-        // Check required columns
-        $required_columns = ['name', 'type', 'category', 'unit_price'];
-        $missing_columns = array_diff($required_columns, $header);
-        
-        if (!empty($missing_columns)) {
-            setAlert('danger', 'Missing required columns in CSV: ' . implode(', ', $missing_columns));
-            redirect('upload.php');
-        }
+        $isExcel = strtolower($file_ext) === 'xlsx';
         
         $csv_data = [];
         $unique_categories = [];
         $unique_customers = [];
-        $row_count = 0;
         
-        while (($row = fgetcsv($file)) !== FALSE) {
-            $row_count++;
-            if ($row_count > 1000) { // Limit to 1000 rows for performance
-                setAlert('warning', 'CSV file is too large. Only first 1000 rows will be processed.');
-                break;
+        if ($isExcel) {
+            require_once '../../includes/libs/SimpleXLSX.php';
+            if ( $xlsx = Shuchkin\SimpleXLSX::parse($file_path) ) {
+                $rows = $xlsx->rows();
+                if (count($rows) === 0) {
+                    setAlert('danger', 'The Excel file is empty.');
+                    redirect('upload.php');
+                }
+                
+                $header = array_shift($rows);
+                
+                // Normalize header
+                $header = array_map(function($h) { 
+                    return strtolower(trim((string)$h, " \t\n\r\0\x0B\xEF\xBB\xBF")); 
+                }, $header);
+                
+                // Check required columns
+                $required_columns = ['name', 'type', 'category', 'unit_price'];
+                $missing_columns = array_diff($required_columns, $header);
+                
+                if (!empty($missing_columns)) {
+                    setAlert('danger', 'Missing required columns in Excel: ' . implode(', ', $missing_columns));
+                    redirect('upload.php');
+                }
+                
+                $row_count = 0;
+                foreach ($rows as $row) {
+                    $row_count++;
+                    if ($row_count > 1000) {
+                        setAlert('warning', 'Excel file is too large. Only first 1000 rows will be processed.');
+                        break;
+                    }
+                    
+                    // Pad row to match header length if needed
+                    while(count($row) < count($header)) {
+                        $row[] = '';
+                    }
+                    // Slice row to match header length if too long
+                    $row = array_slice($row, 0, count($header));
+                    
+                    $data = array_combine($header, $row);
+                    
+                    // Skip empty rows
+                    if (empty(trim((string)($data['name'] ?? '')))) {
+                        continue;
+                    }
+                    
+                    // Validate type
+                    $valid_types = ['primary', 'final', 'material'];
+                    if (!in_array(strtolower((string)($data['type'] ?? '')), $valid_types)) {
+                        setAlert('danger', "Invalid product type '{$data['type']}' on row " . ($row_count + 1) . ". Must be: primary, final, or material.");
+                        redirect('upload.php');
+                    }
+                    
+                    // Collect unique categories
+                    $category = trim((string)($data['category'] ?? ''));
+                    if (!empty($category) && !in_array($category, $unique_categories)) {
+                        $unique_categories[] = $category;
+                    }
+                    
+                    // Collect unique customers
+                    $customer_name = trim((string)($data['customer_name'] ?? ''));
+                    if (!empty($customer_name) && !in_array($customer_name, $unique_customers)) {
+                        $unique_customers[] = $customer_name;
+                    }
+                    
+                    $csv_data[] = $data;
+                }
+            } else {
+                setAlert('danger', 'Error parsing Excel file: ' . Shuchkin\SimpleXLSX::parseError());
+                redirect('upload.php');
             }
-            
-            $data = array_combine($header, $row);
-            
-            // Skip empty rows
-            if (empty(trim($data['name'] ?? ''))) {
-                continue;
+        } else {
+            // Process CSV file
+            $file = fopen($file_path, 'r');
+            $header = fgetcsv($file); // Get header row
+    
+            if (!$header) {
+                setAlert('danger', 'The CSV file is empty.');
+                redirect('upload.php');
             }
+    
+            // Remove UTF-8 BOM if present from the first header element
+            if (isset($header[0])) {
+                $header[0] = preg_replace('/^\xEF\xBB\xBF/', '', $header[0]);
+            }
+    
+            // Normalize header names to lowercase for comparison and trim whitespace/hidden chars
+            $header = array_map(function($h) { 
+                return strtolower(trim($h, " \t\n\r\0\x0B\xEF\xBB\xBF")); 
+            }, $header);
             
-            // Validate type
-            $valid_types = ['primary', 'final', 'material'];
-            if (!in_array(strtolower($data['type'] ?? ''), $valid_types)) {
-                setAlert('danger', "Invalid product type '{$data['type']}' on row $row_count. Must be: primary, final, or material.");
+            // Check required columns
+            $required_columns = ['name', 'type', 'category', 'unit_price'];
+            $missing_columns = array_diff($required_columns, $header);
+            
+            if (!empty($missing_columns)) {
+                setAlert('danger', 'Missing required columns in CSV: ' . implode(', ', $missing_columns));
                 redirect('upload.php');
             }
             
-            // Collect unique categories
-            $category = trim($data['category'] ?? '');
-            if (!empty($category) && !in_array($category, $unique_categories)) {
-                $unique_categories[] = $category;
+            $row_count = 0;
+            
+            while (($row = fgetcsv($file)) !== FALSE) {
+                $row_count++;
+                if ($row_count > 1000) { // Limit to 1000 rows for performance
+                    setAlert('warning', 'CSV file is too large. Only first 1000 rows will be processed.');
+                    break;
+                }
+                
+                $data = array_combine($header, $row);
+                
+                // Skip empty rows
+                if (empty(trim($data['name'] ?? ''))) {
+                    continue;
+                }
+                
+                // Validate type
+                $valid_types = ['primary', 'final', 'material'];
+                if (!in_array(strtolower($data['type'] ?? ''), $valid_types)) {
+                    setAlert('danger', "Invalid product type '{$data['type']}' on row " . ($row_count + 1) . ". Must be: primary, final, or material.");
+                    redirect('upload.php');
+                }
+                
+                // Collect unique categories
+                $category = trim($data['category'] ?? '');
+                if (!empty($category) && !in_array($category, $unique_categories)) {
+                    $unique_categories[] = $category;
+                }
+                
+                // Collect unique customers
+                $customer_name = trim($data['customer_name'] ?? '');
+                if (!empty($customer_name) && !in_array($customer_name, $unique_customers)) {
+                    $unique_customers[] = $customer_name;
+                }
+                
+                $csv_data[] = $data;
             }
             
-            // Collect unique customers
-            $customer_name = trim($data['customer_name'] ?? '');
-            if (!empty($customer_name) && !in_array($customer_name, $unique_customers)) {
-                $unique_customers[] = $customer_name;
-            }
-            
-            $csv_data[] = $data;
+            fclose($file);
         }
-        
-        fclose($file);
         
         if (empty($csv_data)) {
             setAlert('danger', 'No valid product data found in CSV file.');
@@ -357,11 +434,11 @@ if ($current_step == 1) {
             <div class="col-12">
                 <div class="card">
                     <div class="card-header">
-                        <h5 class="card-title mb-0">Step 1: Upload CSV File</h5>
+                        <h5 class="card-title mb-0">Step 1: Upload CSV / Excel File</h5>
                     </div>
                     <div class="card-body">
-                        <h6 class="mb-3">CSV File Instructions</h6>
-                        <p>Upload a CSV file with product data. The file must include the following columns:</p>
+                        <h6 class="mb-3">File Instructions</h6>
+                        <p>Upload a CSV or Excel (.xlsx) file with product data. The file must include the following columns:</p>
                         <ul>
                             <li><strong>name</strong> - Product name (required)</li>
                             <li><strong>type</strong> - Product type: <code>primary</code>, <code>final</code>, or <code>material</code> (required)</li>
@@ -400,8 +477,8 @@ if ($current_step == 1) {
                         
                         <form action="upload.php" method="POST" enctype="multipart/form-data">
                             <div class="mb-3">
-                                <label for="csv_file" class="form-label">CSV File</label>
-                                <input type="file" class="form-control" id="csv_file" name="csv_file" accept=".csv" required>
+                                <label for="csv_file" class="form-label">CSV or Excel File</label>
+                                <input type="file" class="form-control" id="csv_file" name="csv_file" accept=".csv, .xlsx" required>
                             </div>
                             <button type="submit" class="btn btn-primary">Upload and Review</button>
                         </form>
