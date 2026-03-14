@@ -55,6 +55,7 @@ $purchase_orders = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $vendors = $pdo->query("SELECT id, name FROM vendors ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 
 $canViewPrices = hasPermission('purchases.po.price.view');
+$canDeletePO = hasPermission('purchases.orders.delete');
 ?>
 
 <div class="container mt-4">
@@ -106,6 +107,13 @@ $canViewPrices = hasPermission('purchases.po.price.view');
                         <button type="submit" class="btn btn-primary">Filter</button>
                         <a href="po_list.php" class="btn btn-secondary">Reset</a>
                     </div>
+                    <?php if ($canDeletePO): ?>
+                    <div id="bulkActions" class="col-md-12 d-none">
+                        <button type="button" class="btn btn-danger" id="btnBulkDelete">
+                            <i class="fas fa-trash me-1"></i> Bulk Delete (<span id="selectedCount">0</span>)
+                        </button>
+                    </div>
+                    <?php endif; ?>
                 </div>
             </form>
             
@@ -113,6 +121,7 @@ $canViewPrices = hasPermission('purchases.po.price.view');
                 <table class="table js-datatable table-striped table-hover">
                     <thead>
                         <tr>
+                            <th width="40"><?php if ($canDeletePO): ?><input type="checkbox" class="form-check-input" id="selectAll"><?php endif; ?></th>
                             <th>PO #</th>
                             <th>Vendor</th>
                             <th>Destination</th>
@@ -138,6 +147,7 @@ $canViewPrices = hasPermission('purchases.po.price.view');
                             ];
                         ?>
                             <tr>
+                                <td><?php if ($canDeletePO): ?><input type="checkbox" class="form-check-input row-select" name="order_ids[]" value="<?= $po['id'] ?>"><?php endif; ?></td>
                                 <td>
                                     <button type="button"
                                             class="btn btn-link p-0 text-decoration-none js-po-preview"
@@ -162,13 +172,18 @@ $canViewPrices = hasPermission('purchases.po.price.view');
                                     </span>
                                 </td>
                                 <td>
-                                    <a href="po_details.php?id=<?= $po['id'] ?>" class="btn btn-sm btn-info">View</a>
-                                    <?php if (in_array($po['status'], ['new', 'ordered', 'partially-received'])) : ?>
-                                        <a href="receive_items.php?po_id=<?= $po['id'] ?>" class="btn btn-sm btn-success">Receive</a>
-                                    <?php endif; ?>
-                                    <?php if ($balance > 0) : ?>
-                                        <a href="process_payment.php?po_id=<?= $po['id'] ?>" class="btn btn-sm btn-primary">Payment</a>
-                                    <?php endif; ?>
+                                    <div class="btn-group">
+                                        <a href="po_details.php?id=<?= $po['id'] ?>" class="btn btn-sm btn-info">View</a>
+                                        <?php if (in_array($po['status'], ['new', 'ordered', 'partially-received'])) : ?>
+                                            <a href="receive_items.php?po_id=<?= $po['id'] ?>" class="btn btn-sm btn-success">Receive</a>
+                                        <?php endif; ?>
+                                        <?php if ($balance > 0) : ?>
+                                            <a href="process_payment.php?po_id=<?= $po['id'] ?>" class="btn btn-sm btn-primary">Payment</a>
+                                        <?php endif; ?>
+                                        <?php if ($canDeletePO): ?>
+                                            <button type="button" class="btn btn-sm btn-danger js-delete-po" data-id="<?= $po['id'] ?>">Delete</button>
+                                        <?php endif; ?>
+                                    </div>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
@@ -287,6 +302,86 @@ document.addEventListener('DOMContentLoaded', function () {
                     modalBody.innerHTML = '<div class="alert alert-danger mb-0">Unable to load PO details.</div>';
                 });
         });
+    });
+
+    // Bulk selection logic
+    const selectAll = document.getElementById('selectAll');
+    const bulkActions = document.getElementById('bulkActions');
+    const selectedCount = document.getElementById('selectedCount');
+    const btnBulkDelete = document.getElementById('btnBulkDelete');
+
+    const updateBulkActions = () => {
+        const checkedCount = document.querySelectorAll('.row-select:checked').length;
+        if (selectedCount) selectedCount.textContent = checkedCount;
+        if (bulkActions) {
+            if (checkedCount > 0) {
+                bulkActions.classList.remove('d-none');
+            } else {
+                bulkActions.classList.add('d-none');
+            }
+        }
+    };
+
+    if (selectAll) {
+        selectAll.addEventListener('change', function() {
+            document.querySelectorAll('.row-select').forEach(cb => {
+                cb.checked = this.checked;
+            });
+            updateBulkActions();
+        });
+    }
+
+    document.addEventListener('change', function(e) {
+        if (e.target && e.target.classList.contains('row-select')) {
+            updateBulkActions();
+            if (!e.target.checked && selectAll) {
+                selectAll.checked = false;
+            } else if (selectAll) {
+                const allChecked = document.querySelectorAll('.row-select:not(:checked)').length === 0;
+                selectAll.checked = allChecked;
+            }
+        }
+    });
+
+    if (btnBulkDelete) {
+        btnBulkDelete.addEventListener('click', function() {
+            const selectedIds = Array.from(document.querySelectorAll('.row-select:checked')).map(cb => cb.value);
+            if (selectedIds.length === 0) return;
+
+            if (confirm(`Are you sure you want to delete ${selectedIds.length} selected POs? This action cannot be reversed.`)) {
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = 'bulk_delete.php';
+                selectedIds.forEach(id => {
+                    const input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = 'order_ids[]';
+                    input.value = id;
+                    form.appendChild(input);
+                });
+                document.body.appendChild(form);
+                form.submit();
+            }
+        });
+    }
+
+    // Individual delete logic
+    document.addEventListener('click', function(e) {
+        if (e.target && e.target.classList.contains('js-delete-po')) {
+            const id = e.target.dataset.id;
+            if (confirm(`Are you sure you want to delete PO #${id}?`)) {
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = 'bulk_delete.php';
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'order_ids[]';
+                input.value = id;
+                form.appendChild(input);
+                document.body.appendChild(form);
+                form.submit();
+            }
+        }
     });
 });
 </script>
