@@ -48,6 +48,7 @@ $stmt = $pdo->prepare("
 $stmt->execute([$order_id]);
 $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $canViewFinalPrices = canViewProductPrice('final');
+$canDeletePayments = hasPermission('finance.payments.delete');
 
 // Fetch payments
 $stmt = $pdo->prepare("
@@ -512,6 +513,9 @@ require_once '../../includes/header.php';
                                     <th>Method</th>
                                     <th>Destination</th>
                                     <th>By</th>
+                                    <?php if ($canDeletePayments): ?>
+                                        <th class="text-end">Actions</th>
+                                    <?php endif; ?>
                                 </tr>
                             </thead>
                             <tbody>
@@ -532,6 +536,15 @@ require_once '../../includes/header.php';
                                             ?>
                                         </td>
                                         <td><?= htmlspecialchars($payment['created_by_name']) ?></td>
+                                        <?php if ($canDeletePayments): ?>
+                                            <td class="text-end">
+                                                <button type="button" class="btn btn-sm btn-outline-danger js-delete-payment" 
+                                                        data-id="<?= $payment['id'] ?>" 
+                                                        data-amount="<?= number_format($payment['amount'], 2) ?>">
+                                                    <i class="fas fa-trash"></i>
+                                                </button>
+                                            </td>
+                                        <?php endif; ?>
                                     </tr>
                                 <?php endforeach; ?>
                             </tbody>
@@ -730,6 +743,25 @@ require_once '../../includes/header.php';
             toggleShippingAmount();
             typeSelect.addEventListener('change', toggleShippingAmount);
         }
+
+        // Delete payment logic - with jQuery for consistency with existing buttons
+        $('.js-delete-payment').click(function() {
+            const id = $(this).data('id');
+            const amount = $(this).data('amount');
+            if (confirm(`Are you sure you want to delete this payment of ${amount}? This will restore the order balance and reverse financial impacts (safes, banks, or wallet).`)) {
+                const form = $('<form>', {
+                    'method': 'POST',
+                    'action': 'delete_payment.php'
+                });
+                form.append($('<input>', {
+                    'type': 'hidden',
+                    'name': 'payment_id',
+                    'value': id
+                }));
+                $('body').append(form);
+                form.submit();
+            }
+        });
     });
 </script>
 <?php endif; ?>
