@@ -31,15 +31,37 @@ if ($inventory_result->num_rows === 0) {
 $inventory = $inventory_result->fetch_assoc();
 $inventory_stmt->close();
 
-// Get inventory products
+// Filter parameters
+$customerFilters = [];
+if (isset($_GET['customer_ids']) && is_array($_GET['customer_ids'])) {
+    foreach ($_GET['customer_ids'] as $cid) {
+        if (is_numeric($cid) && (int)$cid > 0) {
+            $customerFilters[] = (int)$cid;
+        }
+    }
+}
+
+// Get inventory products with filtering
 $products_sql = "SELECT p.id, p.name, p.sku, p.barcode, ip.quantity, p.min_stock_level, c.name AS customer_name 
                  FROM inventory_products ip 
                  JOIN products p ON ip.product_id = p.id 
                  LEFT JOIN customers c ON p.customer_id = c.id
-                 WHERE ip.inventory_id = ? 
-                 ORDER BY p.name";
+                 WHERE ip.inventory_id = ?";
+
+if (!empty($customerFilters)) {
+    $placeholders = implode(',', array_fill(0, count($customerFilters), '?'));
+    $products_sql .= " AND p.customer_id IN ($placeholders)";
+}
+
+$products_sql .= " ORDER BY p.name";
+
 $products_stmt = $conn->prepare($products_sql);
-$products_stmt->bind_param("i", $inventory_id);
+$types = 'i' . str_repeat('i', count($customerFilters));
+$bindParams = [$inventory_id];
+foreach ($customerFilters as $cid) {
+    $bindParams[] = $cid;
+}
+$products_stmt->bind_param($types, ...$bindParams);
 $products_stmt->execute();
 $products_result = $products_stmt->get_result();
 ?>
@@ -102,14 +124,41 @@ $products_result = $products_stmt->get_result();
 </div>
 
 <div class="card">
-    <div class="card-header">
+    <div class="card-header d-flex justify-content-between align-items-center">
         <h5 class="card-title mb-0">Inventory Products</h5>
+        <div id="bulkActions" class="d-none">
+            <button type="button" class="btn btn-sm btn-danger" id="btnBulkDelete">
+                <i class="fas fa-trash me-1"></i> Bulk Remove (<span id="selectedCount">0</span>)
+            </button>
+        </div>
     </div>
     <div class="card-body">
+        <form method="get" class="mb-4">
+            <input type="hidden" name="id" value="<?= $inventory_id ?>">
+            <div class="row align-items-end g-2">
+                <div class="col-md-4">
+                    <label class="form-label small text-muted">Filter by Customer(s)</label>
+                    <select class="form-select form-select-sm js-searchable-select" name="customer_ids[]" multiple>
+                        <?php 
+                        $all_custs = $conn->query("SELECT id, name FROM customers ORDER BY name");
+                        while($c = $all_custs->fetch_assoc()): ?>
+                            <option value="<?= $c['id'] ?>" <?= in_array($c['id'], $customerFilters) ? 'selected' : '' ?>>
+                                <?= htmlspecialchars($c['name']) ?>
+                            </option>
+                        <?php endwhile; ?>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-sm btn-primary">Filter</button>
+                    <a href="view.php?id=<?= $inventory_id ?>" class="btn btn-sm btn-secondary">Reset</a>
+                </div>
+            </div>
+        </form>
         <div class="table-responsive">
             <table class="table table-hover">
                 <thead>
                     <tr>
+                        <th width="40"><input type="checkbox" class="form-check-input" id="selectAll"></th>
                         <th>SKU</th>
                         <th>Product Name</th>
                         <th>Customer</th>
@@ -123,7 +172,8 @@ $products_result = $products_stmt->get_result();
                 <tbody>
                     <?php if ($products_result->num_rows > 0): ?>
                         <?php while ($product = $products_result->fetch_assoc()): ?>
-                            <tr>
+                            <tr data-id="<?= $product['id'] ?>">
+                                <td><input type="checkbox" class="form-check-input row-select" name="product_ids[]" value="<?= $product['id'] ?>"></td>
                                 <td><?php echo htmlspecialchars($product['sku']); ?></td>
                                 <td><?php echo htmlspecialchars($product['name']); ?></td>
                                 <td><?php echo $product['customer_name'] ? htmlspecialchars($product['customer_name']) : '<span class="text-muted">N/A</span>'; ?></td>
@@ -338,5 +388,83 @@ $(document).ready(function() {
         applyProductFilters();
         setTimeout(() => $('#product_search').focus(), 500);
     });
+
+    // Bulk selection and action logic
+    const selectAll = document.getElementById('selectAll');
+    const bulkActions = document.getElementById('bulkActions');
+    const selectedCount = document.getElementById('selectedCount');
+    const btnBulkDelete = document.getElementById('btnBulkDelete');
+
+    const updateBulkActions = () => {
+        const checkedCount = document.querySelectorAll('.row-select:checked').length;
+        if (selectedCount) selectedCount.textContent = checkedCount;
+        if (bulkActions) {
+            if (checkedCount > 0) {
+                bulkActions.classList.remove('d-none');
+            } else {
+                bulkActions.classList.add('d-none');
+            }
+        }
+    };
+
+    if (selectAll) {
+        selectAll.addEventListener('change', function() {
+            const rowCheckboxes = document.querySelectorAll('.row-select');
+            rowCheckboxes.forEach(cb => {
+                cb.checked = this.checked;
+            });
+            updateBulkActions();
+        });
+    }
+
+    document.addEventListener('change', function(e) {
+        if (e.target && e.target.classList.contains('row-select')) {
+            updateBulkActions();
+            if (!e.target.checked && selectAll) {
+                selectAll.checked = false;
+            } else if (selectAll) {
+                const allChecked = document.querySelectorAll('.row-select:not(:checked)').length === 0;
+                selectAll.checked = allChecked;
+            }
+        }
+    });
+
+    if (btnBulkDelete) {
+        btnBulkDelete.addEventListener('click', function() {
+            const selectedIds = Array.from(document.querySelectorAll('.row-select:checked')).map(cb => cb.value);
+            if (selectedIds.length === 0) return;
+
+            if (confirm(`Are you sure you want to remove ${selectedIds.length} selected products from this inventory?`)) {
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = 'bulk_delete_products.php';
+                
+                const invInput = document.createElement('input');
+                invInput.type = 'hidden';
+                invInput.name = 'inventory_id';
+                invInput.value = '<?= $inventory_id ?>';
+                form.appendChild(invInput);
+
+                selectedIds.forEach(id => {
+                    const input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = 'product_ids[]';
+                    input.value = id;
+                    form.appendChild(input);
+                });
+
+                document.body.appendChild(form);
+                form.submit();
+            }
+        });
+    }
+
+    // Initialize Select2 for multi-select
+    if ($.fn.select2) {
+        $('.js-searchable-select').select2({
+            width: '100%',
+            placeholder: 'Select options'
+        });
+    }
 });
 </script>
