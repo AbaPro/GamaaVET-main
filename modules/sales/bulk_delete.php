@@ -13,43 +13,43 @@ if (!hasPermission('sales.orders.delete')) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['order_ids'])) {
     $order_ids = $_POST['order_ids'];
     $success_count = 0;
-    $error_count = 0;
-    $errors = [];
-
-    foreach ($order_ids as $id) {
-        $id = (int)$id;
-        
-        // Start transaction for each order delete if necessary, or do it in bulk
-        // For simplicity and better error reporting, we can do it individually or in a single transaction
-    }
-
-    // Single transaction approach is better
-    $conn->begin_transaction();
+    
     try {
+        $conn->begin_transaction();
         $placeholders = implode(',', array_fill(0, count($order_ids), '?'));
-        
-        // Check if any order is not in 'new' status (might want to restrict deletion)
-        // For now, let's assume we can delete if they have permission, but usually 'new' is safer
+        $types = str_repeat('i', count($order_ids));
         
         // Delete order items first
-        $stmt = $conn->prepare("DELETE FROM order_items WHERE order_id IN ($placeholders)");
-        $stmt->bind_param(str_repeat('i', count($order_ids)), ...$order_ids);
-        $stmt->execute();
-        $stmt->close();
+        $stmt_items = $conn->prepare("DELETE FROM order_items WHERE order_id IN ($placeholders)");
+        if (!$stmt_items) {
+            throw new Exception("Error preparing items deletion: " . $conn->error);
+        }
+        $stmt_items->bind_param($types, ...$order_ids);
+        if (!$stmt_items->execute()) {
+            throw new Exception("Error deleting order items: " . $stmt_items->error);
+        }
+        $stmt_items->close();
 
         // Delete orders
-        $stmt = $conn->prepare("DELETE FROM orders WHERE id IN ($placeholders)");
-        $stmt->bind_param(str_repeat('i', count($order_ids)), ...$order_ids);
-        $stmt->execute();
-        $success_count = $stmt->affected_rows;
-        $stmt->close();
+        $stmt_orders = $conn->prepare("DELETE FROM orders WHERE id IN ($placeholders)");
+        if (!$stmt_orders) {
+            throw new Exception("Error preparing orders deletion: " . $conn->error);
+        }
+        $stmt_orders->bind_param($types, ...$order_ids);
+        if (!$stmt_orders->execute()) {
+            throw new Exception("Error deleting orders: " . $stmt_orders->error);
+        }
+        $success_count = $stmt_orders->affected_rows;
+        $stmt_orders->close();
 
         $conn->commit();
         setAlert('success', "Successfully deleted $success_count orders.");
         logActivity("Bulk deleted orders: " . implode(', ', $order_ids));
-    } catch (Exception $e) {
-        $conn->rollback();
-        setAlert('danger', "Error deleting orders: " . $e->getMessage());
+    } catch (Throwable $e) {
+        if ($conn->connect_errno === 0) {
+            $conn->rollback();
+        }
+        setAlert('danger', "System error during bulk deletion: " . $e->getMessage());
     }
 }
 
