@@ -13,43 +13,107 @@ if (!hasPermission('sales.orders.delete')) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['order_ids'])) {
     $order_ids = $_POST['order_ids'];
     $success_count = 0;
+    $skipped_count = 0;
+    $errors = [];
     
-    try {
-        $conn->begin_transaction();
-        $placeholders = implode(',', array_fill(0, count($order_ids), '?'));
-        $types = str_repeat('i', count($order_ids));
+    foreach ($order_ids as $id) {
+        $id = (int)$id;
         
-        // Delete order items first
-        $stmt_items = $conn->prepare("DELETE FROM order_items WHERE order_id IN ($placeholders)");
-        if (!$stmt_items) {
-            throw new Exception("Error preparing items deletion: " . $conn->error);
-        }
-        $stmt_items->bind_param($types, ...$order_ids);
-        if (!$stmt_items->execute()) {
-            throw new Exception("Error deleting order items: " . $stmt_items->error);
-        }
-        $stmt_items->close();
+        try {
+            // Check for payments
+            $pay_sql = "SELECT COUNT(*) as count FROM order_payments WHERE order_id = ?";
+            $pay_stmt = $conn->prepare($pay_sql);
+            $pay_stmt->bind_param("i", $id);
+            $pay_stmt->execute();
+            $has_payments = $pay_stmt->get_result()->fetch_assoc()['count'] > 0;
+            $pay_stmt->close();
 
-        // Delete orders
-        $stmt_orders = $conn->prepare("DELETE FROM orders WHERE id IN ($placeholders)");
-        if (!$stmt_orders) {
-            throw new Exception("Error preparing orders deletion: " . $conn->error);
-        }
-        $stmt_orders->bind_param($types, ...$order_ids);
-        if (!$stmt_orders->execute()) {
-            throw new Exception("Error deleting orders: " . $stmt_orders->error);
-        }
-        $success_count = $stmt_orders->affected_rows;
-        $stmt_orders->close();
+            if ($has_payments) {
+                $errors[] = "Order ID $id has associated payments.";
+                $skipped_count++;
+                continue;
+            }
 
-        $conn->commit();
+            // Check for returns
+            $ret_sql = "SELECT COUNT(*) as count FROM order_returns WHERE order_id = ?";
+            $ret_stmt = $conn->prepare($ret_sql);
+            $ret_stmt->bind_param("i", $id);
+            $ret_stmt->execute();
+            $has_returns = $ret_stmt->get_result()->fetch_assoc()['count'] > 0;
+            $ret_stmt->close();
+
+            if ($has_returns) {
+                $errors[] = "Order ID $id has associated returns.";
+                $skipped_count++;
+                continue;
+            }
+
+            // Check for manufacturing orders
+            $man_sql = "SELECT COUNT(*) as count FROM manufacturing_orders WHERE sales_order_id = ?";
+            $man_stmt = $conn->prepare($man_sql);
+            $man_stmt->bind_param("i", $id);
+            $man_stmt->execute();
+            $has_man = $man_stmt->get_result()->fetch_assoc()['count'] > 0;
+            $man_stmt->close();
+
+            if ($has_man) {
+                $errors[] = "Order ID $id is linked to manufacturing orders.";
+                $skipped_count++;
+                continue;
+            }
+
+            // Check for quotations
+            $quot_sql = "SELECT COUNT(*) as count FROM quotations WHERE order_id = ?";
+            $quot_stmt = $conn->prepare($quot_sql);
+            $quot_stmt->bind_param("i", $id);
+            $quot_stmt->execute();
+            $has_quot = $quot_stmt->get_result()->fetch_assoc()['count'] > 0;
+            $quot_stmt->close();
+
+            if ($has_quot) {
+                $errors[] = "Order ID $id is linked to a quotation.";
+                $skipped_count++;
+                continue;
+            }
+
+            $conn->begin_transaction();
+
+            // Delete order items
+            $stmt_items = $conn->prepare("DELETE FROM order_items WHERE order_id = ?");
+            if (!$stmt_items) throw new Exception("Error preparing items deletion: " . $conn->error);
+            $stmt_items->bind_param("i", $id);
+            $stmt_items->execute();
+            $stmt_items->close();
+
+            // Delete order
+            $stmt_order = $conn->prepare("DELETE FROM orders WHERE id = ?");
+            if (!$stmt_order) throw new Exception("Error preparing order deletion: " . $conn->error);
+            $stmt_order->bind_param("i", $id);
+            if ($stmt_order->execute()) {
+                $success_count++;
+                $conn->commit();
+            } else {
+                throw new Exception("Error deleting order ID $id: " . $stmt_order->error);
+            }
+            $stmt_order->close();
+
+        } catch (Throwable $e) {
+            if ($conn->connect_errno === 0 && $conn->in_transaction) {
+                $conn->rollback();
+            }
+            $errors[] = "System error for Order ID $id: " . $e->getMessage();
+            $skipped_count++;
+        }
+    }
+
+    if ($success_count > 0) {
         setAlert('success', "Successfully deleted $success_count orders.");
-        logActivity("Bulk deleted orders: " . implode(', ', $order_ids));
-    } catch (Throwable $e) {
-        if ($conn->connect_errno === 0) {
-            $conn->rollback();
-        }
-        setAlert('danger', "System error during bulk deletion: " . $e->getMessage());
+        logActivity("Bulk deleted orders IDs: " . implode(', ', $order_ids));
+    }
+    
+    if ($skipped_count > 0) {
+        $error_msg = "Skipped $skipped_count orders due to constraints: <br>• " . implode("<br>• ", array_unique($errors));
+        setAlert('warning', $error_msg);
     }
 }
 

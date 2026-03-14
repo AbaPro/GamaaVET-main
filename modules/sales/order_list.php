@@ -75,6 +75,7 @@ $customers = $pdo->query("SELECT id, name FROM customers ORDER BY name")->fetchA
 
 // Check if user has permission to view prices
 $canViewPrices = hasPermission('sales.orders.price.view');
+$canDeleteOrders = hasPermission('sales.orders.delete');
 ?>
 
 <div class="container mt-4">
@@ -138,11 +139,13 @@ $canViewPrices = hasPermission('sales.orders.price.view');
                             <button type="submit" class="btn btn-primary">Filter</button>
                             <a href="order_list.php" class="btn btn-secondary">Reset</a>
                         </div>
+                        <?php if ($canDeleteOrders): ?>
                         <div id="bulkActions" class="d-none">
                             <button type="button" class="btn btn-danger" id="btnBulkDelete">
                                 <i class="fas fa-trash me-1"></i> Bulk Delete (<span id="selectedCount">0</span>)
                             </button>
                         </div>
+                        <?php endif; ?>
                     </div>
                 </div>
             </form>
@@ -151,7 +154,7 @@ $canViewPrices = hasPermission('sales.orders.price.view');
                 <table class="table js-datatable table-striped table-hover">
                     <thead>
                         <tr>
-                            <th width="40"><input type="checkbox" class="form-check-input" id="selectAll"></th>
+                            <th width="40"><?php if ($canDeleteOrders): ?><input type="checkbox" class="form-check-input" id="selectAll"><?php endif; ?></th>
                             <th>Order ID</th>
                             <th>Customer</th>
                             <th>Date</th>
@@ -180,7 +183,7 @@ $canViewPrices = hasPermission('sales.orders.price.view');
                             ];
                         ?>
                             <tr data-id="<?= $order['id'] ?>">
-                                <td><input type="checkbox" class="form-check-input row-select" name="order_ids[]" value="<?= $order['id'] ?>"></td>
+                                <td><?php if ($canDeleteOrders): ?><input type="checkbox" class="form-check-input row-select" name="order_ids[]" value="<?= $order['id'] ?>"><?php endif; ?></td>
                                 <td>
                                     <button type="button"
                                             class="btn btn-link p-0 text-decoration-none js-order-preview"
@@ -205,11 +208,16 @@ $canViewPrices = hasPermission('sales.orders.price.view');
                                     </span>
                                 </td>
                                 <td>
-                                    <a href="order_details.php?id=<?= $order['id'] ?>" class="btn btn-sm btn-info">View</a>
-                                    <?php if ($order['status'] == 'new' || $balance > 0) : ?>
-                                        <a href="process_payment.php?order_id=<?= $order['id'] ?>" class="btn btn-sm btn-success">Payment</a>
-                                    <?php endif; ?>
-                                    <a href="generate_invoice.php?id=<?= $order['id'] ?>" class="btn btn-sm btn-secondary" target="_blank">Invoice</a>
+                                    <div class="btn-group">
+                                        <a href="order_details.php?id=<?= $order['id'] ?>" class="btn btn-sm btn-info">View</a>
+                                        <?php if ($order['status'] == 'new' || $balance > 0) : ?>
+                                            <a href="process_payment.php?order_id=<?= $order['id'] ?>" class="btn btn-sm btn-success">Payment</a>
+                                        <?php endif; ?>
+                                        <a href="generate_invoice.php?id=<?= $order['id'] ?>" class="btn btn-sm btn-secondary" target="_blank">Invoice</a>
+                                        <?php if ($canDeleteOrders): ?>
+                                            <button type="button" class="btn btn-sm btn-danger js-delete-order" data-id="<?= $order['id'] ?>" data-number="<?= htmlspecialchars($order['internal_id']) ?>">Delete</button>
+                                        <?php endif; ?>
+                                    </div>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
@@ -409,6 +417,26 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         });
     }
+
+    // Individual delete logic
+    document.addEventListener('click', function(e) {
+        if (e.target && e.target.classList.contains('js-delete-order')) {
+            const id = e.target.dataset.id;
+            const number = e.target.dataset.number;
+            if (confirm(`Are you sure you want to delete order ${number}?`)) {
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = 'bulk_delete.php';
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'order_ids[]';
+                input.value = id;
+                form.appendChild(input);
+                document.body.appendChild(form);
+                form.submit();
+            }
+        }
+    });
 });
 </script>
 
