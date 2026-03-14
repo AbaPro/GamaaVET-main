@@ -79,6 +79,9 @@ $result = $stmt->get_result();
         <a href="transfer.php" class="btn btn-success">
             <i class="fas fa-exchange-alt"></i> Transfer Items
         </a>
+        <a href="transfers_list.php" class="btn btn-outline-success">
+            <i class="fas fa-list"></i> Manage Transfers
+        </a>
         <a href="../locations/" class="btn btn-info">
             <i class="fas fa-map-marker-alt"></i> Manage Locations
         </a>
