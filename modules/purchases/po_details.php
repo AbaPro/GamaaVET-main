@@ -56,6 +56,8 @@ $stmt = $pdo->prepare("
 $stmt->execute([$po_id]);
 $payments = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+$canDeletePayments = hasPermission('finance.purchase_payments.delete');
+
 // Handle status update
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_status'])) {
     if (!$canUpdatePOStatus) {
@@ -216,6 +218,9 @@ require_once '../../includes/header.php';
                                     <th>Amount</th>
                                     <th>Method</th>
                                     <th>By</th>
+                                    <?php if ($canDeletePayments): ?>
+                                        <th class="text-end">Actions</th>
+                                    <?php endif; ?>
                                 </tr>
                             </thead>
                             <tbody>
@@ -225,6 +230,15 @@ require_once '../../includes/header.php';
                                         <td><?= number_format($payment['amount'], 2) ?></td>
                                         <td><?= ucfirst($payment['payment_method']) ?></td>
                                         <td><?= htmlspecialchars($payment['created_by_name']) ?></td>
+                                        <?php if ($canDeletePayments): ?>
+                                            <td class="text-end">
+                                                <button type="button" class="btn btn-sm btn-outline-danger js-delete-payment" 
+                                                        data-id="<?= $payment['id'] ?>" 
+                                                        data-amount="<?= number_format($payment['amount'], 2) ?>">
+                                                    <i class="fas fa-trash"></i>
+                                                </button>
+                                            </td>
+                                        <?php endif; ?>
                                     </tr>
                                 <?php endforeach; ?>
                             </tbody>
@@ -265,5 +279,32 @@ require_once '../../includes/header.php';
         </div>
     </div>
 </div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Delete payment logic
+        const deleteButtons = document.querySelectorAll('.js-delete-payment');
+        deleteButtons.forEach(btn => {
+            btn.addEventListener('click', function() {
+                const id = this.dataset.id;
+                const amount = this.dataset.amount;
+                if (confirm(`Are you sure you want to delete this payment of ${amount}? This will restore the PO balance and reverse wallet impacts if any.`)) {
+                    const form = document.createElement('form');
+                    form.method = 'POST';
+                    form.action = 'delete_payment.php';
+                    
+                    const input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = 'payment_id';
+                    input.value = id;
+                    
+                    form.appendChild(input);
+                    document.body.appendChild(form);
+                    form.submit();
+                }
+            });
+        });
+    });
+</script>
 
 <?php require_once '../../includes/footer.php'; ?>
