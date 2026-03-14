@@ -11,8 +11,12 @@ if (!hasPermission('sales.orders.view_all')) {
 }
 
 // Filter parameters
+// Filter parameters
 $status = $_GET['status'] ?? '';
-$customer_id = $_GET['customer_id'] ?? '';
+$customer_ids = $_GET['customer_ids'] ?? [];
+if (!is_array($customer_ids)) {
+    $customer_ids = !empty($customer_ids) ? [$customer_ids] : [];
+}
 $date_from = $_GET['date_from'] ?? '';
 $date_to = $_GET['date_to'] ?? '';
 $sort_by = $_GET['sort_by'] ?? 'date_desc';
@@ -41,9 +45,12 @@ if (!empty($status)) {
     $params[] = $status;
 }
 
-if (!empty($customer_id)) {
-    $query .= " AND o.customer_id = ?";
-    $params[] = $customer_id;
+if (!empty($customer_ids)) {
+    $placeholders = implode(',', array_fill(0, count($customer_ids), '?'));
+    $query .= " AND o.customer_id IN ($placeholders)";
+    foreach ($customer_ids as $cid) {
+        $params[] = $cid;
+    }
 }
 
 if (!empty($date_from)) {
@@ -98,11 +105,10 @@ $canViewPrices = hasPermission('sales.orders.price.view');
                         </select>
                     </div>
                     <div class="col-md-3">
-                        <label for="customer_id" class="form-label">Customer</label>
-                        <select class="form-select" id="customer_id" name="customer_id">
-                            <option value="">All Customers</option>
+                        <label for="customer_ids" class="form-label">Customer(s)</label>
+                        <select class="form-select js-searchable-select" id="customer_ids" name="customer_ids[]" multiple>
                             <?php foreach ($customers as $customer) : ?>
-                                <option value="<?= $customer['id'] ?>" <?= $customer_id == $customer['id'] ? 'selected' : '' ?>>
+                                <option value="<?= $customer['id'] ?>" <?= in_array($customer['id'], $customer_ids) ? 'selected' : '' ?>>
                                     <?= htmlspecialchars($customer['name']) ?>
                                 </option>
                             <?php endforeach; ?>
@@ -127,9 +133,16 @@ $canViewPrices = hasPermission('sales.orders.price.view');
                             <option value="total_asc" <?= $sort_by === 'total_asc' ? 'selected' : '' ?>>Value (Low-High)</option>
                         </select>
                     </div>
-                    <div class="col-md-12">
-                        <button type="submit" class="btn btn-primary">Filter</button>
-                        <a href="order_list.php" class="btn btn-secondary">Reset</a>
+                    <div class="col-md-12 d-flex justify-content-between align-items-end">
+                        <div class="btn-group">
+                            <button type="submit" class="btn btn-primary">Filter</button>
+                            <a href="order_list.php" class="btn btn-secondary">Reset</a>
+                        </div>
+                        <div id="bulkActions" class="d-none">
+                            <button type="button" class="btn btn-danger" id="btnBulkDelete">
+                                <i class="fas fa-trash me-1"></i> Bulk Delete (<span id="selectedCount">0</span>)
+                            </button>
+                        </div>
                     </div>
                 </div>
             </form>
@@ -138,6 +151,7 @@ $canViewPrices = hasPermission('sales.orders.price.view');
                 <table class="table js-datatable table-striped table-hover">
                     <thead>
                         <tr>
+                            <th width="40"><input type="checkbox" class="form-check-input" id="selectAll"></th>
                             <th>Order ID</th>
                             <th>Customer</th>
                             <th>Date</th>
@@ -165,7 +179,8 @@ $canViewPrices = hasPermission('sales.orders.price.view');
                                 'partially-returned-refunded' => 'bg-secondary'
                             ];
                         ?>
-                            <tr>
+                            <tr data-id="<?= $order['id'] ?>">
+                                <td><input type="checkbox" class="form-check-input row-select" name="order_ids[]" value="<?= $order['id'] ?>"></td>
                                 <td>
                                     <button type="button"
                                             class="btn btn-link p-0 text-decoration-none js-order-preview"
@@ -326,6 +341,74 @@ document.addEventListener('DOMContentLoaded', function () {
                 });
         });
     });
+
+    // Bulk selection logic
+    const selectAll = document.getElementById('selectAll');
+    const bulkActions = document.getElementById('bulkActions');
+    const selectedCount = document.getElementById('selectedCount');
+    const btnBulkDelete = document.getElementById('btnBulkDelete');
+
+    const updateBulkActions = () => {
+        const checkedCount = document.querySelectorAll('.row-select:checked').length;
+        if (selectedCount) selectedCount.textContent = checkedCount;
+        if (bulkActions) {
+            if (checkedCount > 0) {
+                bulkActions.classList.remove('d-none');
+            } else {
+                bulkActions.classList.add('d-none');
+            }
+        }
+    };
+
+    if (selectAll) {
+        selectAll.addEventListener('change', function() {
+            // Dynamically find all row checkboxes because DataTables can add/remove them
+            const rowCheckboxes = document.querySelectorAll('.row-select');
+            rowCheckboxes.forEach(cb => {
+                cb.checked = this.checked;
+            });
+            updateBulkActions();
+        });
+    }
+
+    // Use event delegation for individual row checkboxes to support DataTables paging/re-rendering
+    document.addEventListener('change', function(e) {
+        if (e.target && e.target.classList.contains('row-select')) {
+            updateBulkActions();
+            
+            // Update selectAll state if one is unchecked
+            if (!e.target.checked && selectAll) {
+                selectAll.checked = false;
+            } else if (selectAll) {
+                const allChecked = document.querySelectorAll('.row-select:not(:checked)').length === 0;
+                selectAll.checked = allChecked;
+            }
+        }
+    });
+
+    if (btnBulkDelete) {
+        btnBulkDelete.addEventListener('click', function() {
+            const selectedIds = Array.from(document.querySelectorAll('.row-select:checked')).map(cb => cb.value);
+            if (selectedIds.length === 0) return;
+
+            if (confirm(`Are you sure you want to delete ${selectedIds.length} selected orders?`)) {
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = 'bulk_delete.php';
+                
+                selectedIds.forEach(id => {
+                    const input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = 'order_ids[]';
+                    input.value = id;
+                    form.appendChild(input);
+                });
+
+                document.body.appendChild(form);
+                form.submit();
+            }
+        });
+    }
 });
 </script>
 

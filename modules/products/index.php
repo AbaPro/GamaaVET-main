@@ -12,9 +12,15 @@ if (isset($_GET['type']) && in_array($_GET['type'], ['material', 'final'], true)
     $filterType = $_GET['type'];
 }
 
-$customerFilter = null;
-if (isset($_GET['customer_id']) && is_numeric($_GET['customer_id']) && (int)$_GET['customer_id'] > 0) {
-    $customerFilter = (int)$_GET['customer_id'];
+$customerFilters = [];
+if (isset($_GET['customer_ids']) && is_array($_GET['customer_ids'])) {
+    foreach ($_GET['customer_ids'] as $cid) {
+        if (is_numeric($cid) && (int)$cid > 0) {
+            $customerFilters[] = (int)$cid;
+        }
+    }
+} elseif (isset($_GET['customer_id']) && is_numeric($_GET['customer_id']) && (int)$_GET['customer_id'] > 0) {
+    $customerFilters[] = (int)$_GET['customer_id'];
 }
 
 $categoryFilter = null;
@@ -120,10 +126,13 @@ if ($filterType !== null) {
     $paramValues[] = $filterType;
 }
 
-if ($customerFilter !== null) {
-    $whereClauses[] = 'p.customer_id = ?';
-    $paramTypes .= 'i';
-    $paramValues[] = $customerFilter;
+if (!empty($customerFilters)) {
+    $placeholders = implode(',', array_fill(0, count($customerFilters), '?'));
+    $whereClauses[] = "p.customer_id IN ($placeholders)";
+    $paramTypes .= str_repeat('i', count($customerFilters));
+    foreach ($customerFilters as $cid) {
+        $paramValues[] = $cid;
+    }
 }
 
 if ($categoryFilter !== null) {
@@ -231,11 +240,10 @@ $productsTableColspan = 8 + ($showSellingPriceColumn ? 1 : 0) + ($showCostPriceC
             <input type="hidden" name="type" value="<?php echo htmlspecialchars($filterType); ?>">
         <?php endif; ?>
         <div class="me-1">
-            <label class="form-label mb-1 small text-muted">Customer</label>
-            <select class="form-select form-select-sm js-searchable-select" name="customer_id" style="min-width: 150px;">
-                <option value="">All Customers</option>
+            <label class="form-label mb-1 small text-muted">Customer(s)</label>
+            <select class="form-select form-select-sm js-searchable-select" name="customer_ids[]" multiple style="min-width: 200px;">
                 <?php foreach ($customers as $customer): ?>
-                    <option value="<?php echo (int)$customer['id']; ?>" <?php echo ($customerFilter !== null && $customerFilter === (int)$customer['id']) ? 'selected' : ''; ?>>
+                    <option value="<?php echo (int)$customer['id']; ?>" <?php echo (in_array((int)$customer['id'], $customerFilters)) ? 'selected' : ''; ?>>
                         <?php echo htmlspecialchars($customer['name']); ?>
                     </option>
                 <?php endforeach; ?>
@@ -268,11 +276,16 @@ $productsTableColspan = 8 + ($showSellingPriceColumn ? 1 : 0) + ($showCostPriceC
             <input type="text" name="search" class="form-control form-control-sm" value="<?php echo htmlspecialchars($searchFilter ?? ''); ?>" placeholder="Search...">
         </div>
         <button type="submit" class="btn btn-sm btn-outline-primary">Filter</button>
-        <?php if ($customerFilter !== null || $categoryFilter !== null || $subcategoryFilter !== null || $searchFilter !== null): ?>
+        <?php if (!empty($customerFilters) || $categoryFilter !== null || $subcategoryFilter !== null || $searchFilter !== null): ?>
             <a href="index.php<?php echo $filterType !== null ? '?type=' . urlencode($filterType) : ''; ?>" class="btn btn-sm btn-outline-secondary">
                 Reset
             </a>
         <?php endif; ?>
+        <div id="bulkActions" class="d-none ms-auto">
+            <button type="button" class="btn btn-sm btn-danger" id="btnBulkDelete">
+                <i class="fas fa-trash me-1"></i> Bulk Delete (<span id="selectedCount">0</span>)
+            </button>
+        </div>
     </form>
 </div>
 
@@ -282,6 +295,7 @@ $productsTableColspan = 8 + ($showSellingPriceColumn ? 1 : 0) + ($showCostPriceC
             <table class="table js-datatable table-hover" id="productsTable">
                 <thead>
                     <tr>
+                        <th width="40"><input type="checkbox" class="form-check-input" id="selectAll"></th>
                         <th>SKU</th>
                         <th>Image</th>
                         <th>Name</th>
@@ -301,7 +315,8 @@ $productsTableColspan = 8 + ($showSellingPriceColumn ? 1 : 0) + ($showCostPriceC
                 <tbody>
                     <?php if (count($products) > 0): ?>
                         <?php foreach ($products as $row): ?>
-                            <tr>
+                            <tr data-id="<?php echo $row['id']; ?>">
+                                <td><input type="checkbox" class="form-check-input row-select" name="product_ids[]" value="<?php echo $row['id']; ?>"></td>
                                 <?php
                                 $imageName = $row['image'] ?? '';
                                 $productImagePath = $imageName ? __DIR__ . '/../../assets/uploads/products/' . $imageName : '';
@@ -773,6 +788,74 @@ $productsTableColspan = 8 + ($showSellingPriceColumn ? 1 : 0) + ($showCostPriceC
             const editModal = new bootstrap.Modal(document.getElementById('editProductModal'));
             editModal.show();
         });
+
+        // Bulk selection and action logic
+        const selectAll = document.getElementById('selectAll');
+        const bulkActions = document.getElementById('bulkActions');
+        const selectedCount = document.getElementById('selectedCount');
+        const btnBulkDelete = document.getElementById('btnBulkDelete');
+
+        const updateBulkActions = () => {
+            const checkedCount = document.querySelectorAll('.row-select:checked').length;
+            if (selectedCount) selectedCount.textContent = checkedCount;
+            if (bulkActions) {
+                if (checkedCount > 0) {
+                    bulkActions.classList.remove('d-none');
+                } else {
+                    bulkActions.classList.add('d-none');
+                }
+            }
+        };
+
+        if (selectAll) {
+            selectAll.addEventListener('change', function() {
+                // Dynamically find all row checkboxes because DataTables can add/remove them
+                const rowCheckboxes = document.querySelectorAll('.row-select');
+                rowCheckboxes.forEach(cb => {
+                    cb.checked = this.checked;
+                });
+                updateBulkActions();
+            });
+        }
+
+        // Use event delegation for individual row checkboxes to support DataTables paging/re-rendering
+        document.addEventListener('change', function(e) {
+            if (e.target && e.target.classList.contains('row-select')) {
+                updateBulkActions();
+                
+                // Update selectAll state if one is unchecked
+                if (!e.target.checked && selectAll) {
+                    selectAll.checked = false;
+                } else if (selectAll) {
+                    const allChecked = document.querySelectorAll('.row-select:not(:checked)').length === 0;
+                    selectAll.checked = allChecked;
+                }
+            }
+        });
+
+        if (btnBulkDelete) {
+            btnBulkDelete.addEventListener('click', function() {
+                const selectedIds = Array.from(document.querySelectorAll('.row-select:checked')).map(cb => cb.value);
+                if (selectedIds.length === 0) return;
+
+                if (confirm(`Are you sure you want to delete ${selectedIds.length} selected products? This will only succeed for products NOT in inventory and NOT used as components.`)) {
+                    const form = document.createElement('form');
+                    form.method = 'POST';
+                    form.action = 'bulk_delete.php';
+                    
+                    selectedIds.forEach(id => {
+                        const input = document.createElement('input');
+                        input.type = 'hidden';
+                        input.name = 'product_ids[]';
+                        input.value = id;
+                        form.appendChild(input);
+                    });
+
+                    document.body.appendChild(form);
+                    form.submit();
+                }
+            });
+        }
 
 
         // Also handle subcategory loading for edit modal
