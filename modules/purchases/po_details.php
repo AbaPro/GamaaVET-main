@@ -110,6 +110,9 @@ require_once '../../includes/header.php';
                 <?php if (in_array($po['status'], ['new', 'ordered', 'partially-received']) && hasPermission('purchases.receive')) : ?>
                     <a href="receive_items.php?po_id=<?= $po_id ?>" class="btn btn-sm btn-success">Receive Items</a>
                 <?php endif; ?>
+                <?php if (in_array($po['status'], ['received', 'partially-received']) && hasPermission('purchases.receive')) : ?>
+                    <button type="button" class="btn btn-sm btn-danger js-undo-receipt" data-po-id="<?= $po_id ?>">Undo Receipt</button>
+                <?php endif; ?>
             </div>
         </div>
         <div class="card-body">
@@ -304,6 +307,27 @@ require_once '../../includes/header.php';
                 }
             });
         });
+
+        // Undo receipt logic
+        const undoBtn = document.querySelector('.js-undo-receipt');
+        if (undoBtn) {
+            undoBtn.addEventListener('click', function() {
+                if (confirm('Are you sure you want to UNDO the receipt? This will subtract received quantities from inventory and reset the PO status to "Ordered". This cannot be reversed.')) {
+                    const form = document.createElement('form');
+                    form.method = 'POST';
+                    form.action = 'undo_receipt.php';
+                    
+                    const input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = 'po_id';
+                    input.value = this.dataset.poId;
+                    
+                    form.appendChild(input);
+                    document.body.appendChild(form);
+                    form.submit();
+                }
+            });
+        }
     });
 </script>
 
