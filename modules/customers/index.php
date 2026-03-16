@@ -85,14 +85,18 @@ if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
 
 // Fetch all customers with their types and factories
 if ($login_region === 'factory') {
-    $sql = "SELECT c.*, ct.name AS type_name, f.name AS factory_name 
+    $sql = "SELECT c.*, ct.name AS type_name, f.name AS factory_name,
+            (SELECT COUNT(*) FROM products p WHERE p.customer_id = c.id AND p.type = 'material') as material_count,
+            (SELECT COUNT(*) FROM products p WHERE p.customer_id = c.id AND p.type = 'final') as final_count
             FROM customers c 
             JOIN customer_types ct ON c.type = ct.id 
             LEFT JOIN factories f ON c.factory_id = f.id
             WHERE c.direct_sale IS NULL
             ORDER BY c.name";
 } else {
-    $sql = "SELECT c.*, ct.name AS type_name, f.name AS factory_name 
+    $sql = "SELECT c.*, ct.name AS type_name, f.name AS factory_name,
+            (SELECT COUNT(*) FROM products p WHERE p.customer_id = c.id AND p.type = 'material') as material_count,
+            (SELECT COUNT(*) FROM products p WHERE p.customer_id = c.id AND p.type = 'final') as final_count
             FROM customers c 
             JOIN customer_types ct ON c.type = ct.id 
             LEFT JOIN factories f ON c.factory_id = f.id
@@ -146,6 +150,8 @@ if ($factories_result) {
                         <th>Name</th>
                         <th>Type</th>
                         <th>Factory</th>
+                        <th>Material Products</th>
+                        <th>Final Products</th>
                         <th>Email</th>
                         <th>Phone</th>
                         <?php if ($login_region !== 'factory'): ?>
@@ -167,6 +173,8 @@ if ($factories_result) {
                                     </span>
                                 </td>
                                 <td><?php echo !empty($row['factory_name']) ? e($row['factory_name']) : '<span class="text-muted">N/A</span>'; ?></td>
+                                <td><?php echo (int) $row['material_count']; ?></td>
+                                <td><?php echo (int) $row['final_count']; ?></td>
                                 <td><?php echo e($row['email']); ?></td>
                                 <td><?php echo e($row['phone']); ?></td>
                                 <?php if ($login_region !== 'factory'): ?>
@@ -513,7 +521,7 @@ $(document).ready(function() {
             lengthMenu: [10, 25, 50, 100],
             order: [],
             columnDefs: [
-                { orderable: false, targets: [7] } // Disable sorting on actions column
+                { orderable: false, targets: [9] } // Disable sorting on actions column
             ]
         });
     }

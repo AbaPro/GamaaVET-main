@@ -54,9 +54,29 @@ if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
 $login_region = $_SESSION['login_region'] ?? 'factory';
 
 if ($login_region === 'factory') {
-    $sql = "SELECT * FROM inventories WHERE direct_sale IS NULL ORDER BY name";
+    $sql = "
+        SELECT i.*, COALESCE(ip.product_count, 0) AS product_count
+        FROM inventories i
+        LEFT JOIN (
+            SELECT inventory_id, COUNT(*) AS product_count
+            FROM inventory_products
+            GROUP BY inventory_id
+        ) ip ON ip.inventory_id = i.id
+        WHERE i.direct_sale IS NULL
+        ORDER BY i.name
+    ";
 } else {
-    $sql = "SELECT * FROM inventories WHERE direct_sale = ? ORDER BY name";
+    $sql = "
+        SELECT i.*, COALESCE(ip.product_count, 0) AS product_count
+        FROM inventories i
+        LEFT JOIN (
+            SELECT inventory_id, COUNT(*) AS product_count
+            FROM inventory_products
+            GROUP BY inventory_id
+        ) ip ON ip.inventory_id = i.id
+        WHERE i.direct_sale = ?
+        ORDER BY i.name
+    ";
 }
 
 $stmt = $conn->prepare($sql);
@@ -100,6 +120,7 @@ $result = $stmt->get_result();
                         <?php if ($login_region !== 'factory'): ?>
                             <th>Region</th>
                         <?php endif; ?>
+                        <th>Products</th>
                         <th>Status</th>
                         <th>Actions</th>
                     </tr>
@@ -114,6 +135,7 @@ $result = $stmt->get_result();
                                 <?php if ($login_region !== 'factory'): ?>
                                     <td><?php echo htmlspecialchars($row['region'] ?: 'N/A'); ?></td>
                                 <?php endif; ?>
+                                <td><?php echo (int) $row['product_count']; ?></td>
                                 <td>
                                     <span class="badge bg-<?php echo $row['is_active'] ? 'success' : 'secondary'; ?>">
                                         <?php echo $row['is_active'] ? 'Active' : 'Inactive'; ?>
@@ -142,7 +164,7 @@ $result = $stmt->get_result();
                         <?php endwhile; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="5" class="text-center">No inventories found</td>
+                            <td colspan="<?php echo $login_region !== 'factory' ? '7' : '6'; ?>" class="text-center">No inventories found</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>

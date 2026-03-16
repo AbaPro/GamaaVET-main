@@ -206,6 +206,44 @@ foreach ($products as $productRow) {
     }
 }
 $productsTableColspan = 8 + ($showSellingPriceColumn ? 1 : 0) + ($showCostPriceColumn ? 1 : 0);
+
+// Fetch all active inventories (1 query)
+$inventories = [];
+$invResult = $conn->query("SELECT id, name FROM inventories WHERE is_active = 1 ORDER BY name");
+if ($invResult) {
+    while ($invRow = $invResult->fetch_assoc()) {
+        $inventories[] = $invRow;
+    }
+}
+
+// Build a stock lookup map: $stockMap[product_id][inventory_id] = quantity (1 query)
+$stockMap = [];
+if (!empty($inventories) && !empty($products)) {
+    $productIds = array_column($products, 'id');
+    $invIds = array_column($inventories, 'id');
+    $pidPlaceholders = implode(',', array_fill(0, count($productIds), '?'));
+    $invPlaceholders = implode(',', array_fill(0, count($invIds), '?'));
+    $stockSql = "SELECT product_id, inventory_id, quantity FROM inventory_products
+                 WHERE product_id IN ($pidPlaceholders) AND inventory_id IN ($invPlaceholders)";
+    $stockStmt = $conn->prepare($stockSql);
+    $types = str_repeat('i', count($productIds) + count($invIds));
+    $allIds = array_merge($productIds, $invIds);
+    $refs = [];
+    $refs[] = $types;
+    foreach ($allIds as $k => $v) {
+        $allIds[$k] = $v;
+        $refs[] = &$allIds[$k];
+    }
+    call_user_func_array([$stockStmt, 'bind_param'], $refs);
+    $stockStmt->execute();
+    $stockResult = $stockStmt->get_result();
+    while ($stockRow = $stockResult->fetch_assoc()) {
+        $stockMap[(int)$stockRow['product_id']][(int)$stockRow['inventory_id']] = $stockRow['quantity'];
+    }
+    $stockStmt->close();
+}
+
+$productsTableColspan += 1;
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -309,6 +347,7 @@ $productsTableColspan = 8 + ($showSellingPriceColumn ? 1 : 0) + ($showCostPriceC
                         <?php if ($showCostPriceColumn): ?>
                         <th>Cost Price</th>
                         <?php endif; ?>
+                        <th>Quantity</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -356,6 +395,28 @@ $productsTableColspan = 8 + ($showSellingPriceColumn ? 1 : 0) + ($showCostPriceC
                                     <?php endif; ?>
                                 </td>
                                 <?php endif; ?>
+                                <td>
+                                    <?php
+                                    $stockLines = [];
+                                    $rowTotal = 0;
+                                    foreach ($inventories as $inv) {
+                                        $qty = $stockMap[$row['id']][$inv['id']] ?? 0;
+                                        if ($qty > 0) {
+                                            $rowTotal += $qty;
+                                            $qtyFormatted = ($qty == floor($qty)) ? (int)$qty : number_format((float)$qty, 2);
+                                            $stockLines[] = '<span class="text-muted small">' . htmlspecialchars($inv['name']) . ':</span> <strong>' . $qtyFormatted . '</strong>';
+                                        }
+                                    }
+                                    if (!empty($stockLines)) {
+                                        $totalFormatted = ($rowTotal == floor($rowTotal)) ? (int)$rowTotal : number_format((float)$rowTotal, 2);
+                                        echo implode('<br>', $stockLines);
+                                        echo '<hr class="my-1">';
+                                        echo '<span class="text-muted small">Total:</span> <strong>' . $totalFormatted . '</strong>';
+                                    } else {
+                                        echo '<span class="text-muted small">—</span>';
+                                    }
+                                    ?>
+                                </td>
                                 <td>
                                     <a href="view.php?id=<?php echo $row['id']; ?>" class="btn btn-sm btn-outline-primary">
                                         <i class="fas fa-eye"></i> View
