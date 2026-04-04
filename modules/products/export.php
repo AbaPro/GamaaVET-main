@@ -70,7 +70,8 @@ if ($searchFilter !== null) {
     $paramValues[] = $likeSearch;
 }
 
-$sql = "SELECT p.*, c1.name as category_name, c2.name as subcategory_name, cust.name as customer_name
+$sql = "SELECT p.*, c1.name as category_name, c2.name as subcategory_name, cust.name as customer_name,
+               COALESCE((SELECT SUM(ip.quantity) FROM inventory_products ip JOIN inventories inv ON ip.inventory_id = inv.id WHERE ip.product_id = p.id AND inv.is_active = 1), 0) AS total_quantity
         FROM products p
         LEFT JOIN categories c1 ON p.category_id = c1.id
         LEFT JOIN categories c2 ON p.subcategory_id = c2.id
@@ -112,8 +113,9 @@ if ($isExcel) {
         $headers[] = 'Cost Price';
     }
     $headers[] = 'Min Stock Level';
+    $headers[] = 'Total Quantity';
     $excelData[] = $headers;
-    
+
     if ($result) {
         while ($row = $result->fetch_assoc()) {
             $excelRow = [
@@ -126,7 +128,7 @@ if ($isExcel) {
                 $row['subcategory_name'],
                 $row['customer_name']
             ];
-    
+
             if (hasExplicitPermission('products.final.price.view')) {
                 $excelRow[] = canViewProductPrice($row['type']) ? $row['unit_price'] : 'N/A';
             }
@@ -134,7 +136,8 @@ if ($isExcel) {
                 $excelRow[] = canViewProductCost($row['type']) ? $row['cost_price'] : 'N/A';
             }
             $excelRow[] = $row['min_stock_level'];
-    
+            $excelRow[] = $row['total_quantity'];
+
             $excelData[] = $excelRow;
         }
     }
@@ -152,7 +155,7 @@ if ($isExcel) {
     
     // Header row
     $headers = ['SKU', 'Barcode', 'Name', 'Description', 'Type', 'Category', 'Subcategory', 'Customer'];
-    
+
     if (hasExplicitPermission('products.final.price.view')) {
         $headers[] = 'Selling Price';
     }
@@ -160,9 +163,10 @@ if ($isExcel) {
         $headers[] = 'Cost Price';
     }
     $headers[] = 'Min Stock Level';
-    
+    $headers[] = 'Total Quantity';
+
     fputcsv($output, $headers);
-    
+
     if ($result) {
         while ($row = $result->fetch_assoc()) {
             $csvRow = [
@@ -175,7 +179,7 @@ if ($isExcel) {
                 $row['subcategory_name'],
                 $row['customer_name']
             ];
-    
+
             // View logic for prices
             if (hasExplicitPermission('products.final.price.view')) {
                 $csvRow[] = canViewProductPrice($row['type']) ? $row['unit_price'] : 'N/A';
@@ -184,7 +188,8 @@ if ($isExcel) {
                 $csvRow[] = canViewProductCost($row['type']) ? $row['cost_price'] : 'N/A';
             }
             $csvRow[] = $row['min_stock_level'];
-    
+            $csvRow[] = $row['total_quantity'];
+
             fputcsv($output, $csvRow);
         }
     }

@@ -194,11 +194,13 @@ $products_result = $products_stmt->get_result();
                                             data-quantity="<?php echo $product['quantity']; ?>">
                                         <i class="fas fa-edit"></i> Edit
                                     </button>
-                                    <a href="delete_product.php?inventory_id=<?php echo $inventory_id; ?>&product_id=<?php echo $product['id']; ?>" 
-                                       class="btn btn-sm btn-outline-danger"
-                                       onclick="return confirm('Are you sure you want to remove this product from inventory?')">
+                                    <button type="button" class="btn btn-sm btn-outline-danger remove-product"
+                                            data-product-id="<?php echo $product['id']; ?>"
+                                            data-product-name="<?php echo htmlspecialchars($product['name']); ?>"
+                                            data-inventory-id="<?php echo $inventory_id; ?>"
+                                            onclick="event.stopPropagation()">
                                         <i class="fas fa-trash"></i> Remove
-                                    </a>
+                                    </button>
                                 </td>
                             </tr>
                         <?php endwhile; ?>
@@ -321,6 +323,26 @@ $products_result = $products_stmt->get_result();
     </div>
 </div>
 
+<!-- Remove Product Confirmation Modal -->
+<div class="modal fade" id="removeProductModal" tabindex="-1" aria-labelledby="removeProductModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="removeProductModalLabel">Remove Product</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to remove <strong id="removeProductName"></strong> from this inventory?</p>
+                <p class="text-muted small">This action cannot be undone.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <a href="#" id="confirmRemoveBtn" class="btn btn-danger">Remove</a>
+            </div>
+        </div>
+    </div>
+</div>
+
 <?php require_once '../../includes/footer.php'; ?>
 
 <script>
@@ -365,6 +387,19 @@ $(document).ready(function() {
         $('#product_count').text(foundCount + ' products found');
         $productSelect.val('');
     }
+
+    // Handle remove button click — open confirmation modal
+    $(document).on('click', '.remove-product', function(e) {
+        e.stopPropagation();
+        var productId = $(this).data('product-id');
+        var productName = $(this).data('product-name');
+        var inventoryId = $(this).data('inventory-id');
+        var deleteUrl = 'delete_product.php?inventory_id=' + inventoryId + '&product_id=' + productId;
+
+        $('#removeProductName').text(productName);
+        $('#confirmRemoveBtn').attr('href', deleteUrl);
+        $('#removeProductModal').modal('show');
+    });
 
     // Handle edit button click
     $('.edit-product').click(function() {
