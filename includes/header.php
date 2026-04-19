@@ -354,6 +354,9 @@
                                 <?php if (hasPermission('finance.po_payment.process')): ?>
                                     <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/po.php"><i class="fas fa-file-contract me-2"></i> PO Payments</a></li>
                                 <?php endif; ?>
+                                <?php if (hasPermission('finance.expenses.view')): ?>
+                                    <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/expenses/"><i class="fas fa-money-bill-wave me-2"></i> Expenses Tracking</a></li>
+                                <?php endif; ?>
                                 <?php if (hasPermission('finance.vendor_wallet.view')): ?>
                                     <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/vendors.php"><i class="fas fa-truck-field me-2"></i> Vendor Wallets</a></li>
                                 <?php endif; ?>
