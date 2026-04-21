@@ -86,26 +86,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         setAlert('danger', 'Please select a location for this manufacturing order.');
     } else {
         try {
-            // Prepare null-safe date value
             $dueDateValue = $dueDate ?: null;
-            
-            $updateStmt = $conn->prepare("
+            $productIdValue = $productId ?: null;
+            $previousStatus = $order['status'];
+
+            $pdo->beginTransaction();
+
+            $updateStmt = $pdo->prepare("
                 UPDATE manufacturing_orders
                 SET location_id = ?, product_id = ?, bottle_size_id = ?, batch_size = ?, due_date = ?, priority = ?, notes = ?, status = ?
                 WHERE id = ?
             ");
-            $productIdValue = $productId ?: null;
-            $updateStmt->bind_param("iiidssssi", $locationId, $productIdValue, $bottleSizeId, $batchSize, $dueDateValue, $priority, $orderNotes, $status, $orderId);
-            
-            if ($updateStmt->execute()) {
-                setAlert('success', 'Manufacturing order updated successfully.');
-                logActivity("Updated manufacturing order ID: $orderId", ['order_id' => $orderId]);
-                redirect('order.php?id=' . $orderId);
-            } else {
-                setAlert('danger', 'Error updating order: ' . $conn->error);
+            $updateStmt->execute([$locationId, $productIdValue, $bottleSizeId, $batchSize, $dueDateValue, $priority, $orderNotes, $status, $orderId]);
+
+            // Restock inventory when order transitions to cancelled
+            if ($status === 'cancelled' && $previousStatus !== 'cancelled') {
+                $deductedStmt = $pdo->prepare("
+                    SELECT id, product_id, required_quantity
+                    FROM manufacturing_sourcing_components
+                    WHERE manufacturing_order_id = ? AND product_id IS NOT NULL AND deducted_at IS NOT NULL
+                ");
+                $deductedStmt->execute([$orderId]);
+                $deductedRows = $deductedStmt->fetchAll(PDO::FETCH_ASSOC);
+
+                foreach ($deductedRows as $dc) {
+                    $pdo->prepare("
+                        UPDATE inventory_products ip
+                        JOIN inventories inv ON inv.id = ip.inventory_id
+                        SET ip.quantity = ip.quantity + ?
+                        WHERE ip.product_id = ? AND inv.location_id = ?
+                    ")->execute([$dc['required_quantity'], $dc['product_id'], $order['location_id']]);
+
+                    $pdo->prepare("UPDATE manufacturing_sourcing_components SET deducted_at = NULL WHERE id = ?")->execute([$dc['id']]);
+                }
             }
-            $updateStmt->close();
+
+            $pdo->commit();
+            setAlert('success', 'Manufacturing order updated successfully.');
+            logActivity("Updated manufacturing order ID: $orderId", ['order_id' => $orderId]);
+            redirect('order.php?id=' . $orderId);
         } catch (Exception $exception) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
             setAlert('danger', 'Unable to update order: ' . $exception->getMessage());
         }
     }

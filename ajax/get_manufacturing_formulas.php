@@ -16,7 +16,7 @@ if ($providerId <= 0) {
 }
 
 $stmt = $conn->prepare("
-    SELECT id, name, description, batch_size, components_json, instructions 
+    SELECT id, name, description, batch_size, batch_unit, components_json, instructions
     FROM manufacturing_formulas 
     WHERE customer_id = ? AND is_active = 1 
     ORDER BY created_at DESC

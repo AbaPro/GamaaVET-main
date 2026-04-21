@@ -39,12 +39,21 @@ if ($customerResult) {
 }
 
 $products = [];
-$productResult = $conn->query("SELECT id, name, sku FROM products ORDER BY name");
 $productMap = [];
-if ($productResult) {
+// Show material products; fall back to all products if none are typed yet
+$productResult = $conn->query("SELECT id, name, sku FROM products WHERE type = 'material' ORDER BY name");
+if ($productResult && $productResult->num_rows > 0) {
     while ($productRow = $productResult->fetch_assoc()) {
         $products[] = $productRow;
         $productMap[$productRow['id']] = $productRow['name'];
+    }
+} else {
+    $productResult = $conn->query("SELECT id, name, sku FROM products ORDER BY name");
+    if ($productResult) {
+        while ($productRow = $productResult->fetch_assoc()) {
+            $products[] = $productRow;
+            $productMap[$productRow['id']] = $productRow['name'];
+        }
     }
 }
 
@@ -103,7 +112,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($customerId <= 0) {
-        setAlert('danger', 'Please select a provider.');
+        setAlert('danger', 'Please select a customer.');
     } elseif ($name === '') {
         setAlert('danger', 'Please enter a formula name.');
     } elseif (empty($components)) {
@@ -170,9 +179,9 @@ if ($formula && !empty($formula['components_json'])) {
                 <div class="card-body">
                     <div class="row g-3">
                         <div class="col-md-6">
-                            <label class="form-label">Provider <span class="text-danger">*</span></label>
-                            <select class="form-select select2" name="customer_id" required>
-                                <option value="">Select provider</option>
+                            <label class="form-label">Customer <span class="text-danger">*</span></label>
+                            <select class="form-select select2" name="customer_id" id="formula_customer_id" required>
+                                <option value="">Select customer</option>
                                 <?php foreach ($customers as $customer): ?>
                                     <option value="<?= $customer['id']; ?>" <?= (isset($formula['customer_id']) && $formula['customer_id'] == $customer['id']) || (isset($_POST['customer_id']) && $_POST['customer_id'] == $customer['id']) ? 'selected' : ''; ?>>
                                         <?= htmlspecialchars($customer['name']); ?>
@@ -181,16 +190,9 @@ if ($formula && !empty($formula['components_json'])) {
                             </select>
                         </div>
                         <div class="col-md-6">
-                            <label class="form-label">Linked Product</label>
-                            <select class="form-select select2" name="product_id">
-                                <option value="">— No linked product —</option>
-                                <?php
-                                $selProductId = $formula['product_id'] ?? $_POST['product_id'] ?? '';
-                                foreach ($products as $p): ?>
-                                    <option value="<?= $p['id']; ?>" <?= (string)$selProductId === (string)$p['id'] ? 'selected' : ''; ?>>
-                                        <?= htmlspecialchars($p['name']) . ($p['sku'] ? ' (' . $p['sku'] . ')' : ''); ?>
-                                    </option>
-                                <?php endforeach; ?>
+                            <label class="form-label">Linked Final Product</label>
+                            <select class="form-select select2" name="product_id" id="formula_product_id" <?= empty($formula['customer_id']) && empty($_POST['customer_id']) ? 'disabled' : ''; ?>>
+                                <option value="">— Select customer first —</option>
                             </select>
                         </div>
                         <div class="col-md-6">
@@ -218,8 +220,20 @@ if ($formula && !empty($formula['components_json'])) {
                         </div>
                         <div class="col-md-3">
                             <label class="form-label">Batch Unit</label>
-                            <input type="text" class="form-control" name="batch_unit" placeholder="e.g. kg, L, pcs"
-                                   value="<?= htmlspecialchars($formula['batch_unit'] ?? $_POST['batch_unit'] ?? ''); ?>">
+                            <?php
+                            $selBatchUnit = $formula['batch_unit'] ?? $_POST['batch_unit'] ?? '';
+                            $canonicalUnits = ['kg', 'g', 'L', 'ml', 'pcs'];
+                            $isNonCanonical = $selBatchUnit !== '' && !in_array($selBatchUnit, $canonicalUnits);
+                            ?>
+                            <select class="form-select" name="batch_unit">
+                                <option value="">— Select unit —</option>
+                                <?php foreach ($canonicalUnits as $u): ?>
+                                    <option value="<?= $u; ?>" <?= $selBatchUnit === $u ? 'selected' : ''; ?>><?= $u; ?></option>
+                                <?php endforeach; ?>
+                                <?php if ($isNonCanonical): ?>
+                                    <option value="<?= htmlspecialchars($selBatchUnit); ?>" selected><?= htmlspecialchars($selBatchUnit); ?> (existing)</option>
+                                <?php endif; ?>
+                            </select>
                         </div>
                         <div class="col-md-4 d-flex align-items-end">
                             <div class="form-check mb-2">
@@ -379,8 +393,25 @@ if ($formula && !empty($formula['components_json'])) {
     const availableProducts = <?= json_encode($products); ?>;
     const canViewComponentName = <?= json_encode($canViewComponentName); ?>;
     const oldComponents = <?= json_encode($currentComponents); ?>;
+    const preselectedProductId = <?= json_encode($formula['product_id'] ?? $_POST['product_id'] ?? ''); ?>;
+    const preselectedCustomerId = <?= json_encode($formula['customer_id'] ?? $_POST['customer_id'] ?? ''); ?>;
+    const canonicalUnits = ['kg', 'g', 'L', 'ml', 'pcs'];
     const componentsBody = $('#componentsBody');
     let componentIndex = 0;
+
+    function renderUnitSelect(name, selectedUnit) {
+        let html = `<select class="form-select form-select-sm" name="${name}">`;
+        html += '<option value="">— unit —</option>';
+        canonicalUnits.forEach(function (u) {
+            const sel = selectedUnit === u ? 'selected' : '';
+            html += `<option value="${u}" ${sel}>${u}</option>`;
+        });
+        if (selectedUnit && !canonicalUnits.includes(selectedUnit)) {
+            html += `<option value="${selectedUnit}" selected>${selectedUnit}</option>`;
+        }
+        html += '</select>';
+        return html;
+    }
 
     function escapeForAttr(str) {
         if (!str) return '';
@@ -436,7 +467,7 @@ if ($formula && !empty($formula['components_json'])) {
                            name="components[${idx}][name]" value="${nameValue}" placeholder="Custom item name">
                 </td>
                 <td><input type="text" class="form-control form-control-sm" name="components[${idx}][quantity]" value="${quantity}" placeholder="0.00"></td>
-                <td><input type="text" class="form-control form-control-sm" name="components[${idx}][unit]" value="${unit}" placeholder="kg, L, pcs"></td>
+                <td>${renderUnitSelect(`components[${idx}][unit]`, unit)}</td>
                 <td><input type="text" class="form-control form-control-sm" name="components[${idx}][notes]" value="${notes}"></td>
                 <td class="text-center">
                     <button type="button" class="btn btn-sm btn-outline-danger remove-component">
@@ -460,11 +491,50 @@ if ($formula && !empty($formula['components_json'])) {
         syncComponentName(addedRow);
     }
 
+    function loadFinalProductsForCustomer(customerId, selectedId) {
+        const productSelect = $('#formula_product_id');
+        if (!customerId) {
+            productSelect.html('<option value="">— Select customer first —</option>').prop('disabled', true);
+            if ($.fn.select2) productSelect.trigger('change.select2');
+            return;
+        }
+        productSelect.prop('disabled', true).html('<option>Loading…</option>');
+        $.getJSON('../../ajax/get_final_products.php', { provider_id: customerId })
+            .done(function (resp) {
+                let opts = '<option value="">— No linked product —</option>';
+                if (resp.success && resp.products.length) {
+                    resp.products.forEach(function (p) {
+                        const label = p.name + (p.sku ? ' (' + p.sku + ')' : '');
+                        const sel = selectedId && String(p.id) === String(selectedId) ? 'selected' : '';
+                        opts += `<option value="${p.id}" ${sel}>${label}</option>`;
+                    });
+                    productSelect.prop('disabled', false);
+                } else {
+                    opts += '<option disabled>No final products for this customer</option>';
+                }
+                productSelect.html(opts);
+                if ($.fn.select2) productSelect.trigger('change.select2');
+            })
+            .fail(function () {
+                productSelect.html('<option value="">Unable to load products</option>').prop('disabled', true);
+            });
+    }
+
     $(document).ready(function () {
         if ($.fn.select2) {
             $('.select2').select2({
                 width: '100%'
             });
+        }
+
+        // Customer → final product cascade
+        $('#formula_customer_id').on('change', function () {
+            loadFinalProductsForCustomer($(this).val(), '');
+        });
+
+        // On page load (edit mode): pre-load products for the already-selected customer
+        if (preselectedCustomerId) {
+            loadFinalProductsForCustomer(preselectedCustomerId, preselectedProductId);
         }
 
         $('#addComponent').on('click', function () {

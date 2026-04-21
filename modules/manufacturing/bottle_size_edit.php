@@ -94,9 +94,20 @@ require_once '../../includes/header.php';
                         </div>
                         <div class="col-md-6">
                             <label class="form-label">Unit <span class="text-danger">*</span></label>
-                            <input type="text" class="form-control" name="unit"
-                                   value="<?= htmlspecialchars($size['unit'] ?? $_POST['unit'] ?? ''); ?>"
-                                   placeholder="e.g. ml, L, g, kg" required>
+                            <?php
+                            $selUnit = $size['unit'] ?? $_POST['unit'] ?? '';
+                            $canonicalUnits = ['kg', 'g', 'L', 'ml', 'pcs'];
+                            $isNonCanonical = $selUnit !== '' && !in_array($selUnit, $canonicalUnits);
+                            ?>
+                            <select class="form-select" name="unit" required>
+                                <option value="">— Select unit —</option>
+                                <?php foreach ($canonicalUnits as $u): ?>
+                                    <option value="<?= $u; ?>" <?= $selUnit === $u ? 'selected' : ''; ?>><?= $u; ?></option>
+                                <?php endforeach; ?>
+                                <?php if ($isNonCanonical): ?>
+                                    <option value="<?= htmlspecialchars($selUnit); ?>" selected><?= htmlspecialchars($selUnit); ?> (existing)</option>
+                                <?php endif; ?>
+                            </select>
                         </div>
                         <div class="col-md-6">
                             <label class="form-label">Type <span class="text-danger">*</span></label>

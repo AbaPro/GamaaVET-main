@@ -54,7 +54,7 @@ if (empty($_SESSION['formula_unlocked'])) {
 $page_title = 'Manufacturing Formulas';
 require_once '../../includes/header.php';
 
-$providerFilter = isset($_GET['provider_id']) ? (int)$_GET['provider_id'] : 0;
+$providerFilter = isset($_GET['customer_id']) ? (int)$_GET['customer_id'] : (isset($_GET['provider_id']) ? (int)$_GET['provider_id'] : 0);
 $productFilter = isset($_GET['product_id']) ? (int)$_GET['product_id'] : 0;
 $search = sanitize($_GET['search'] ?? '');
 
@@ -111,7 +111,7 @@ $canViewComponentName = hasPermission('manufacturing.component.name.view');
 <div class="d-flex justify-content-between align-items-center mb-3">
     <div>
         <h2>Manufacturing Formulas</h2>
-        <p class="text-muted mb-0">Manage product recipes and components for each provider.</p>
+        <p class="text-muted mb-0">Manage product recipes and components for each customer.</p>
     </div>
     <div class="d-flex gap-2">
         <a href="index.php" class="btn btn-outline-secondary">
@@ -127,9 +127,9 @@ $canViewComponentName = hasPermission('manufacturing.component.name.view');
     <div class="card-body">
         <form class="row g-3" method="get">
             <div class="col-md-3">
-                <label class="form-label">Provider</label>
-                <select class="form-select select2" name="provider_id">
-                    <option value="">All providers</option>
+                <label class="form-label">Customer</label>
+                <select class="form-select select2" name="customer_id">
+                    <option value="">All customers</option>
                     <?php foreach ($customers as $customer): ?>
                         <option value="<?php echo $customer['id']; ?>" <?php echo $providerFilter === (int)$customer['id'] ? 'selected' : ''; ?>>
                             <?php echo htmlspecialchars($customer['name']); ?>
@@ -167,7 +167,7 @@ $canViewComponentName = hasPermission('manufacturing.component.name.view');
                 <thead class="table-light">
                     <tr>
                         <th>Name</th>
-                        <th>Provider</th>
+                        <th>Customer</th>
                         <th>Product</th>
                         <th>SKU</th>
                         <th>Type</th>

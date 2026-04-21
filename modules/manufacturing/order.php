@@ -3,6 +3,32 @@ require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
 require_once 'lib.php';
 
+/**
+ * Format a quantity+unit, appending the other unit in parentheses:
+ *   ml → also show L,  L → also show ml,  kg → also show g,  g → also show kg.
+ * $decimals controls rounding of the primary value.
+ */
+function fmt_qty(float $value, string $unit, int $decimals = 2): string {
+    $unit = trim($unit);
+    $primary = number_format($value, $decimals) . ($unit ? ' ' . $unit : '');
+    switch (strtolower($unit)) {
+        case 'ml':
+            $alt = rtrim(rtrim(number_format($value / 1000, 3), '0'), '.') . ' L';
+            return $primary . ' (' . $alt . ')';
+        case 'l':
+            $alt = number_format($value * 1000, 0) . ' ml';
+            return $primary . ' (' . $alt . ')';
+        case 'kg':
+            $alt = number_format($value * 1000, 0) . ' g';
+            return $primary . ' (' . $alt . ')';
+        case 'g':
+            $alt = rtrim(rtrim(number_format($value / 1000, 3), '0'), '.') . ' kg';
+            return $primary . ' (' . $alt . ')';
+        default:
+            return $primary;
+    }
+}
+
 $orderId = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 if ($orderId <= 0) {
     setAlert('danger', 'Invalid manufacturing order specified.');
@@ -10,7 +36,7 @@ if ($orderId <= 0) {
 }
 
 $orderStmt = $conn->prepare("
-    SELECT mo.*, c.name AS customer_name, f.name AS formula_name, f.description AS formula_description, f.components_json, f.batch_size AS formula_batch_size,
+    SELECT mo.*, c.name AS customer_name, f.name AS formula_name, f.description AS formula_description, f.components_json, f.batch_size AS formula_batch_size, f.batch_unit,
            l.name AS location_name, l.address AS location_address, p.name AS product_name, p.sku AS product_sku,
            bs.name AS bottle_size_name, bs.size AS bottle_size_value, bs.unit AS bottle_size_unit, bs.type AS bottle_size_type
     FROM manufacturing_orders mo
@@ -33,11 +59,12 @@ if (!$order) {
     redirect('index.php');
 }
 
-$formulaComponents = json_decode($order['components_json'] ?? '[]', true);
-if (!is_array($formulaComponents)) {
-    $formulaComponents = [];
+$formulaComponentsRaw = json_decode($order['components_json'] ?? '[]', true);
+if (!is_array($formulaComponentsRaw)) {
+    $formulaComponentsRaw = [];
 }
-$formulaComponents = manufacturing_recalculate_components($order, $formulaComponents);
+// Scaled quantities used for sourcing; raw quantities shown in the formula card
+$formulaComponents = manufacturing_recalculate_components($order, $formulaComponentsRaw);
 
 $canViewFormula = hasPermission('manufacturing.formula.view_all');
 $canViewComponentName = hasPermission('manufacturing.component.name.view');
@@ -250,7 +277,7 @@ if ($dispatchCount == 0) {
         'before_loading' => [
             ['key' => 'release_order_received', 'text' => 'تم استلام إذن صرف/أمر تسليم', 'type' => 'checkbox'],
             ['key' => 'quantity_counted', 'text' => 'تم عدّ الكمية قبل التحميل', 'type' => 'checkbox'],
-            ['key' => 'load_photographed', 'text' => 'تم تصوير الحمولة (صور مرفقة)', 'type' => 'image']
+            ['key' => 'load_photographed', 'text' => 'تم تصوير الحمولة (صور مرفقة)', 'type' => 'checkbox']
         ]
     ];
     
@@ -310,16 +337,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    // Store receipt approval status and notes for receipt step
+    // Store receipt approval status and notes; restock inventory for rejected items
     if ($stepKey === 'receipt') {
         $receiptStatuses = $_POST['receipt_status'] ?? [];
         $receiptNotes = $_POST['receipt_notes'] ?? [];
-        
+
         if (is_array($receiptStatuses)) {
-            foreach ($receiptStatuses as $compId => $status) {
+            foreach ($receiptStatuses as $compId => $newStatus) {
+                $compId = (int)$compId;
                 $note = $receiptNotes[$compId] ?? '';
+
+                // Fetch previous status to decide if we need to restock
+                $hasDeductedAt = $conn->query("SHOW COLUMNS FROM manufacturing_sourcing_components LIKE 'deducted_at'")->num_rows > 0;
+                $prevSql = $hasDeductedAt
+                    ? "SELECT receipt_status, deducted_at, product_id, required_quantity FROM manufacturing_sourcing_components WHERE id = ? AND manufacturing_order_id = ?"
+                    : "SELECT receipt_status, product_id, required_quantity FROM manufacturing_sourcing_components WHERE id = ? AND manufacturing_order_id = ?";
+                $prevStmt = $conn->prepare($prevSql);
+                $prevStmt->bind_param("ii", $compId, $orderId);
+                $prevStmt->execute();
+                $prevComp = $prevStmt->get_result()->fetch_assoc();
+                $prevStmt->close();
+
+                $wasDeducted = $hasDeductedAt ? ($prevComp['deducted_at'] ?? null) !== null : false;
+                if ($prevComp && $newStatus === 'rejected' && $wasDeducted && $prevComp['product_id']) {
+                    // Restock: add the quantity back to the location's inventory
+                    $pdo->prepare("
+                        UPDATE inventory_products ip
+                        JOIN inventories inv ON inv.id = ip.inventory_id
+                        SET ip.quantity = ip.quantity + ?
+                        WHERE ip.product_id = ? AND inv.location_id = ?
+                    ")->execute([$prevComp['required_quantity'], $prevComp['product_id'], $order['location_id']]);
+
+                    if ($hasDeductedAt) {
+                        $pdo->prepare("UPDATE manufacturing_sourcing_components SET deducted_at = NULL WHERE id = ?")->execute([$compId]);
+                    }
+                }
+
                 $updateReceiptStmt = $conn->prepare("UPDATE manufacturing_sourcing_components SET receipt_status = ?, receipt_notes = ? WHERE id = ? AND manufacturing_order_id = ?");
-                $updateReceiptStmt->bind_param("ssii", $status, $note, $compId, $orderId);
+                $updateReceiptStmt->bind_param("ssii", $newStatus, $note, $compId, $orderId);
                 $updateReceiptStmt->execute();
                 $updateReceiptStmt->close();
             }
@@ -512,6 +567,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($insufficientQty) {
             setAlert('danger', 'Cannot complete sourcing: Insufficient quantities in location. Missing: ' . implode(', ', $insufficientItems));
             redirect('order.php?id=' . $orderId);
+        }
+
+        // Deduct all sourcing components from inventory (only if deducted_at column exists)
+        $hasDeductedAt = $conn->query("SHOW COLUMNS FROM manufacturing_sourcing_components LIKE 'deducted_at'")->num_rows > 0;
+
+        $deductSql = $hasDeductedAt
+            ? "SELECT msc.id, msc.product_id, msc.required_quantity FROM manufacturing_sourcing_components msc WHERE msc.manufacturing_order_id = ? AND msc.product_id IS NOT NULL AND msc.deducted_at IS NULL"
+            : "SELECT msc.id, msc.product_id, msc.required_quantity FROM manufacturing_sourcing_components msc WHERE msc.manufacturing_order_id = ? AND msc.product_id IS NOT NULL";
+
+        $deductFetchStmt = $conn->prepare($deductSql);
+        $deductFetchStmt->bind_param("i", $orderId);
+        $deductFetchStmt->execute();
+        $deductResult = $deductFetchStmt->get_result();
+        $toDeduct = [];
+        while ($dc = $deductResult->fetch_assoc()) {
+            $toDeduct[] = $dc;
+        }
+        $deductFetchStmt->close();
+
+        foreach ($toDeduct as $dc) {
+            $pdo->prepare("
+                UPDATE inventory_products ip
+                JOIN inventories inv ON inv.id = ip.inventory_id
+                SET ip.quantity = ip.quantity - ?
+                WHERE ip.product_id = ? AND inv.location_id = ?
+            ")->execute([$dc['required_quantity'], $dc['product_id'], $order['location_id']]);
+
+            if ($hasDeductedAt) {
+                $pdo->prepare("UPDATE manufacturing_sourcing_components SET deducted_at = NOW() WHERE id = ?")->execute([$dc['id']]);
+            }
         }
     }
 
@@ -846,11 +931,23 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                 <p class="mb-1"><strong>Priority:</strong> <?= ucfirst(htmlspecialchars($order['priority'])); ?></p>
                 <p class="mb-1"><strong>Location:</strong> <?= $order['location_name'] ? htmlspecialchars($order['location_name']) . ' - ' . htmlspecialchars($order['location_address'])  : '<span class="text-muted">Not set</span>'; ?></p>
                 <p class="mb-1"><strong>Due Date:</strong> <?= $order['due_date'] ? htmlspecialchars($order['due_date']) : '<span class="text-muted">Not set</span>'; ?></p>
-                <p class="mb-1"><strong>Batch size:</strong> <?= htmlspecialchars($order['batch_size']); ?></p>
+                <?php
+                $batchSizeVal  = (float)$order['batch_size'];
+                $batchUnit     = $order['bottle_size_unit'] ?? '';
+                $batchDisplay  = fmt_qty($batchSizeVal, $batchUnit);
+                ?>
+                <p class="mb-1"><strong>Batch size:</strong> <?= $batchDisplay; ?></p>
+                <?php if (!empty($order['number_of_bottles'])): ?>
+                <p class="mb-1"><strong>Number of Bottles:</strong> <?= (int)$order['number_of_bottles']; ?></p>
+                <?php endif; ?>
                 <p class="mb-1"><strong>Bottle Size:</strong>
                     <?php if ($order['bottle_size_name']): ?>
-                        <?= htmlspecialchars($order['bottle_size_name']); ?>
-                        — <?= number_format((float)$order['bottle_size_value'], 3); ?> <?= htmlspecialchars($order['bottle_size_unit']); ?>
+                        <?php
+                        $bsVal  = (float)$order['bottle_size_value'];
+                        $bsUnit = $order['bottle_size_unit'];
+                        $bsDisplay = fmt_qty($bsVal, $bsUnit, 3);
+                        ?>
+                        <?= htmlspecialchars($order['bottle_size_name']); ?> — <?= $bsDisplay; ?>
                         <span class="badge <?= $order['bottle_size_type'] === 'liquid' ? 'bg-info' : 'bg-warning text-dark'; ?> ms-1">
                             <?= ucfirst($order['bottle_size_type']); ?>
                         </span>
@@ -882,39 +979,42 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                             <button class="btn btn-primary" type="submit">Unlock</button>
                         </div>
                     </form>
-                <?php elseif (!empty($formulaComponents)): ?>
+                <?php elseif (!empty($formulaComponentsRaw)): ?>
+                    <p class="small text-muted mb-2">
+                        Standard batch: <strong><?= fmt_qty((float)$order['formula_batch_size'], $order['batch_unit'] ?? ''); ?></strong>
+                        &rarr; This order: <strong><?= fmt_qty((float)$order['batch_size'], $order['bottle_size_unit'] ?? ''); ?></strong>
+                    </p>
                     <div class="table-responsive">
                         <table class="table table-sm mb-0">
                             <thead>
                                 <tr>
                                     <th class="ps-0">Component</th>
-                                    <th>SKU</th>
-                                    <th>Qty / Ratio</th>
+                                    <th>Per Batch</th>
+                                    <th>Required (this order)</th>
                                     <th>Unit</th>
-                                    <th>Notes</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                <?php foreach ($formulaComponents as $fComponent): ?>
-                                    <?php $fSku = !empty($fComponent['product_id']) && isset($formulaSkus[$fComponent['product_id']]) ? $formulaSkus[$fComponent['product_id']] : '-'; ?>
+                                <?php foreach ($formulaComponentsRaw as $i => $fComponent): ?>
+                                    <?php
+                                    $fSku = !empty($fComponent['product_id']) && isset($formulaSkus[$fComponent['product_id']]) ? $formulaSkus[$fComponent['product_id']] : '-';
+                                    $scaledQty = $formulaComponents[$i]['quantity'] ?? '-';
+                                    ?>
+                                    <?php
+                                    $cUnit    = $fComponent['unit'] ?? '';
+                                    $rawQty   = $fComponent['quantity'] ?? '-';
+                                    $perBatch = is_numeric($rawQty)
+                                        ? fmt_qty((float)$rawQty, $cUnit)
+                                        : htmlspecialchars($rawQty);
+                                    $thisOrder = is_numeric($scaledQty)
+                                        ? fmt_qty((float)$scaledQty, $cUnit)
+                                        : htmlspecialchars($scaledQty);
+                                    ?>
                                     <tr>
-                                        <td class="ps-0">
-                                            <?php if ($canViewComponentName): ?>
-                                                <?= htmlspecialchars($fComponent['name'] ?? '-'); ?>
-                                            <?php else: ?>
-                                                <span class="text-muted"><?= $fSku !== '-' ? htmlspecialchars($fSku) : 'Hidden'; ?></span>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td>
-                                            <?php if ($fSku !== '-'): ?>
-                                                <?= htmlspecialchars($fSku); ?>
-                                            <?php else: ?>
-                                                <span class="text-muted">-</span>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td><?= htmlspecialchars($fComponent['quantity'] ?? $fComponent['ratio'] ?? '-'); ?></td>
-                                        <td><?= htmlspecialchars($fComponent['unit'] ?? '-'); ?></td>
-                                        <td><?= htmlspecialchars($fComponent['notes'] ?? '-'); ?></td>
+                                        <td class="ps-0"><?= htmlspecialchars($fComponent['name'] ?? '-'); ?></td>
+                                        <td class="text-muted"><?= $perBatch; ?></td>
+                                        <td><strong><?= $thisOrder; ?></strong></td>
+                                        <td><?= htmlspecialchars($cUnit ?: '-'); ?></td>
                                     </tr>
                                 <?php endforeach; ?>
                             </tbody>

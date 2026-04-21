@@ -276,6 +276,11 @@
                                             <i class="fas fa-wine-bottle me-2"></i> Bottle Sizes
                                         </a>
                                     </li>
+                                    <li>
+                                        <a class="dropdown-item" href="<?= BASE_URL ?>modules/manufacturing/packaging_options.php">
+                                            <i class="fas fa-box me-2"></i> Packaging Options
+                                        </a>
+                                    </li>
                                     <?php if (hasPermission('manufacturing.orders.create')): ?>
                                         <li>
                                             <hr class="dropdown-divider">

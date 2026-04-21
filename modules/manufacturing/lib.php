@@ -945,34 +945,57 @@ function manufacturing_generate_full_order_pdf($conn, $orderId) {
  * Recalculates component quantities proportional to the manufacturing order batch size
  * against the configured formula batch size and bottle size.
  */
+/**
+ * Converts a quantity to millilitres (for liquid) or grams (for weight) so
+ * formula batch size and order production amount can be compared on the same scale.
+ * Units not recognised are returned as-is (ratio = 1).
+ */
+function manufacturing_to_base_unit(float $value, string $unit): float {
+    switch (strtolower(trim($unit))) {
+        case 'l':   return $value * 1000;   // L  → ml
+        case 'ml':  return $value;
+        case 'kg':  return $value * 1000;   // kg → g
+        case 'g':   return $value;
+        case 'pcs': return $value;
+        default:    return $value;
+    }
+}
+
 function manufacturing_recalculate_components($order, $components) {
     if (!is_array($components) || empty($components)) return [];
-    
-    // Default to 1 if not set to avoid division by zero
+
     $formulaBatchSize = (float)($order['formula_batch_size'] ?? 1);
     if ($formulaBatchSize <= 0) $formulaBatchSize = 1;
-    
-    $orderBatchSize = (float)($order['batch_size'] ?? 0);
+
+    // Normalise formula batch size to base unit (ml or g)
+    $formulaBatchUnit = strtolower(trim($order['batch_unit'] ?? ''));
+    $formulaBatchSizeNorm = manufacturing_to_base_unit($formulaBatchSize, $formulaBatchUnit);
+    if ($formulaBatchSizeNorm <= 0) $formulaBatchSizeNorm = 1;
+
     $bottleSizeValue = (float)($order['bottle_size_value'] ?? 0);
-    
-    // Target production is (number of units * size per unit) = total liters/kg produced
-    // If no bottle size, batch size is exactly the production amount
-    if ($bottleSizeValue > 0) {
-        $targetProductionAmount = $orderBatchSize * $bottleSizeValue;
+    $bottleSizeUnit  = strtolower(trim($order['bottle_size_unit'] ?? ''));
+    $numberOfBottles = isset($order['number_of_bottles']) && $order['number_of_bottles'] !== null
+        ? (int)$order['number_of_bottles']
+        : null;
+
+    if ($numberOfBottles !== null && $bottleSizeValue > 0) {
+        // Total production in bottle's unit, then normalise to base unit
+        $targetProductionAmount = manufacturing_to_base_unit($numberOfBottles * $bottleSizeValue, $bottleSizeUnit);
+    } elseif ($bottleSizeValue > 0) {
+        // Legacy path
+        $orderBatchSize = (float)($order['batch_size'] ?? 0);
+        $targetProductionAmount = manufacturing_to_base_unit($orderBatchSize * $bottleSizeValue, $bottleSizeUnit);
     } else {
-        $targetProductionAmount = $orderBatchSize;
+        $targetProductionAmount = (float)($order['batch_size'] ?? 0);
     }
-    
-    $productionRatio = $targetProductionAmount / $formulaBatchSize;
-    if ($productionRatio <= 0) $productionRatio = 1;
-    
+
+    $productionRatio = $targetProductionAmount > 0 ? ($targetProductionAmount / $formulaBatchSizeNorm) : 1;
+
     foreach ($components as &$component) {
         $baseQty = (float)($component['quantity'] ?? $component['ratio'] ?? 0);
-        $requiredQty = $baseQty * $productionRatio;
-        // Strip trailing zeros
-        $component['quantity'] = floatval(round($requiredQty, 4));
+        $component['quantity'] = floatval(round($baseQty * $productionRatio, 4));
     }
     unset($component);
-    
+
     return $components;
 }

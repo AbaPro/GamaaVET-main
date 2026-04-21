@@ -11,12 +11,22 @@ if (!hasPermission('manufacturing.orders.create')) {
 $old = $_POST;
 
 $products = [];
-$productResult = $conn->query("SELECT id, name, sku FROM products ORDER BY name");
 $productMap = [];
+$productResult = $conn->query("SELECT id, name, sku FROM products WHERE type = 'material' ORDER BY name");
 if ($productResult) {
     while ($productRow = $productResult->fetch_assoc()) {
         $products[] = $productRow;
         $productMap[$productRow['id']] = $productRow['name'];
+    }
+}
+
+// Full product map (all types) for resolving saved names on existing components
+$allProductMapResult = $conn->query("SELECT id, name FROM products");
+if ($allProductMapResult) {
+    while ($row = $allProductMapResult->fetch_assoc()) {
+        if (!isset($productMap[$row['id']])) {
+            $productMap[$row['id']] = $row['name'];
+        }
     }
 }
 
@@ -37,15 +47,17 @@ if ($bottleSizesResult) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $customerId    = isset($_POST['customer_id'])   ? (int)$_POST['customer_id']   : 0;
-    $productId     = isset($_POST['product_id'])    ? (int)$_POST['product_id']    : 0;
-    $selectedFormulaId = isset($_POST['formula_id']) ? (int)$_POST['formula_id']  : 0;
-    $locationId    = isset($_POST['location_id'])   ? (int)$_POST['location_id']   : 0;
-    $bottleSizeId  = isset($_POST['bottle_size_id']) && $_POST['bottle_size_id'] !== '' ? (int)$_POST['bottle_size_id'] : null;
-    $priority      = $_POST['priority'] ?? 'normal';
-    $batchSize     = isset($_POST['batch_size'])    ? floatval($_POST['batch_size']) : 0;
-    $dueDate       = $_POST['due_date'] ?? null;
-    $orderNotes    = trim($_POST['notes'] ?? '');
+    $customerId         = isset($_POST['customer_id'])        ? (int)$_POST['customer_id']        : 0;
+    $productId          = isset($_POST['product_id'])         ? (int)$_POST['product_id']         : 0;
+    $selectedFormulaId  = isset($_POST['formula_id'])         ? (int)$_POST['formula_id']         : 0;
+    $locationId         = isset($_POST['location_id'])        ? (int)$_POST['location_id']        : 0;
+    $bottleSizeId       = isset($_POST['bottle_size_id']) && $_POST['bottle_size_id'] !== '' ? (int)$_POST['bottle_size_id'] : null;
+    $numberOfBottles    = isset($_POST['number_of_bottles'])  ? (int)$_POST['number_of_bottles']  : 0;
+    $packagingOptionId  = isset($_POST['packaging_option_id']) && $_POST['packaging_option_id'] !== '' ? (int)$_POST['packaging_option_id'] : null;
+    $priority           = $_POST['priority'] ?? 'normal';
+    $batchSize          = isset($_POST['batch_size'])         ? floatval($_POST['batch_size'])     : 0;
+    $dueDate            = $_POST['due_date'] ?? null;
+    $orderNotes         = trim($_POST['notes'] ?? '');
 
     $allowedPriorities = ['normal', 'rush', 'critical'];
     if (!in_array($priority, $allowedPriorities, true)) {
@@ -53,86 +65,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($customerId <= 0) {
-        setAlert('danger', 'Please select the customer/provider for this manufacturing order.');
+        setAlert('danger', 'Please select the customer for this manufacturing order.');
     } elseif ($productId <= 0) {
         setAlert('danger', 'Please select the final product for this manufacturing order.');
     } elseif ($locationId <= 0) {
         setAlert('danger', 'Please select a location for this manufacturing order.');
+    } elseif (!$selectedFormulaId) {
+        setAlert('danger', 'Please select a formula for this manufacturing order.');
+    } elseif ($bottleSizeId === null) {
+        setAlert('danger', 'Please select a bottle size.');
+    } elseif ($numberOfBottles <= 0) {
+        setAlert('danger', 'Please enter the number of bottles (must be at least 1).');
     } else {
         try {
             $pdo->beginTransaction();
 
             $formulaId = $selectedFormulaId;
-            if (!$formulaId) {
-                $formulaName = sanitize($_POST['new_formula_name'] ?? '');
-                $formulaDescription = sanitize($_POST['new_formula_description'] ?? '');
-                $formulaInstructions = sanitize($_POST['new_formula_instructions'] ?? '');
-                $rawComponents = $_POST['components'] ?? [];
-                $components = [];
-                if (!empty($rawComponents) && is_array($rawComponents)) {
-                    foreach ($rawComponents as $componentRow) {
-                        $componentProductId = isset($componentRow['product_id']) ? (int)$componentRow['product_id'] : 0;
-                        $componentName = '';
-                        if ($componentProductId > 0 && isset($productMap[$componentProductId])) {
-                            $componentName = $productMap[$componentProductId];
-                        } else {
-                            $componentName = sanitize($componentRow['name'] ?? '');
-                        }
-
-                        if ($componentName === '') {
-                            continue;
-                        }
-
-                        $components[] = [
-                            'product_id' => $componentProductId > 0 ? $componentProductId : null,
-                            'name' => $componentName,
-                            'quantity' => sanitize($componentRow['quantity'] ?? ''),
-                            'unit' => sanitize($componentRow['unit'] ?? ''),
-                            'notes' => sanitize($componentRow['notes'] ?? ''),
-                        ];
-                    }
-                }
-
-                if ($formulaName === '' || empty($components)) {
-                    throw new Exception('When creating a new formula, provide a name plus at least one component.');
-                }
-
-                $componentsJson = json_encode($components, JSON_UNESCAPED_UNICODE);
-                $stmt = $pdo->prepare("
-                    INSERT INTO manufacturing_formulas 
-                        (customer_id, name, description, batch_size, components_json, instructions) 
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ");
-                $stmt->execute([
-                    $customerId,
-                    $formulaName,
-                    $formulaDescription,
-                    $batchSize,
-                    $componentsJson,
-                    $formulaInstructions
-                ]);
-                $formulaId = $pdo->lastInsertId();
-            }
 
             if (!$formulaId) {
-                throw new Exception('A provider formula is required.');
+                throw new Exception('A formula is required.');
             }
+
+            // Fetch bottle size value to compute batch_size
+            $bsStmt = $pdo->prepare("SELECT size, unit FROM bottle_sizes WHERE id = ?");
+            $bsStmt->execute([$bottleSizeId]);
+            $bsRow = $bsStmt->fetch(PDO::FETCH_ASSOC);
+            $bottleSizeValue = $bsRow ? (float)$bsRow['size'] : 0;
+            $computedBatchSize = $numberOfBottles * $bottleSizeValue;
 
             $orderNumber = generateUniqueId('MAN');
             $createdBy = $_SESSION['user_id'] ?? null;
             $orderStmt = $pdo->prepare("
                 INSERT INTO manufacturing_orders
-                    (order_number, customer_id, product_id, bottle_size_id, formula_id, location_id, batch_size, due_date, priority, notes, created_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (order_number, customer_id, product_id, bottle_size_id, number_of_bottles, packaging_option_id,
+                     formula_id, location_id, batch_size, due_date, priority, notes, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ");
             $orderStmt->execute([
                 $orderNumber,
                 $customerId,
                 $productId ?: null,
                 $bottleSizeId,
+                $numberOfBottles,
+                $packagingOptionId,
                 $formulaId,
                 $locationId,
-                $batchSize,
+                $computedBatchSize,
                 $dueDate ?: null,
                 $priority,
                 $orderNotes,
@@ -140,8 +118,62 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ]);
             $orderId = $pdo->lastInsertId();
 
+            // Seed sourcing components from formula
+            $formulaStmt = $pdo->prepare("SELECT components_json, batch_size AS formula_batch_size FROM manufacturing_formulas WHERE id = ?");
+            $formulaStmt->execute([$formulaId]);
+            $formulaRow = $formulaStmt->fetch(PDO::FETCH_ASSOC);
+            $formulaComponents = json_decode($formulaRow['components_json'] ?? '[]', true) ?: [];
+            $formulaBatchSize = (float)($formulaRow['formula_batch_size'] ?? 1);
+            if ($formulaBatchSize <= 0) $formulaBatchSize = 1;
+            $productionRatio = $computedBatchSize > 0 ? ($computedBatchSize / $formulaBatchSize) : 1;
+
+            // Check if the 'source' column exists (added in migration 20260420)
+            $hasSourceCol = $conn->query("SHOW COLUMNS FROM manufacturing_sourcing_components LIKE 'source'")->num_rows > 0;
+
+            $sourcingStmt = $hasSourceCol
+                ? $pdo->prepare("INSERT INTO manufacturing_sourcing_components (manufacturing_order_id, source, formula_component_index, product_id, component_name, required_quantity, unit, notes) VALUES (?, 'formula', ?, ?, ?, ?, ?, ?)")
+                : $pdo->prepare("INSERT INTO manufacturing_sourcing_components (manufacturing_order_id, formula_component_index, product_id, component_name, required_quantity, unit, notes) VALUES (?, ?, ?, ?, ?, ?, ?)");
+
+            foreach ($formulaComponents as $idx => $component) {
+                $baseQty = (float)($component['quantity'] ?? 0);
+                $requiredQty = round($baseQty * $productionRatio, 4);
+                $params = $hasSourceCol
+                    ? [$orderId, $idx, $component['product_id'] ?? null, $component['name'] ?? '', $requiredQty, $component['unit'] ?? '', $component['notes'] ?? '']
+                    : [$orderId, $idx, $component['product_id'] ?? null, $component['name'] ?? '', $requiredQty, $component['unit'] ?? '', $component['notes'] ?? ''];
+                $sourcingStmt->execute($params);
+            }
+
+            // Seed sourcing components from packaging option (qty * number_of_bottles)
+            if ($packagingOptionId) {
+                $pkgItemsStmt = $pdo->prepare("
+                    SELECT poi.product_id, p.name AS product_name, poi.quantity, poi.unit, poi.notes
+                    FROM packaging_option_items poi
+                    JOIN products p ON p.id = poi.product_id
+                    WHERE poi.packaging_option_id = ?
+                ");
+                $pkgItemsStmt->execute([$packagingOptionId]);
+                $pkgItems = $pkgItemsStmt->fetchAll(PDO::FETCH_ASSOC);
+
+                $pkgSourcingStmt = $hasSourceCol
+                    ? $pdo->prepare("INSERT INTO manufacturing_sourcing_components (manufacturing_order_id, source, formula_component_index, product_id, component_name, required_quantity, unit, notes) VALUES (?, 'packaging', ?, ?, ?, ?, ?, ?)")
+                    : $pdo->prepare("INSERT INTO manufacturing_sourcing_components (manufacturing_order_id, formula_component_index, product_id, component_name, required_quantity, unit, notes) VALUES (?, ?, ?, ?, ?, ?, ?)");
+
+                foreach ($pkgItems as $pkgIdx => $pkgItem) {
+                    $pkgRequiredQty = round((float)$pkgItem['quantity'] * $numberOfBottles, 4);
+                    $pkgSourcingStmt->execute([
+                        $orderId,
+                        $pkgIdx,
+                        $pkgItem['product_id'],
+                        $pkgItem['product_name'],
+                        $pkgRequiredQty,
+                        $pkgItem['unit'] ?? '',
+                        $pkgItem['notes'] ?? '',
+                    ]);
+                }
+            }
+
             $stepStmt = $pdo->prepare("
-                INSERT INTO manufacturing_order_steps (manufacturing_order_id, step_key, label) 
+                INSERT INTO manufacturing_order_steps (manufacturing_order_id, step_key, label)
                 VALUES (?, ?, ?)
             ");
             foreach (manufacturing_get_step_definitions() as $stepKey => $stepMeta) {
@@ -149,7 +181,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $pdo->commit();
-            setAlert('success', "Manufacturing order {$orderNumber} created and staged for getting, preparing, and delivery.");
+            setAlert('success', "Manufacturing order {$orderNumber} created.");
             logActivity("Created manufacturing order {$orderNumber}", ['order_id' => $orderId]);
             header("Location: order.php?id={$orderId}");
             exit;
@@ -172,26 +204,24 @@ if ($customerResult) {
 }
 
 $priorities = ['normal' => 'Normal', 'rush' => 'Rush', 'critical' => 'Critical'];
-$selectedProvider = $old['customer_id'] ?? '';
+$selectedCustomer = $old['customer_id'] ?? '';
 $selectedFormulaId = $old['formula_id'] ?? '';
 
+// Build bottle sizes JSON map for JS batch size calculation
+$bottleSizesMap = [];
+foreach ($bottleSizes as $bs) {
+    $bottleSizesMap[$bs['id']] = ['size' => (float)$bs['size'], 'unit' => $bs['unit']];
+}
 ?>
 
 <div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-3">
     <div>
         <h2>Create Manufacturing Order</h2>
-        <p class="text-muted mb-0">Choose a provider formula, stage the multi-phase manufacturing workflow, and automatically emit Excel/PDF handover files for every team in the chain.</p>
+        <p class="text-muted mb-0">Select a customer formula, define production quantities, and stage the multi-phase manufacturing workflow.</p>
     </div>
     <a href="index.php" class="btn btn-outline-secondary">
         <i class="fas fa-arrow-left me-1"></i> Back to manufacturing dashboard
     </a>
-</div>
-
-<div class="alert alert-info mb-4">
-    <strong>Workflow complexity</strong>: every order travels through sourcing → receipt → preparation → quality → packaging → dispatch → delivery. Use this form to select a catalog-based formula, capture components for each step, and rely on the Excel/PDF handoff generated at each save to inform the downstream teams.
-    <div class="mt-2 small">
-        <a href="instructions.html" target="_blank" class="text-decoration-underline text-info">Click here</a> for a full user guide and examples of the exported documents.
-    </div>
 </div>
 
 <form method="post">
@@ -200,18 +230,18 @@ $selectedFormulaId = $old['formula_id'] ?? '';
         <div class="card-body">
             <div class="row g-3">
                 <div class="col-md-3">
-                    <label class="form-label">Provider / Customer</label>
+                    <label class="form-label">Customer <span class="text-danger">*</span></label>
                     <select class="form-select select2" name="customer_id" id="customer_id" required>
-                        <option value="">Select provider</option>
+                        <option value="">Select customer</option>
                         <?php foreach ($customers as $customer): ?>
-                            <option value="<?php echo $customer['id']; ?>" <?php echo $selectedProvider == $customer['id'] ? 'selected' : ''; ?>>
+                            <option value="<?php echo $customer['id']; ?>" <?php echo $selectedCustomer == $customer['id'] ? 'selected' : ''; ?>>
                                 <?php echo e($customer['name']); ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
                 </div>
                 <div class="col-md-3">
-                    <label class="form-label">Location</label>
+                    <label class="form-label">Location <span class="text-danger">*</span></label>
                     <select class="form-select" name="location_id" required>
                         <option value="">Select location</option>
                         <?php foreach ($locations as $location): ?>
@@ -237,16 +267,16 @@ $selectedFormulaId = $old['formula_id'] ?? '';
                 </div>
             </div>
             <div class="row g-3 mt-3">
-                <div class="col-md-4">
-                    <label class="form-label">Final Product</label>
+                <div class="col-md-3">
+                    <label class="form-label">Final Product <span class="text-danger">*</span></label>
                     <select class="form-select select2" name="product_id" id="product_id" required disabled>
-                        <option value="">Select provider first</option>
+                        <option value="">Select customer first</option>
                     </select>
                 </div>
-                <div class="col-md-4">
-                    <label class="form-label">Bottle Size</label>
-                    <select class="form-select select2" name="bottle_size_id" id="bottle_size_id">
-                        <option value="">— No bottle size —</option>
+                <div class="col-md-3">
+                    <label class="form-label">Bottle Size <span class="text-danger">*</span></label>
+                    <select class="form-select select2" name="bottle_size_id" id="bottle_size_id" required>
+                        <option value="">Select bottle size</option>
                         <?php
                         $bsLiquid = array_filter($bottleSizes, fn($b) => $b['type'] === 'liquid');
                         $bsPowder = array_filter($bottleSizes, fn($b) => $b['type'] === 'powder');
@@ -254,7 +284,8 @@ $selectedFormulaId = $old['formula_id'] ?? '';
                         if ($bsLiquid): ?>
                             <optgroup label="Liquid">
                                 <?php foreach ($bsLiquid as $bs): ?>
-                                    <option value="<?= $bs['id']; ?>" data-type="liquid"
+                                    <option value="<?= $bs['id']; ?>"
+                                            data-size="<?= $bs['size']; ?>" data-unit="<?= htmlspecialchars($bs['unit']); ?>"
                                             <?= (string)$selBsId === (string)$bs['id'] ? 'selected' : ''; ?>>
                                         <?= htmlspecialchars($bs['name']); ?> — <?= number_format($bs['size'], 3); ?> <?= htmlspecialchars($bs['unit']); ?>
                                     </option>
@@ -264,7 +295,8 @@ $selectedFormulaId = $old['formula_id'] ?? '';
                         if ($bsPowder): ?>
                             <optgroup label="Powder">
                                 <?php foreach ($bsPowder as $bs): ?>
-                                    <option value="<?= $bs['id']; ?>" data-type="powder"
+                                    <option value="<?= $bs['id']; ?>"
+                                            data-size="<?= $bs['size']; ?>" data-unit="<?= htmlspecialchars($bs['unit']); ?>"
                                             <?= (string)$selBsId === (string)$bs['id'] ? 'selected' : ''; ?>>
                                         <?= htmlspecialchars($bs['name']); ?> — <?= number_format($bs['size'], 3); ?> <?= htmlspecialchars($bs['unit']); ?>
                                     </option>
@@ -273,13 +305,29 @@ $selectedFormulaId = $old['formula_id'] ?? '';
                         <?php endif; ?>
                     </select>
                 </div>
-                <div class="col-md-4">
-                    <label class="form-label">Batch size</label>
-                    <input step="0.01" min="0" type="number" class="form-control" name="batch_size" value="<?php echo e($old['batch_size'] ?? ''); ?>" placeholder="Total units to produce">
+                <div class="col-md-3">
+                    <label class="form-label">Number of Bottles <span class="text-danger">*</span></label>
+                    <input type="number" step="1" min="1" class="form-control" name="number_of_bottles" id="number_of_bottles"
+                           value="<?= htmlspecialchars($old['number_of_bottles'] ?? ''); ?>" required placeholder="e.g. 500">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Total Batch Size</label>
+                    <div class="input-group">
+                        <input type="text" class="form-control bg-light" id="batch_size_display" readonly placeholder="Auto-computed">
+                        <input type="hidden" name="batch_size" id="batch_size_hidden" value="<?= htmlspecialchars($old['batch_size'] ?? '0'); ?>">
+                        <span class="input-group-text" id="batch_unit_label">—</span>
+                    </div>
+                    <small class="text-muted">Bottles × bottle size</small>
                 </div>
             </div>
-            <div class="row g-3 mt-0">
-                <div class="col-12">
+            <div class="row g-3 mt-3">
+                <div class="col-md-6">
+                    <label class="form-label">Packaging Option</label>
+                    <select class="form-select select2" name="packaging_option_id" id="packaging_option_id" disabled>
+                        <option value="">— Select customer first —</option>
+                    </select>
+                </div>
+                <div class="col-md-6">
                     <label class="form-label">Order notes</label>
                     <textarea class="form-control" name="notes" rows="2"><?php echo e($old['notes'] ?? ''); ?></textarea>
                 </div>
@@ -287,66 +335,18 @@ $selectedFormulaId = $old['formula_id'] ?? '';
         </div>
     </div>
 
-    <div class="row">
-        <div class="col-lg-5 mb-4">
-            <div class="card h-100">
-                <div class="card-header">Provider Formula</div>
-                <div class="card-body">
-                    <p class="text-muted small">Each provider maintains unique formulas for their orders. Pick one to reuse their ratios, or build a bespoke version using the builder on the right.</p>
-                    <div class="mb-3">
-                        <label class="form-label">Existing formula</label>
-                        <select class="form-select select2" name="formula_id" id="formula_id" disabled>
-                            <option value="">Select provider first</option>
-                        </select>
-                    </div>
-                    <div id="formulaPreview" class="border rounded p-3 bg-light text-muted">
-                        <small>Select a provider to preview their formulas here.</small>
-                    </div>
-                </div>
+    <div class="card mb-4">
+        <div class="card-header">Customer Formula <span class="text-danger">*</span></div>
+        <div class="card-body">
+            <p class="text-muted small">Each customer maintains unique formulas for their orders. Select one — components will be scaled to the batch size automatically.</p>
+            <div class="mb-3">
+                <label class="form-label">Formula</label>
+                <select class="form-select select2" name="formula_id" id="formula_id" disabled required>
+                    <option value="">Select customer first</option>
+                </select>
             </div>
-        </div>
-        <div class="col-lg-7 mb-4">
-            <div class="card h-100">
-                <div class="card-header">New formula builder (optional)</div>
-                <div class="card-body">
-                    <p class="text-muted small">Define a tailored formula for this order. Components can be reused later by saving and assigning the resulting formula.</p>
-                    <?php if (empty($products)): ?>
-                        <div class="alert alert-warning small mb-3">
-                            No catalog products exist yet. Create the raw materials or finished goods under <strong>Products</strong> before building a formula.
-                        </div>
-                    <?php endif; ?>
-                    <div class="table-responsive">
-                        <table class="table table-bordered align-middle mb-2" id="componentsTable">
-                            <thead>
-                                <tr>
-                                    <th>Component (Product)</th>
-                                    <th>Quantity / Ratio</th>
-                                    <th>Unit</th>
-                                    <th>Notes</th>
-                                    <th style="width:48px;"></th>
-                                </tr>
-                            </thead>
-                            <tbody id="componentsBody"></tbody>
-                        </table>
-                    </div>
-                    <button type="button" class="btn btn-sm btn-outline-primary" id="addComponentRow" <?php echo empty($products) ? 'disabled' : ''; ?>>
-                        <i class="fas fa-plus me-1"></i> Add component
-                    </button>
-                    <div class="row mt-3">
-                        <div class="col-md-6">
-                            <label class="form-label">Formula description</label>
-                            <textarea class="form-control" name="new_formula_description" rows="2"><?php echo htmlspecialchars($old['new_formula_description'] ?? ''); ?></textarea>
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label">Mixing instructions</label>
-                            <textarea class="form-control" name="new_formula_instructions" rows="2"><?php echo htmlspecialchars($old['new_formula_instructions'] ?? ''); ?></textarea>
-                        </div>
-                    </div>
-                    <div class="mt-3">
-                        <label class="form-label">Formula name</label>
-                        <input type="text" class="form-control" name="new_formula_name" value="<?php echo htmlspecialchars($old['new_formula_name'] ?? ''); ?>" placeholder="E.g. Provider X - Dry Blend">
-                    </div>
-                </div>
+            <div id="formulaPreview" class="border rounded p-3 bg-light text-muted">
+                <small>Select a customer to preview their formulas here.</small>
             </div>
         </div>
     </div>
@@ -362,100 +362,57 @@ $selectedFormulaId = $old['formula_id'] ?? '';
 <?php require_once '../../includes/footer.php'; ?>
 
 <script>
-    const providerSelect = $('#customer_id');
-    const formulaSelect = $('#formula_id');
-    const productSelect = $('#product_id');
-    const formulaPreview = $('#formulaPreview');
-    const componentsBody = $('#componentsBody');
-    const oldComponents = <?php echo json_encode($old['components'] ?? [], JSON_UNESCAPED_UNICODE); ?>;
-    const availableProducts = <?php echo json_encode($products, JSON_UNESCAPED_UNICODE); ?>;
-    const addComponentButton = $('#addComponentRow');
-    let componentIndex = 0;
+    const customerSelect    = $('#customer_id');
+    const formulaSelect     = $('#formula_id');
+    const productSelect     = $('#product_id');
+    const packagingSelect   = $('#packaging_option_id');
+    const formulaPreview    = $('#formulaPreview');
+    const bottleSizeSelect  = $('#bottle_size_id');
+    const numberOfBottlesInput = $('#number_of_bottles');
+    const batchSizeDisplay  = $('#batch_size_display');
+    const batchSizeHidden   = $('#batch_size_hidden');
+    const batchUnitLabel    = $('#batch_unit_label');
+
     let loadedFormulas = [];
     let pendingFormulaSelection = <?php echo json_encode($selectedFormulaId ?: ''); ?>;
     let pendingProductSelection = <?php echo json_encode($_POST['product_id'] ?? ''); ?>;
 
     function escapeForAttr(value) {
-        if (!value) {
-            return '';
-        }
-        return value.replace(/&/g, '&amp;')
-                    .replace(/</g, '&lt;')
-                    .replace(/>/g, '&gt;')
-                    .replace(/"/g, '&quot;')
-                    .replace(/'/g, '&#039;');
+        if (!value) return '';
+        return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                            .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
     }
 
-    function renderProductOptions(selectedId = '') {
-        if (!availableProducts.length) {
-            return '<option value="">No catalog products</option>';
+    function updateBatchSizeDisplay() {
+        const selectedOpt = bottleSizeSelect.find('option:selected');
+        const bottleSize  = parseFloat(selectedOpt.data('size') || 0);
+        const bottleUnit  = selectedOpt.data('unit') || '—';
+        const numBottles  = parseInt(numberOfBottlesInput.val() || 0);
+
+        if (bottleSize > 0 && numBottles > 0) {
+            const total = bottleSize * numBottles;
+            const totalFmt = total.toFixed(3).replace(/\.?0+$/, '');
+            let altStr = '';
+            const u = bottleUnit.toLowerCase();
+            if (u === 'ml') {
+                const l = (total / 1000).toFixed(3).replace(/\.?0+$/, '');
+                altStr = ' (' + l + ' L)';
+            } else if (u === 'l') {
+                altStr = ' (' + (total * 1000).toFixed(0) + ' ml)';
+            } else if (u === 'kg') {
+                altStr = ' (' + (total * 1000).toFixed(0) + ' g)';
+            } else if (u === 'g') {
+                const kg = (total / 1000).toFixed(3).replace(/\.?0+$/, '');
+                altStr = ' (' + kg + ' kg)';
+            }
+            batchSizeDisplay.val(totalFmt + altStr);
+            batchSizeHidden.val(totalFmt);
+            batchUnitLabel.text(bottleUnit);
+        } else {
+            batchSizeDisplay.val('');
+            batchSizeHidden.val('0');
+            batchUnitLabel.text('—');
         }
-
-        let html = '<option value="">Select product</option>';
-        availableProducts.forEach(product => {
-            const label = escapeForAttr(product.name) + (product.sku ? ' (' + escapeForAttr(product.sku) + ')' : '');
-            const selected = selectedId && String(product.id) === String(selectedId) ? 'selected' : '';
-            html += `<option value="${product.id}" data-name="${escapeForAttr(product.name)}" ${selected}>${label}</option>`;
-        });
-        return html;
-    }
-
-    function syncComponentName(row) {
-        const select = row.find('.component-product')[0];
-        const hiddenName = row.find('.component-name');
-        if (!select || hiddenName.length === 0) {
-            return;
-        }
-        const selectedOption = select.options[select.selectedIndex];
-        if (select.value && selectedOption) {
-            hiddenName.val((selectedOption.dataset.name || selectedOption.textContent || '').trim());
-        } else if (!hiddenName.val()) {
-            hiddenName.val('');
-        }
-    }
-
-    function addComponentRow(data = {}) {
-        if (!availableProducts.length) {
-            return;
-        }
-
-        const idx = componentIndex++;
-        const quantity = escapeForAttr(data.quantity || '');
-        const unit = escapeForAttr(data.unit || '');
-        const notes = escapeForAttr(data.notes || '');
-        const optionsHtml = renderProductOptions(data.product_id || '');
-        const nameValue = escapeForAttr(data.name || '');
-        const selectDisabled = availableProducts.length ? '' : 'disabled';
-
-        const row = `
-            <tr data-index="${idx}">
-                <td>
-                    <select class="form-select form-select-sm component-product select2-ingredients" name="components[${idx}][product_id]" required ${selectDisabled}>
-                        ${optionsHtml}
-                    </select>
-                    <input type="hidden" class="component-name" name="components[${idx}][name]" value="${nameValue}">
-                </td>
-                <td><input type="text" class="form-control form-control-sm" name="components[${idx}][quantity]" value="${quantity}" placeholder="e.g. 5 kg"></td>
-                <td><input type="text" class="form-control form-control-sm" name="components[${idx}][unit]" value="${unit}" placeholder="Unit"></td>
-                <td><input type="text" class="form-control form-control-sm" name="components[${idx}][notes]" value="${notes}" placeholder="Notes"></td>
-                <td class="text-center">
-                    <button type="button" class="btn btn-sm btn-outline-danger remove-component">
-                        <i class="fas fa-trash"></i>
-                    </button>
-                </td>
-            </tr>
-        `;
-        componentsBody.append(row);
-        const addedRow = componentsBody.find(`tr[data-index="${idx}"]`);
-        
-        if ($.fn.select2) {
-            addedRow.find('.select2-ingredients').select2({
-                width: '100%',
-                placeholder: 'Search product...'
-            });
-        }
-
-        syncComponentName(addedRow);
     }
 
     function renderFormulaPreview(formula) {
@@ -465,15 +422,13 @@ $selectedFormulaId = $old['formula_id'] ?? '';
         }
         let html = '<div class="fw-bold mb-1">' + escapeForAttr(formula.name || 'Untitled formula') + '</div>';
         html += formula.description ? '<p class="text-muted mb-1">' + escapeForAttr(formula.description) + '</p>' : '';
-        html += '<div class="text-muted small mb-1">Batch size: ' + (formula.batch_size || 'N/A') + '</div>';
+        html += '<div class="text-muted small mb-1">Standard batch size: ' + (formula.batch_size || 'N/A') + (formula.batch_unit ? ' ' + escapeForAttr(formula.batch_unit) : '') + '</div>';
         if (formula.components && formula.components.length) {
-            html += '<div class="table-responsive mb-1"><table class="table table-sm table-borderless mb-0">';
-            html += '<tbody>';
-            formula.components.forEach(component => {
-                html += '<tr><td class="text-dark fw-semibold">' + escapeForAttr(component.name || 'Component') + '</td>';
-                html += '<td>' + escapeForAttr(component.quantity || '') + '</td>';
-                html += '<td>' + escapeForAttr(component.unit || '') + '</td>';
-                html += '<td>' + escapeForAttr(component.notes || '') + '</td></tr>';
+            html += '<div class="table-responsive mb-1"><table class="table table-sm table-borderless mb-0"><tbody>';
+            formula.components.forEach(function (c) {
+                html += '<tr><td class="text-dark fw-semibold">' + escapeForAttr(c.name || 'Component') + '</td>';
+                html += '<td>' + escapeForAttr(c.quantity || '') + '</td>';
+                html += '<td>' + escapeForAttr(c.unit || '') + '</td></tr>';
             });
             html += '</tbody></table></div>';
         } else {
@@ -482,135 +437,93 @@ $selectedFormulaId = $old['formula_id'] ?? '';
         formulaPreview.html(html);
     }
 
-    function loadProductsForProvider(providerId) {
-        if (!providerId) {
-            productSelect.html('<option value="">Select provider first</option>');
-            productSelect.prop('disabled', true);
-            return;
-        }
-        productSelect.prop('disabled', true).html('<option>Loading products…</option>');
-        $.getJSON('../../ajax/get_final_products.php', { provider_id: providerId })
-            .done(function (resp) {
-                if (!resp.success) {
-                    productSelect.html('<option value="">Unable to load products</option>');
-                    return;
-                }
-                let options = '<option value="">Select final product</option>';
-                resp.products.forEach(product => {
-                    const label = escapeForAttr(product.name) + (product.sku ? ' (' + escapeForAttr(product.sku) + ')' : '');
-                    options += `<option value="${product.id}">${label}</option>`;
-                });
-                productSelect.html(options);
-                productSelect.prop('disabled', resp.products.length === 0);
-                if ($.fn.select2) {
-                    productSelect.trigger('change.select2');
-                }
-                if (pendingProductSelection) {
-                    productSelect.val(pendingProductSelection);
-                    if ($.fn.select2) {
-                        productSelect.trigger('change.select2');
-                    }
-                }
-            })
-            .fail(function () {
-                productSelect.html('<option value="">Unable to load products</option>');
+    function loadForCustomer(customerId) {
+        if (!customerId) {
+            productSelect.html('<option value="">Select customer first</option>').prop('disabled', true);
+            formulaSelect.html('<option value="">Select customer first</option>').prop('disabled', true);
+            packagingSelect.html('<option value="">— Select customer first —</option>').prop('disabled', true);
+            formulaPreview.html('<small class="text-muted">Choose a customer to reveal their saved formulas.</small>');
+            [productSelect, formulaSelect, packagingSelect].forEach(function (s) {
+                if ($.fn.select2) s.trigger('change.select2');
             });
-    }
-
-    function loadFormulasForProvider(providerId) {
-        if (!providerId) {
-            formulaSelect.html('<option value="">Select provider first</option>');
-            formulaSelect.prop('disabled', true);
-            formulaPreview.html('<small class="text-muted">Choose a provider to reveal their saved formulas.</small>');
             return;
         }
-        formulaSelect.prop('disabled', true).html('<option>Loading formulas…</option>');
-        $.getJSON('../../ajax/get_manufacturing_formulas.php', { provider_id: providerId })
+
+        // Load final products
+        productSelect.prop('disabled', true).html('<option>Loading…</option>');
+        $.getJSON('../../ajax/get_final_products.php', { provider_id: customerId })
             .done(function (resp) {
-                if (!resp.success) {
-                    formulaSelect.html('<option value="">Unable to load formulas</option>');
-                    formulaPreview.html('<small class="text-danger">Unable to load formulas for this provider.</small>');
-                    return;
+                let opts = '<option value="">Select final product</option>';
+                if (resp.success && resp.products.length) {
+                    resp.products.forEach(function (p) {
+                        const label = escapeForAttr(p.name) + (p.sku ? ' (' + escapeForAttr(p.sku) + ')' : '');
+                        const sel = pendingProductSelection && String(p.id) === String(pendingProductSelection) ? 'selected' : '';
+                        opts += `<option value="${p.id}" ${sel}>${label}</option>`;
+                    });
+                    productSelect.prop('disabled', false);
                 }
+                productSelect.html(opts);
+                if ($.fn.select2) productSelect.trigger('change.select2');
+                pendingProductSelection = '';
+            });
+
+        // Load formulas
+        formulaSelect.prop('disabled', true).html('<option>Loading…</option>');
+        $.getJSON('../../ajax/get_manufacturing_formulas.php', { provider_id: customerId })
+            .done(function (resp) {
                 loadedFormulas = resp.formulas || [];
-                let options = '<option value="">Use provider formula (optional)</option>';
-                loadedFormulas.forEach(formula => {
-                    options += `<option value="${formula.id}">${escapeForAttr(formula.name)}</option>`;
+                let opts = '<option value="">Select a formula</option>';
+                loadedFormulas.forEach(function (f) {
+                    const sel = pendingFormulaSelection && String(f.id) === String(pendingFormulaSelection) ? 'selected' : '';
+                    opts += `<option value="${f.id}" ${sel}>${escapeForAttr(f.name)}</option>`;
                 });
-                formulaSelect.html(options);
-                formulaSelect.prop('disabled', loadedFormulas.length === 0);
-                if ($.fn.select2) {
-                    formulaSelect.trigger('change.select2');
-                }
+                formulaSelect.html(opts).prop('disabled', loadedFormulas.length === 0);
+                if ($.fn.select2) formulaSelect.trigger('change.select2');
                 if (pendingFormulaSelection) {
-                    formulaSelect.val(pendingFormulaSelection);
-                    if ($.fn.select2) {
-                        formulaSelect.trigger('change.select2');
-                    }
-                    const match = loadedFormulas.find(f => String(f.id) === String(pendingFormulaSelection));
-                    if (match) {
-                        renderFormulaPreview(match);
-                    }
-                } else {
-                    formulaPreview.html('<small class="text-muted">Select a formula to preview components.</small>');
+                    const match = loadedFormulas.find(function (f) { return String(f.id) === String(pendingFormulaSelection); });
+                    if (match) renderFormulaPreview(match);
+                    pendingFormulaSelection = '';
                 }
-            })
-            .fail(function () {
-                formulaSelect.html('<option value="">Unable to load formulas</option>');
-                formulaPreview.html('<small class="text-danger">Unable to load formulas for this provider.</small>');
+            });
+
+        // Load packaging options
+        packagingSelect.prop('disabled', true).html('<option>Loading…</option>');
+        $.getJSON('../../ajax/get_packaging_options.php', { customer_id: customerId })
+            .done(function (resp) {
+                let opts = '<option value="">— No packaging option —</option>';
+                if (resp.success && resp.options.length) {
+                    resp.options.forEach(function (o) {
+                        opts += `<option value="${o.id}">${escapeForAttr(o.name)}</option>`;
+                    });
+                    packagingSelect.prop('disabled', false);
+                }
+                packagingSelect.html(opts);
+                if ($.fn.select2) packagingSelect.trigger('change.select2');
             });
     }
-
-    $(document).on('click', '.remove-component', function () {
-        $(this).closest('tr').remove();
-    });
-
-    $(document).on('change', '.component-product', function () {
-        const row = $(this).closest('tr');
-        syncComponentName(row);
-    });
 
     $(document).ready(function () {
         if ($.fn.select2) {
-            $('.select2').select2({
-                width: '100%'
-            });
+            $('.select2').select2({ width: '100%' });
         }
 
-        addComponentButton.on('click', function () {
-            if (!availableProducts.length) {
-                return;
-            }
-            addComponentRow();
-        });
+        bottleSizeSelect.on('change', updateBatchSizeDisplay);
+        numberOfBottlesInput.on('input', updateBatchSizeDisplay);
+        updateBatchSizeDisplay();
 
-        providerSelect.on('change', function () {
+        customerSelect.on('change', function () {
             pendingFormulaSelection = '';
             pendingProductSelection = '';
-            loadFormulasForProvider($(this).val());
-            loadProductsForProvider($(this).val());
+            loadForCustomer($(this).val());
         });
 
         formulaSelect.on('change', function () {
-            const selectedId = $(this).val();
-            const selectedFormula = loadedFormulas.find(formula => String(formula.id) === String(selectedId));
-            renderFormulaPreview(selectedFormula);
+            const match = loadedFormulas.find(function (f) { return String(f.id) === String($(this).val()); }.bind(this));
+            renderFormulaPreview(match || null);
         });
 
-        if (availableProducts.length) {
-            if (oldComponents.length) {
-                oldComponents.forEach(component => addComponentRow(component));
-            } else {
-                addComponentRow();
-                addComponentRow();
-            }
-        } else {
-            componentsBody.html('<tr><td colspan="5" class="text-center text-muted small py-3">Add catalog products before building or customizing a formula.</td></tr>');
-        }
-
-        if (providerSelect.val()) {
-            loadFormulasForProvider(providerSelect.val());
-            loadProductsForProvider(providerSelect.val());
+        if (customerSelect.val()) {
+            loadForCustomer(customerSelect.val());
         }
     });
 </script>
