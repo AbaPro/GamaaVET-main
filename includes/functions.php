@@ -119,7 +119,17 @@ function hasRole($permissionKey) {
 
 // Function to redirect
 function redirect($url) {
-    header("Location: $url");
+    $target = (string)$url;
+
+    if (!headers_sent()) {
+        header("Location: $target");
+        exit();
+    }
+
+    // Fallback when output already started (avoid header warning).
+    $escapedTarget = htmlspecialchars($target, ENT_QUOTES, 'UTF-8');
+    echo '<script>window.location.href="' . $escapedTarget . '";</script>';
+    echo '<noscript><meta http-equiv="refresh" content="0;url=' . $escapedTarget . '"></noscript>';
     exit();
 }
 
@@ -255,8 +265,10 @@ function getProductComponents($product_id) {
     return $result->fetch_all(MYSQLI_ASSOC);
 }
 
-function formatCurrency($amount) {
-    return number_format($amount, 2) . ' EGP';
+function formatCurrency($amount, $currency = 'EGP') {
+    $symbols = ['EGP' => 'ج.م', 'USD' => '$', 'EUR' => '€', 'SAR' => 'ر.س'];
+    $symbol = $symbols[$currency] ?? $currency;
+    return number_format($amount, 2) . ' ' . $symbol;
 }
 
 function formatDateTime($datetime) {

@@ -542,6 +542,7 @@ $productsTableColspan += 1;
                         <div class="col-md-6 mb-3">
                             <label for="image" class="form-label">Product Image</label>
                             <input type="file" class="form-control" id="image" name="image" accept="image/*">
+                            <div id="image_preview" class="mt-2"></div>
                         </div>
                     </div>
                     <div class="mb-3">
@@ -733,6 +734,37 @@ $productsTableColspan += 1;
         });
     };
 
+    const renderProductImagePreview = (targetSelector, imageUrl, emptyText = 'No image uploaded') => {
+        const preview = document.querySelector(targetSelector);
+        if (!preview) {
+            return;
+        }
+
+        if (imageUrl) {
+            preview.innerHTML = `<img src="${imageUrl}" alt="Product image preview" class="img-thumbnail" style="max-height: 100px; object-fit: cover;">`;
+            return;
+        }
+
+        preview.innerHTML = `<p class="text-muted mb-0">${emptyText}</p>`;
+    };
+
+    const bindLocalImagePreview = (inputSelector, previewSelector) => {
+        const input = document.querySelector(inputSelector);
+        if (!input) {
+            return;
+        }
+
+        input.addEventListener('change', function () {
+            const file = this.files && this.files[0];
+            if (!file) {
+                renderProductImagePreview(previewSelector, null);
+                return;
+            }
+
+            renderProductImagePreview(previewSelector, URL.createObjectURL(file));
+        });
+    };
+
     $(document).ready(function() {
         if ($.fn.DataTable && $('#productsTable').length && !$.fn.DataTable.isDataTable('#productsTable')) {
             $('#productsTable').DataTable({
@@ -744,6 +776,8 @@ $productsTableColspan += 1;
 
         initProductPricingControls();
         initSearchableSelects();
+        bindLocalImagePreview('#image', '#image_preview');
+        bindLocalImagePreview('#edit_image', '#current_image');
 
         const addProductModal = document.getElementById('addProductModal');
         if (addProductModal) {
@@ -762,6 +796,9 @@ $productsTableColspan += 1;
                 const barcodeInput = document.getElementById('barcode');
                 if (skuInput) skuInput.value = '';
                 if (barcodeInput) barcodeInput.value = '';
+                const imageInput = document.getElementById('image');
+                if (imageInput) imageInput.value = '';
+                renderProductImagePreview('#image_preview', null);
             });
         }
 
@@ -828,6 +865,11 @@ $productsTableColspan += 1;
                 $('#edit_subcategory_id').val(subcategory);
             }, 500);
 
+            const editImageInput = document.getElementById('edit_image');
+            if (editImageInput) {
+                editImageInput.value = '';
+            }
+
             // Load product image via AJAX
             $.ajax({
                 url: '../../ajax/get_product_image.php',
@@ -837,11 +879,14 @@ $productsTableColspan += 1;
                 },
                 dataType: 'json',
                 success: function(response) {
-                    if (response.image) {
-                        $('#current_image').html('<img src="../../assets/uploads/products/' + response.image + '" style="max-height: 100px;">');
+                    if (response.success && response.image_url) {
+                        renderProductImagePreview('#current_image', response.image_url);
                     } else {
-                        $('#current_image').html('<p>No image uploaded</p>');
+                        renderProductImagePreview('#current_image', null);
                     }
+                },
+                error: function() {
+                    renderProductImagePreview('#current_image', null);
                 }
             });
 

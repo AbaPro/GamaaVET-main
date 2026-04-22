@@ -31,5 +31,15 @@ if ($result->num_rows === 0) {
 $product = $result->fetch_assoc();
 $stmt->close();
 
-echo json_encode(['success' => true, 'image' => $product['image']]);
+$imageName = $product['image'] ?? '';
+$imageFilePath = $imageName ? __DIR__ . '/../assets/uploads/products/' . $imageName : '';
+$imageUrl = ($imageName && file_exists($imageFilePath))
+    ? '../../assets/uploads/products/' . rawurlencode($imageName)
+    : null;
+
+echo json_encode([
+    'success' => true,
+    'image' => $imageName,
+    'image_url' => $imageUrl
+]);
 ?>

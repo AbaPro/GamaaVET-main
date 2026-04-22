@@ -132,7 +132,11 @@ $result = $conn->query($sql);
                                         </button>
                                         <ul class="dropdown-menu">
                                             <li><a class="dropdown-item" href="view.php?id=<?php echo $row['id']; ?>"><i class="fas fa-eye"></i> View</a></li>
-                                            <li><a class="dropdown-item edit-vendor" href="#" data-id="<?php echo $row['id']; ?>"><i class="fas fa-edit"></i> Edit</a></li>
+                                            <li>
+                                                <button type="button" class="dropdown-item edit-vendor" data-id="<?php echo $row['id']; ?>">
+                                                    <i class="fas fa-edit"></i> Edit
+                                                </button>
+                                            </li>
                                             <li><a class="dropdown-item" href="contacts.php?id=<?php echo $row['id']; ?>"><i class="fas fa-address-book"></i> Contacts</a></li>
                                             <li><a class="dropdown-item" href="wallet.php?id=<?php echo $row['id']; ?>"><i class="fas fa-wallet"></i> Wallet</a></li>
                                             <li><hr class="dropdown-divider"></li>

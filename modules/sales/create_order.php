@@ -77,15 +77,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
         $total_amount = max(0, $itemsSubtotal - $discount_amount) + $shippingCost;
         $notes = $_POST['notes'] ?? null;
+        $currency      = in_array($_POST['currency'] ?? '', ['EGP', 'USD', 'EUR', 'SAR']) ? $_POST['currency'] : 'EGP';
+        $exchange_rate = isset($_POST['exchange_rate']) && (float)$_POST['exchange_rate'] > 0 ? (float)$_POST['exchange_rate'] : 1.0000;
 
         // Insert order
         $stmt = $pdo->prepare("
             INSERT INTO orders (
-                internal_id, customer_id, factory_id, contact_id, order_date, status, 
-                total_amount, paid_amount, discount_percentage, discount_basis, discount_amount,
+                internal_id, customer_id, factory_id, contact_id, order_date, status,
+                total_amount, currency, exchange_rate, paid_amount,
+                discount_percentage, discount_basis, discount_amount,
                 discount_product_count, free_sample_count, shipping_cost_type, shipping_cost,
                 notes, created_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
 
         $stmt->execute([
@@ -96,6 +99,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $_POST['order_date'],
             'new',
             $total_amount,
+            $currency,
+            $exchange_rate,
             0.00,
             $discount_percentage,
             $discount_basis,
@@ -170,6 +175,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $_SESSION['error'] = "Error creating order: " . $e->getMessage();
     }
 }
+
+// Get currencies for dropdown
+$currencies = $pdo->query("SELECT * FROM currencies ORDER BY is_default DESC, code ASC")->fetchAll(PDO::FETCH_ASSOC);
 
 // Get customers for dropdown
 $customers = $pdo->query("SELECT id, name FROM customers ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
@@ -253,6 +261,24 @@ require_once '../../includes/header.php';
                             <label for="notes" class="form-label">Notes</label>
                             <textarea class="form-control" id="notes" name="notes" rows="2"></textarea>
                         </div>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-3 mb-3">
+                        <label for="currency" class="form-label">Currency</label>
+                        <select class="form-select" id="currency" name="currency">
+                            <?php foreach ($currencies as $cur): ?>
+                                <option value="<?= $cur['code'] ?>" <?= $cur['is_default'] ? 'selected' : '' ?>>
+                                    <?= htmlspecialchars($cur['code']) ?> — <?= htmlspecialchars($cur['name']) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="col-md-3 mb-3" id="exchange_rate_field" style="display:none;">
+                        <label for="exchange_rate" class="form-label">Exchange Rate <small class="text-muted">(to EGP)</small></label>
+                        <input type="number" class="form-control" id="exchange_rate" name="exchange_rate"
+                               step="0.0001" min="0.0001" value="1.0000">
                     </div>
                 </div>
             </div>
@@ -766,6 +792,16 @@ require_once '../../includes/header.php';
         // Initialize summary on first load
         updateFreeSampleCounter();
         updateSummary();
+    });
+
+    // Currency exchange rate toggle
+    $('#currency').on('change', function() {
+        if ($(this).val() !== 'EGP') {
+            $('#exchange_rate_field').show();
+        } else {
+            $('#exchange_rate_field').hide();
+            $('#exchange_rate').val('1.0000');
+        }
     });
 </script>
 

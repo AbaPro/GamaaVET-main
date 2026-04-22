@@ -11,15 +11,15 @@ if (!hasPermission('sales.orders.view_all')) {
 }
 
 // Filter parameters
-// Filter parameters
 $status = $_GET['status'] ?? '';
 $customer_ids = $_GET['customer_ids'] ?? [];
 if (!is_array($customer_ids)) {
     $customer_ids = !empty($customer_ids) ? [$customer_ids] : [];
 }
-$date_from = $_GET['date_from'] ?? '';
-$date_to = $_GET['date_to'] ?? '';
-$sort_by = $_GET['sort_by'] ?? 'date_desc';
+$date_from       = $_GET['date_from'] ?? '';
+$date_to         = $_GET['date_to'] ?? '';
+$sort_by         = $_GET['sort_by'] ?? 'date_desc';
+$currency_filter = $_GET['currency'] ?? '';
 $sortOptions = [
     'date_desc' => 'o.order_date DESC',
     'date_asc' => 'o.order_date ASC',
@@ -33,8 +33,8 @@ if (!array_key_exists($sort_by, $sortOptions)) {
 }
 
 // Build query
-$query = "SELECT o.id, o.internal_id, o.order_date, o.total_amount, o.paid_amount, 
-                 o.status, c.name AS customer_name 
+$query = "SELECT o.id, o.internal_id, o.order_date, o.total_amount, o.paid_amount,
+                 o.status, o.currency, c.name AS customer_name
           FROM orders o
           JOIN customers c ON o.customer_id = c.id
           WHERE 1=1";
@@ -61,6 +61,11 @@ if (!empty($date_from)) {
 if (!empty($date_to)) {
     $query .= " AND o.order_date <= ?";
     $params[] = $date_to;
+}
+
+if (!empty($currency_filter)) {
+    $query .= " AND o.currency = ?";
+    $params[] = $currency_filter;
 }
 
 $query .= " ORDER BY " . $sortOptions[$sort_by];
@@ -123,7 +128,7 @@ $canDeleteOrders = hasPermission('sales.orders.delete');
                         <label for="date_to" class="form-label">To Date</label>
                         <input type="date" class="form-control" id="date_to" name="date_to" value="<?= $date_to ?>">
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-md-2">
                         <label for="sort_by" class="form-label">Sort By</label>
                         <select class="form-select" id="sort_by" name="sort_by">
                             <option value="date_desc" <?= $sort_by === 'date_desc' ? 'selected' : '' ?>>Newest First</option>
@@ -132,6 +137,15 @@ $canDeleteOrders = hasPermission('sales.orders.delete');
                             <option value="customer_desc" <?= $sort_by === 'customer_desc' ? 'selected' : '' ?>>Customer (Z-A)</option>
                             <option value="total_desc" <?= $sort_by === 'total_desc' ? 'selected' : '' ?>>Value (High-Low)</option>
                             <option value="total_asc" <?= $sort_by === 'total_asc' ? 'selected' : '' ?>>Value (Low-High)</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label for="currency" class="form-label">Currency</label>
+                        <select class="form-select" id="currency" name="currency">
+                            <option value="">All</option>
+                            <?php foreach (['EGP', 'USD', 'EUR', 'SAR'] as $c): ?>
+                                <option value="<?= $c ?>" <?= $currency_filter === $c ? 'selected' : '' ?>><?= $c ?></option>
+                            <?php endforeach; ?>
                         </select>
                     </div>
                     <div class="col-md-12 d-flex justify-content-between align-items-end">
@@ -158,6 +172,7 @@ $canDeleteOrders = hasPermission('sales.orders.delete');
                             <th>Order ID</th>
                             <th>Customer</th>
                             <th>Date</th>
+                            <th>Currency</th>
                             <?php if ($canViewPrices): ?>
                             <th>Total</th>
                             <th>Paid</th>
@@ -195,6 +210,7 @@ $canDeleteOrders = hasPermission('sales.orders.delete');
                                 </td>
                                 <td><?= htmlspecialchars($order['customer_name']) ?></td>
                                 <td><?= date('d/m/Y', strtotime($order['order_date'])) ?></td>
+                                <td><span class="badge bg-light text-dark border"><?= htmlspecialchars($order['currency'] ?? 'EGP') ?></span></td>
                                 <?php if ($canViewPrices): ?>
                                 <td><?= number_format($order['total_amount'], 2) ?></td>
                                 <td><?= number_format($order['paid_amount'], 2) ?></td>

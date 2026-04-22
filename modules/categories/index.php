@@ -7,9 +7,6 @@ if (!hasPermission('categories.manage')) {
     redirect('../../dashboard.php');
 }
 
-$page_title = 'Categories Management';
-require_once '../../includes/header.php';
-
 // Handle delete request
 if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
     $id = sanitize($_GET['delete']);
@@ -53,6 +50,9 @@ if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
     }
     redirect('index.php');
 }
+
+$page_title = 'Categories Management';
+require_once '../../includes/header.php';
 
 // Fetch all categories
 $sql = "SELECT c1.*, c2.name as parent_name 

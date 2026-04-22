@@ -34,17 +34,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $notes = $_POST['notes'] ?? '';
         $is_recurring = isset($_POST['is_recurring']) ? 1 : 0;
         $recurrence_interval = $_POST['recurrence_interval'] ?? null;
+        $account_id = !empty($_POST['account_id']) ? (int)$_POST['account_id'] : null;
+        $currency = in_array($_POST['currency'] ?? '', ['EGP', 'USD', 'EUR', 'SAR']) ? $_POST['currency'] : 'EGP';
         
         $status = 'pending';
         $paid_amount = 0;
 
         if ($is_edit) {
-            $stmt = $pdo->prepare("UPDATE expenses SET category_id = ?, vendor_id = ?, po_id = ?, name = ?, amount = ?, expense_date = ?, notes = ?, is_recurring = ?, recurrence_interval = ? WHERE id = ?");
-            $stmt->execute([$category_id, $vendor_id, $po_id, $name, $amount, $expense_date, $notes, $is_recurring, $recurrence_interval, $expense['id']]);
+            $stmt = $pdo->prepare("UPDATE expenses SET account_id = ?, category_id = ?, vendor_id = ?, po_id = ?, name = ?, amount = ?, currency = ?, expense_date = ?, notes = ?, is_recurring = ?, recurrence_interval = ? WHERE id = ?");
+            $stmt->execute([$account_id, $category_id, $vendor_id, $po_id, $name, $amount, $currency, $expense_date, $notes, $is_recurring, $recurrence_interval, $expense['id']]);
             $expense_id = $expense['id'];
         } else {
-            $stmt = $pdo->prepare("INSERT INTO expenses (category_id, vendor_id, po_id, name, amount, expense_date, notes, status, created_by, is_recurring, recurrence_interval) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmt->execute([$category_id, $vendor_id, $po_id, $name, $amount, $expense_date, $notes, $status, $_SESSION['user_id'], $is_recurring, $recurrence_interval]);
+            $stmt = $pdo->prepare("INSERT INTO expenses (account_id, category_id, vendor_id, po_id, name, amount, currency, expense_date, notes, status, created_by, is_recurring, recurrence_interval) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->execute([$account_id, $category_id, $vendor_id, $po_id, $name, $amount, $currency, $expense_date, $notes, $status, $_SESSION['user_id'], $is_recurring, $recurrence_interval]);
             $expense_id = $pdo->lastInsertId();
         }
 
@@ -116,9 +118,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // Fetch Data for form
 $categories = $pdo->query("SELECT * FROM expense_categories ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
-$vendors = $pdo->query("SELECT id, name FROM vendors ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
-$safes = $pdo->query("SELECT id, name FROM safes ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
-$banks = $pdo->query("SELECT id, bank_name, account_number FROM bank_accounts ORDER BY bank_name ASC")->fetchAll(PDO::FETCH_ASSOC);
+$vendors    = $pdo->query("SELECT id, name FROM vendors ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+$safes      = $pdo->query("SELECT id, name FROM safes ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+$banks      = $pdo->query("SELECT id, bank_name, account_number FROM bank_accounts ORDER BY bank_name ASC")->fetchAll(PDO::FETCH_ASSOC);
+$accounts   = $pdo->query("SELECT * FROM accounts WHERE is_active = 1 ORDER BY id ASC")->fetchAll(PDO::FETCH_ASSOC);
+$currencies = $pdo->query("SELECT * FROM currencies ORDER BY is_default DESC, code ASC")->fetchAll(PDO::FETCH_ASSOC);
+
+// Pre-select account from session login_region
+$region_slug = $_SESSION['login_region'] ?? 'factory';
+$acc_stmt = $pdo->prepare("SELECT id FROM accounts WHERE slug = ?");
+$acc_stmt->execute([$region_slug]);
+$default_account_id = $acc_stmt->fetchColumn() ?: null;
 
 $page_title = ($is_edit ? 'Edit' : 'Record') . ' Expense';
 require_once '../../../includes/header.php';
@@ -154,12 +164,31 @@ require_once '../../../includes/header.php';
                                     <?php endforeach; ?>
                                 </select>
                             </div>
-                            <div class="col-md-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Account</label>
+                                <select name="account_id" class="form-select">
+                                    <?php foreach ($accounts as $acc): ?>
+                                        <option value="<?= $acc['id'] ?>"
+                                            <?= ($expense['account_id'] ?? $default_account_id) == $acc['id'] ? 'selected' : '' ?>>
+                                            <?= htmlspecialchars($acc['name']) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
                                 <label class="form-label">Amount *</label>
-                                <div class="input-group">
-                                    <input type="number" name="amount" class="form-control" step="0.01" value="<?= $expense['amount'] ?? '' ?>" required>
-                                    <span class="input-group-text">EGP</span>
-                                </div>
+                                <input type="number" name="amount" class="form-control" step="0.01" value="<?= $expense['amount'] ?? '' ?>" required>
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label">Currency</label>
+                                <select name="currency" class="form-select">
+                                    <?php foreach ($currencies as $cur): ?>
+                                        <option value="<?= $cur['code'] ?>"
+                                            <?= ($expense['currency'] ?? 'EGP') == $cur['code'] ? 'selected' : '' ?>>
+                                            <?= htmlspecialchars($cur['code']) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
                             </div>
                             <div class="col-md-3">
                                 <label class="form-label">Date *</label>

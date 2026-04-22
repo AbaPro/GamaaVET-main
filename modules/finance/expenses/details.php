@@ -10,12 +10,14 @@ if (!hasPermission('finance.expenses.view')) {
 
 $expense_id = $_GET['id'] ?? 0;
 
-$sql = "SELECT e.*, ec.name as category_name, u.name as creator_name, v.name as vendor_name, po.id as po_id, po.status as po_status
+$sql = "SELECT e.*, ec.name as category_name, u.name as creator_name, v.name as vendor_name,
+               po.id as po_id, po.status as po_status, a.name as account_name
         FROM expenses e
         JOIN expense_categories ec ON e.category_id = ec.id
         JOIN users u ON e.created_by = u.id
         LEFT JOIN vendors v ON e.vendor_id = v.id
         LEFT JOIN purchase_orders po ON e.po_id = po.id
+        LEFT JOIN accounts a ON e.account_id = a.id
         WHERE e.id = ?";
 $stmt = $pdo->prepare($sql);
 $stmt->execute([$expense_id]);
@@ -33,7 +35,7 @@ $sql_payments = "SELECT ep.*, u.name as recorder_name, s.name as safe_name, b.ba
                  LEFT JOIN safes s ON ep.safe_id = s.id
                  LEFT JOIN bank_accounts b ON ep.bank_account_id = b.id
                  WHERE ep.expense_id = ?
-                 ORDER BY ep.payment_date DESC";
+                 ORDER BY ep.created_at DESC";
 $stmt = $pdo->prepare($sql_payments);
 $stmt->execute([$expense_id]);
 $payments = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -71,6 +73,7 @@ require_once '../../../includes/header.php';
                     <div class="text-center mb-4">
                         <div class="display-6 fw-bold"><?= number_format($expense['amount'], 2) ?></div>
                         <div class="text-muted text-uppercase small">Total Amount</div>
+                        <span class="badge bg-secondary mt-1"><?= htmlspecialchars($expense['currency'] ?? 'EGP') ?></span>
                     </div>
                     <hr>
                     <div class="d-flex justify-content-between mb-2">
@@ -136,6 +139,12 @@ require_once '../../../includes/header.php';
                             </td>
                         </tr>
                         <?php endif; ?>
+                        <?php if ($expense['account_name']): ?>
+                        <tr>
+                            <td class="text-muted">Account:</td>
+                            <td class="text-end fw-bold"><?= htmlspecialchars($expense['account_name']) ?></td>
+                        </tr>
+                        <?php endif; ?>
                         <?php if ($expense['is_recurring']): ?>
                         <tr>
                             <td class="text-muted">Recurring:</td>
@@ -175,7 +184,7 @@ require_once '../../../includes/header.php';
                             <tbody>
                                 <?php foreach ($payments as $p): ?>
                                 <tr>
-                                    <td class="ps-3 small"><?= date('M j, Y g:i A', strtotime($p['payment_date'])) ?></td>
+                                    <td class="ps-3 small"><?= date('M j, Y g:i A', strtotime($p['created_at'])) ?></td>
                                     <td><?= ucfirst($p['payment_method']) ?></td>
                                     <td>
                                         <?php if ($p['safe_name']): ?>

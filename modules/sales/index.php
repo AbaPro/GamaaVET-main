@@ -23,22 +23,26 @@ $stats = [
 
 /* Use $conn (MySQLi) instead of $pdo (PDO) */
 
-// Today's sales
-$stmt = $conn->prepare("SELECT SUM(total_amount) FROM orders WHERE DATE(order_date) = ?");
+// Today's sales grouped by currency
+$stmt = $conn->prepare("SELECT currency, SUM(total_amount) as total FROM orders WHERE DATE(order_date) = ? GROUP BY currency");
 $stmt->bind_param("s", $today);
 $stmt->execute();
-$stmt->bind_result($today_sales);
-$stmt->fetch();
-$stats['today_sales'] = $today_sales ?: 0;
+$result = $stmt->get_result();
+$today_by_currency = [];
+while ($row = $result->fetch_assoc()) {
+    $today_by_currency[$row['currency']] = $row['total'];
+}
 $stmt->close();
 
-// Month's sales
-$stmt = $conn->prepare("SELECT SUM(total_amount) FROM orders WHERE DATE(order_date) BETWEEN ? AND ?");
+// Month's sales grouped by currency
+$stmt = $conn->prepare("SELECT currency, SUM(total_amount) as total FROM orders WHERE DATE(order_date) BETWEEN ? AND ? GROUP BY currency");
 $stmt->bind_param("ss", $month_start, $today);
 $stmt->execute();
-$stmt->bind_result($month_sales);
-$stmt->fetch();
-$stats['month_sales'] = $month_sales ?: 0;
+$result = $stmt->get_result();
+$month_by_currency = [];
+while ($row = $result->fetch_assoc()) {
+    $month_by_currency[$row['currency']] = $row['total'];
+}
 $stmt->close();
 
 // Pending orders
@@ -64,23 +68,38 @@ $stmt->close();
 
     <?php include '../../includes/messages.php'; ?>
 
-    <div class="row mb-4">
+    <!-- Per-currency sales cards -->
+    <?php
+    $all_currencies = array_unique(array_merge(array_keys($today_by_currency), array_keys($month_by_currency)));
+    if (empty($all_currencies)) $all_currencies = ['EGP'];
+    $cur_symbols = ['EGP' => 'ج.م', 'USD' => '$', 'EUR' => '€', 'SAR' => 'ر.س'];
+    ?>
+    <?php foreach ($all_currencies as $cur):
+        $sym = $cur_symbols[$cur] ?? $cur;
+        $today_val = $today_by_currency[$cur] ?? 0;
+        $month_val = $month_by_currency[$cur] ?? 0;
+    ?>
+    <div class="row mb-2">
+        <div class="col-12"><h6 class="text-muted text-uppercase fw-bold mb-2"><i class="fas fa-coins me-1"></i> <?= htmlspecialchars($cur) ?></h6></div>
         <div class="col-md-3">
-            <div class="card text-white bg-primary">
+            <div class="card text-white bg-primary mb-3">
                 <div class="card-body">
                     <h5 class="card-title">Today's Sales</h5>
-                    <p class="card-text h4"><?= number_format($stats['today_sales'], 2) ?> USD</p>
+                    <p class="card-text h4"><?= $sym ?> <?= number_format($today_val, 2) ?></p>
                 </div>
             </div>
         </div>
         <div class="col-md-3">
-            <div class="card text-white bg-success">
+            <div class="card text-white bg-success mb-3">
                 <div class="card-body">
                     <h5 class="card-title">Month's Sales</h5>
-                    <p class="card-text h4"><?= number_format($stats['month_sales'], 2) ?> USD</p>
+                    <p class="card-text h4"><?= $sym ?> <?= number_format($month_val, 2) ?></p>
                 </div>
             </div>
         </div>
+    </div>
+    <?php endforeach; ?>
+    <div class="row mb-4">
         <div class="col-md-3">
             <div class="card text-white bg-warning">
                 <div class="card-body">

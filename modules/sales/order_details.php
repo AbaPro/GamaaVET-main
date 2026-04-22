@@ -253,6 +253,11 @@ require_once '../../includes/header.php';
                 <div class="col-md-6">
                     <h5>Order Information</h5>
                     <p><strong>Order Date:</strong> <?= date('M d, Y', strtotime($order['order_date'])) ?></p>
+                    <p><strong>Currency:</strong> <span class="badge bg-secondary"><?= htmlspecialchars($order['currency'] ?? 'EGP') ?></span>
+                        <?php if (!empty($order['exchange_rate']) && (float)$order['exchange_rate'] != 1.0): ?>
+                            <small class="text-muted ms-1">Rate: <?= number_format($order['exchange_rate'], 4) ?></small>
+                        <?php endif; ?>
+                    </p>
                     <p><strong>Created By:</strong> <?= htmlspecialchars($order['created_by_name']) ?></p>
                     <?php if (hasPermission('sales.orders.discount.view')): ?>
                         <?php if ($order['discount_percentage'] > 0 || $discountAmount > 0 || $order['discount_product_count'] > 0 || $order['free_sample_count'] > 0): ?>
@@ -405,7 +410,10 @@ require_once '../../includes/header.php';
                             <?php endif; ?>
                             <tr>
                                 <td colspan="5" class="text-end"><strong>Total:</strong></td>
-                                <td><?= $canViewFinalPrices ? number_format($order['total_amount'], 2) : '<span class="text-muted">Hidden</span>' ?></td>
+                                <td>
+                                    <?= $canViewFinalPrices ? number_format($order['total_amount'], 2) : '<span class="text-muted">Hidden</span>' ?>
+                                    <span class="badge bg-secondary ms-1"><?= htmlspecialchars($order['currency'] ?? 'EGP') ?></span>
+                                </td>
                                 <td></td>
                             </tr>
                             <tr>
