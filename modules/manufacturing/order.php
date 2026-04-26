@@ -83,9 +83,14 @@ if (!empty($compProductIds)) {
     }
 }
 
-// Check and sync sourcing components to match current formula components
+// Check and sync sourcing components to match current formula components.
+// Only read formula-sourced rows so packaging rows (same index range) don't collide.
 $existingSourcing = [];
-$getSourcingStmt = $conn->prepare("SELECT id, formula_component_index FROM manufacturing_sourcing_components WHERE manufacturing_order_id = ?");
+$hasSourceCol = $conn->query("SHOW COLUMNS FROM manufacturing_sourcing_components LIKE 'source'")->num_rows > 0;
+$getSourcingSQL = $hasSourceCol
+    ? "SELECT id, formula_component_index FROM manufacturing_sourcing_components WHERE manufacturing_order_id = ? AND (source = 'formula' OR source IS NULL)"
+    : "SELECT id, formula_component_index FROM manufacturing_sourcing_components WHERE manufacturing_order_id = ?";
+$getSourcingStmt = $conn->prepare($getSourcingSQL);
 $getSourcingStmt->bind_param("i", $orderId);
 $getSourcingStmt->execute();
 $res = $getSourcingStmt->get_result();
@@ -114,12 +119,21 @@ foreach ($formulaComponents as $index => $component) {
         $updateSourcingStmt->close();
     } else {
         // Insert new record for new formula component
-        $insertSourcingStmt = $conn->prepare("
-            INSERT INTO manufacturing_sourcing_components 
-            (manufacturing_order_id, formula_component_index, product_id, component_name, required_quantity, unit, available_quantity)
-            VALUES (?, ?, ?, ?, ?, ?, 0)
-        ");
-        $insertSourcingStmt->bind_param("iiisds", $orderId, $index, $productId, $componentName, $requiredQty, $unit);
+        if ($hasSourceCol) {
+            $insertSourcingStmt = $conn->prepare("
+                INSERT INTO manufacturing_sourcing_components
+                (manufacturing_order_id, source, formula_component_index, product_id, component_name, required_quantity, unit, available_quantity)
+                VALUES (?, 'formula', ?, ?, ?, ?, ?, 0)
+            ");
+            $insertSourcingStmt->bind_param("iiisds", $orderId, $index, $productId, $componentName, $requiredQty, $unit);
+        } else {
+            $insertSourcingStmt = $conn->prepare("
+                INSERT INTO manufacturing_sourcing_components
+                (manufacturing_order_id, formula_component_index, product_id, component_name, required_quantity, unit, available_quantity)
+                VALUES (?, ?, ?, ?, ?, ?, 0)
+            ");
+            $insertSourcingStmt->bind_param("iiisds", $orderId, $index, $productId, $componentName, $requiredQty, $unit);
+        }
         $insertSourcingStmt->execute();
         $insertSourcingStmt->close();
     }
@@ -132,6 +146,21 @@ foreach ($existingSourcing as $index => $id) {
         $deleteSourcingStmt->bind_param("i", $id);
         $deleteSourcingStmt->execute();
         $deleteSourcingStmt->close();
+    }
+}
+
+// Clean up stale duplicate formula rows: keep only the IDs tracked in $existingSourcing,
+// delete any other formula-source rows for this order that slipped in from old bug.
+if ($hasSourceCol) {
+    $knownIds = array_values($existingSourcing);
+    if (!empty($knownIds)) {
+        $placeholders = implode(',', array_fill(0, count($knownIds), '?'));
+        $types = str_repeat('i', count($knownIds) + 1);
+        $cleanupStmt = $conn->prepare("DELETE FROM manufacturing_sourcing_components WHERE manufacturing_order_id = ? AND (source = 'formula' OR source IS NULL) AND id NOT IN ($placeholders)");
+        $params = array_merge([$orderId], $knownIds);
+        $cleanupStmt->bind_param($types, ...$params);
+        $cleanupStmt->execute();
+        $cleanupStmt->close();
     }
 }
 
@@ -329,10 +358,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $componentNotes = $_POST['component_notes'] ?? [];
         if (is_array($componentNotes)) {
             foreach ($componentNotes as $compId => $compNote) {
-                $updateNoteStmt = $conn->prepare("UPDATE manufacturing_sourcing_components SET notes = ? WHERE id = ? AND manufacturing_order_id = ?");
-                $updateNoteStmt->bind_param("sii", $compNote, $compId, $orderId);
-                $updateNoteStmt->execute();
-                $updateNoteStmt->close();
+                // Look up the component_name and product_id for this row so we can update all
+                // duplicate rows (same product/name) in one go.
+                $lookupStmt = $conn->prepare("SELECT component_name, product_id, unit FROM manufacturing_sourcing_components WHERE id = ? AND manufacturing_order_id = ?");
+                $lookupStmt->bind_param("ii", $compId, $orderId);
+                $lookupStmt->execute();
+                $lookupRow = $lookupStmt->get_result()->fetch_assoc();
+                $lookupStmt->close();
+
+                if ($lookupRow) {
+                    if ($lookupRow['product_id']) {
+                        $updateNoteStmt = $conn->prepare("UPDATE manufacturing_sourcing_components SET notes = ? WHERE manufacturing_order_id = ? AND product_id = ? AND unit = ?");
+                        $updateNoteStmt->bind_param("siis", $compNote, $orderId, $lookupRow['product_id'], $lookupRow['unit']);
+                    } else {
+                        $updateNoteStmt = $conn->prepare("UPDATE manufacturing_sourcing_components SET notes = ? WHERE manufacturing_order_id = ? AND component_name = ? AND unit = ?");
+                        $updateNoteStmt->bind_param("siss", $compNote, $orderId, $lookupRow['component_name'], $lookupRow['unit']);
+                    }
+                    $updateNoteStmt->execute();
+                    $updateNoteStmt->close();
+                }
             }
         }
     }
@@ -540,14 +584,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // Check if all required quantities are available
         // Only check products (components with product_id), skip manual components
         $sourcingStmt = $conn->prepare("
-            SELECT msc.id, msc.component_name, msc.product_id, msc.required_quantity, msc.unit,
-                   p.barcode, COALESCE(SUM(ip.quantity), 0) AS available_qty
+            SELECT msc.component_name, msc.product_id, SUM(msc.required_quantity) AS required_quantity, msc.unit,
+                   p.barcode, COALESCE(SUM(DISTINCT ip.quantity), 0) AS available_qty
             FROM manufacturing_sourcing_components msc
             LEFT JOIN products p ON p.id = msc.product_id
             LEFT JOIN inventories inv ON inv.location_id = ?
             LEFT JOIN inventory_products ip ON ip.product_id = msc.product_id AND ip.inventory_id = inv.id
             WHERE msc.manufacturing_order_id = ? AND msc.product_id IS NOT NULL
-            GROUP BY msc.id, msc.component_name, msc.product_id, msc.required_quantity, msc.unit, p.barcode
+            GROUP BY msc.component_name, msc.product_id, msc.unit, p.barcode
         ");
         $sourcingStmt->bind_param("ii", $order['location_id'], $orderId);
         $sourcingStmt->execute();
@@ -572,9 +616,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // Deduct all sourcing components from inventory (only if deducted_at column exists)
         $hasDeductedAt = $conn->query("SHOW COLUMNS FROM manufacturing_sourcing_components LIKE 'deducted_at'")->num_rows > 0;
 
+        // Group by product_id to merge duplicate formula rows before deducting inventory.
         $deductSql = $hasDeductedAt
-            ? "SELECT msc.id, msc.product_id, msc.required_quantity FROM manufacturing_sourcing_components msc WHERE msc.manufacturing_order_id = ? AND msc.product_id IS NOT NULL AND msc.deducted_at IS NULL"
-            : "SELECT msc.id, msc.product_id, msc.required_quantity FROM manufacturing_sourcing_components msc WHERE msc.manufacturing_order_id = ? AND msc.product_id IS NOT NULL";
+            ? "SELECT GROUP_CONCAT(msc.id) AS ids, msc.product_id, SUM(msc.required_quantity) AS required_quantity FROM manufacturing_sourcing_components msc WHERE msc.manufacturing_order_id = ? AND msc.product_id IS NOT NULL AND msc.deducted_at IS NULL GROUP BY msc.product_id"
+            : "SELECT GROUP_CONCAT(msc.id) AS ids, msc.product_id, SUM(msc.required_quantity) AS required_quantity FROM manufacturing_sourcing_components msc WHERE msc.manufacturing_order_id = ? AND msc.product_id IS NOT NULL GROUP BY msc.product_id";
 
         $deductFetchStmt = $conn->prepare($deductSql);
         $deductFetchStmt->bind_param("i", $orderId);
@@ -595,7 +640,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ")->execute([$dc['required_quantity'], $dc['product_id'], $order['location_id']]);
 
             if ($hasDeductedAt) {
-                $pdo->prepare("UPDATE manufacturing_sourcing_components SET deducted_at = NOW() WHERE id = ?")->execute([$dc['id']]);
+                foreach (explode(',', $dc['ids']) as $rowId) {
+                    $pdo->prepare("UPDATE manufacturing_sourcing_components SET deducted_at = NOW() WHERE id = ?")->execute([(int)$rowId]);
+                }
             }
         }
     }
@@ -1006,9 +1053,21 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                     $perBatch = is_numeric($rawQty)
                                         ? fmt_qty((float)$rawQty, $cUnit)
                                         : htmlspecialchars($rawQty);
-                                    $thisOrder = is_numeric($scaledQty)
-                                        ? fmt_qty((float)$scaledQty, $cUnit)
-                                        : htmlspecialchars($scaledQty);
+                                    if (is_numeric($scaledQty)) {
+                                        $scaledVal  = (float)$scaledQty;
+                                        $scaledUnit = $cUnit;
+                                        // Upgrade g→kg or ml→L when scaled quantity is large
+                                        if (strtolower($cUnit) === 'g' && $scaledVal >= 1000) {
+                                            $scaledVal  = $scaledVal / 1000;
+                                            $scaledUnit = 'kg';
+                                        } elseif (strtolower($cUnit) === 'ml' && $scaledVal >= 1000) {
+                                            $scaledVal  = $scaledVal / 1000;
+                                            $scaledUnit = 'L';
+                                        }
+                                        $thisOrder = fmt_qty($scaledVal, $scaledUnit);
+                                    } else {
+                                        $thisOrder = htmlspecialchars($scaledQty);
+                                    }
                                     ?>
                                     <tr>
                                         <td class="ps-0"><?= htmlspecialchars($fComponent['name'] ?? '-'); ?></td>
@@ -1116,15 +1175,17 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                     <!-- Sourcing Components Table -->
                                     <?php
                                     $sourcingStmt = $conn->prepare("
-                                        SELECT msc.id, msc.component_name, msc.product_id, msc.required_quantity, msc.unit, msc.notes,
-                                               p.barcode, p.sku, COALESCE(SUM(ip.quantity), 0) AS available_qty
+                                        SELECT MIN(msc.id) AS id,
+                                               msc.component_name, msc.product_id, SUM(msc.required_quantity) AS required_quantity,
+                                               msc.unit, GROUP_CONCAT(DISTINCT msc.notes SEPARATOR '; ') AS notes,
+                                               p.barcode, p.sku, COALESCE(SUM(DISTINCT ip.quantity), 0) AS available_qty
                                         FROM manufacturing_sourcing_components msc
                                         LEFT JOIN products p ON p.id = msc.product_id
                                         LEFT JOIN inventories inv ON inv.location_id = ?
                                         LEFT JOIN inventory_products ip ON ip.product_id = msc.product_id AND ip.inventory_id = inv.id
                                         WHERE msc.manufacturing_order_id = ?
-                                        GROUP BY msc.id, msc.component_name, msc.product_id, msc.required_quantity, msc.unit, msc.notes, p.barcode, p.sku
-                                        ORDER BY msc.formula_component_index
+                                        GROUP BY msc.component_name, msc.product_id, msc.unit, p.barcode, p.sku
+                                        ORDER BY MIN(msc.formula_component_index)
                                     ");
                                     $sourcingStmt->bind_param("ii", $order['location_id'], $orderId);
                                     $sourcingStmt->execute();
@@ -1150,9 +1211,18 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                             </thead>
                                             <tbody>
                                                 <?php foreach ($sourcingComponents as $sc): ?>
-                                                    <?php 
+                                                    <?php
                                                     $availableQty = $sc['available_qty'] ?? 0;
-                                                    $requiredQty = $sc['required_quantity'];
+                                                    $requiredQty  = $sc['required_quantity'];
+                                                    $displayQty   = (float)$requiredQty;
+                                                    $displayUnit  = $sc['unit'];
+                                                    if (strtolower($displayUnit) === 'g' && $displayQty >= 1000) {
+                                                        $displayQty  /= 1000;
+                                                        $displayUnit  = 'kg';
+                                                    } elseif (strtolower($displayUnit) === 'ml' && $displayQty >= 1000) {
+                                                        $displayQty  /= 1000;
+                                                        $displayUnit  = 'L';
+                                                    }
                                                     $isValid = $availableQty >= $requiredQty;
                                                     $statusClass = $isValid ? 'table-success' : 'table-danger';
                                                     $statusText = $isValid ? '✓ OK' : '✗ Insufficient';
@@ -1169,8 +1239,8 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                                             <?= $sc['sku'] ? htmlspecialchars($sc['sku']) . '<br>' : ''; ?>
                                                             <?= $sc['barcode'] ? htmlspecialchars($sc['barcode']) : '<span class="text-muted">-</span>'; ?>
                                                         </td>
-                                                        <td><?= htmlspecialchars($sc['required_quantity']); ?></td>
-                                                        <td><?= htmlspecialchars($sc['unit']); ?></td>
+                                                        <td><?= htmlspecialchars(rtrim(rtrim(number_format($displayQty, 4), '0'), '.')); ?></td>
+                                                        <td><?= htmlspecialchars($displayUnit); ?></td>
                                                         <td><?= htmlspecialchars($availableQty); ?></td>
                                                         <td class="<?= $statusClass; ?> text-center fw-bold"><?= $statusText; ?></td>
                                                         <td>

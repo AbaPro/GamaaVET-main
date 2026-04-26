@@ -219,7 +219,7 @@ $result = $stmt->get_result();
                             <input type="hidden" name="direct_sale" value="">
                         <?php else: ?>
                             <label for="direct_sale" class="form-label">Direct Sale</label>
-                            <input type="text" class="form-control" value="<?= ucfirst($login_region) ?>" readonly>
+                            <input type="text" class="form-control" value="<?= getBrandName($login_region) ?>" readonly>
                             <input type="hidden" name="direct_sale" value="<?= $login_region ?>">
                         <?php endif; ?>
                     </div>
@@ -284,7 +284,7 @@ $result = $stmt->get_result();
                             <input type="hidden" name="direct_sale" id="edit_direct_sale" value="">
                         <?php else: ?>
                             <label for="edit_direct_sale" class="form-label">Direct Sale</label>
-                            <input type="text" class="form-control" value="<?= ucfirst($login_region) ?>" readonly>
+                            <input type="text" class="form-control" value="<?= getBrandName($login_region) ?>" readonly>
                             <input type="hidden" name="direct_sale" id="edit_direct_sale" value="<?= $login_region ?>">
                         <?php endif; ?>
                     </div>

@@ -306,9 +306,7 @@ if ($factories_result) {
                                 <div class="col-md-6 mb-3">
                                     <label for="direct_sale" class="form-label">Direct Sale</label>
                                     <select class="form-select" id="direct_sale" name="direct_sale">
-                                        <option value="">-- None (Factory) --</option>
-                                        <option value="curva" <?= ($login_region === 'curva') ? 'selected' : '' ?>>Curva</option>
-                                        <option value="primer" <?= ($login_region === 'primer') ? 'selected' : '' ?>>Primer</option>
+                                        <?= getDirectSaleOptions($login_region !== 'factory' ? $login_region : null) ?>
                                     </select>
                                 </div>
                             </div>
@@ -482,9 +480,7 @@ if ($factories_result) {
                                 <div class="col-md-6 mb-3">
                                     <label for="edit_direct_sale" class="form-label">Direct Sale</label>
                                     <select class="form-select" id="edit_direct_sale" name="direct_sale">
-                                        <option value="">-- None (Factory) --</option>
-                                        <option value="curva">Curva</option>
-                                        <option value="primer">Primer</option>
+                                        <?= getDirectSaleOptions() ?>
                                     </select>
                                 </div>
                             </div>

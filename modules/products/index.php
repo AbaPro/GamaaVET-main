@@ -513,8 +513,8 @@ $productsTableColspan += 1;
                     </div>
                     <div class="row">
                         <div class="col-md-12 mb-3" data-customer-group="customer">
-                            <label for="customer_id" class="form-label">Customer</label>
-                            <select class="form-select js-searchable-select" id="customer_id" name="customer_id">
+                            <label for="customer_id" class="form-label">Customer <span class="text-danger">*</span></label>
+                            <select class="form-select js-searchable-select" id="customer_id" name="customer_id" required>
                                 <option value="">-- Select Customer --</option>
                                 <?php foreach ($customers as $customer): ?>
                                     <option value="<?php echo (int)$customer['id']; ?>">
@@ -617,8 +617,8 @@ $productsTableColspan += 1;
                     </div>
                     <div class="row">
                         <div class="col-md-12 mb-3" data-customer-group="customer">
-                            <label for="edit_customer_id" class="form-label">Customer</label>
-                            <select class="form-select js-searchable-select" id="edit_customer_id" name="customer_id">
+                            <label for="edit_customer_id" class="form-label">Customer <span class="text-danger">*</span></label>
+                            <select class="form-select js-searchable-select" id="edit_customer_id" name="customer_id" required>
                                 <option value="">-- Select Customer --</option>
                                 <?php foreach ($customers as $customer): ?>
                                     <option value="<?php echo (int)$customer['id']; ?>">
@@ -701,7 +701,9 @@ $productsTableColspan += 1;
         if (unitGroup) unitGroup.classList.toggle('d-none', !showUnit);
         if (costGroup) costGroup.classList.toggle('d-none', !showCost);
         const customerGroup = form.querySelector('[data-customer-group="customer"]');
+        const customerInput = form.querySelector('#customer_id, #edit_customer_id');
         if (customerGroup) customerGroup.classList.toggle('d-none', !showCustomer);
+        if (customerInput) customerInput.required = showCustomer;
         if (unitInput) unitInput.required = showUnit;
         if (costInput) costInput.required = showCost;
     };

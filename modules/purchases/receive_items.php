@@ -142,6 +142,7 @@ require_once '../../includes/header.php';
                         <thead>
                             <tr>
                                 <th>Product</th>
+                                <th>Unit</th>
                                 <th>Ordered Qty</th>
                                 <th>Previously Received</th>
                                 <th>Pending</th>
@@ -158,13 +159,14 @@ require_once '../../includes/header.php';
                                         <?= htmlspecialchars($item['product_name']) ?>
                                         <input type="hidden" name="item_ids[]" value="<?= $item['id'] ?>">
                                     </td>
+                                    <td><?= $item['unit'] ? '<span class="badge bg-secondary">' . htmlspecialchars($item['unit']) . '</span>' : '-' ?></td>
                                     <td><?= $item['quantity'] ?></td>
                                     <td><?= $item['received_quantity'] ?? 0 ?></td>
                                     <td><?= $pending_qty ?></td>
                                     <td>
-                                        <input type="number" class="form-control" 
-                                               name="received_qty[<?= $item['id'] ?>]" 
-                                               min="0" max="<?= $pending_qty ?>" value="0">
+                                        <input type="number" class="form-control"
+                                               name="received_qty[<?= $item['id'] ?>]"
+                                               min="0" max="<?= $pending_qty ?>" step="0.01" value="0">
                                     </td>
                                     <td>
                                         <select class="form-select" name="inventory_id[<?= $item['id'] ?>]">

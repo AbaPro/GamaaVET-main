@@ -394,4 +394,47 @@ function displayMessage() {
     }
 }
 
+function getBrandName($slug) {
+    $map = [
+        'factory'   => 'GammaVet',
+        'curva'     => 'CureVet',
+        'primer'    => 'PremiumVet',
+        'naturous'  => 'Naturous',
+        'activita'  => 'Activita',
+    ];
+    return $map[$slug] ?? ucfirst($slug);
+}
+
+function getDirectSaleOptions($selected = null) {
+    $options = [
+        ['value' => '', 'label' => '-- None (Factory) --'],
+        ['value' => 'curva', 'label' => 'CureVet'],
+        ['value' => 'primer', 'label' => 'PremiumVet'],
+        ['value' => 'naturous', 'label' => 'Naturous'],
+        ['value' => 'activita', 'label' => 'Activita'],
+    ];
+    $html = '';
+    foreach ($options as $opt) {
+        $sel = ($opt['value'] === $selected) ? ' selected' : '';
+        $html .= '<option value="' . htmlspecialchars($opt['value']) . '"' . $sel . '>' . htmlspecialchars($opt['label']) . '</option>';
+    }
+    return $html;
+}
+
+function getRegionPermissionOptions($selected = null) {
+    $options = [
+        ['value' => '', 'label' => '-- Factory (None) --'],
+        ['value' => 'curva', 'label' => 'CureVet'],
+        ['value' => 'primer', 'label' => 'PremiumVet'],
+        ['value' => 'naturous', 'label' => 'Naturous'],
+        ['value' => 'activita', 'label' => 'Activita'],
+    ];
+    $html = '';
+    foreach ($options as $opt) {
+        $sel = ($opt['value'] === $selected) ? ' selected' : '';
+        $html .= '<option value="' . htmlspecialchars($opt['value']) . '"' . $sel . '>' . htmlspecialchars($opt['label']) . '</option>';
+    }
+    return $html;
+}
+
 ?>

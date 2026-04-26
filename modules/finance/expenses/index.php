@@ -131,7 +131,7 @@ $currency_symbols = ['EGP' => 'ج.م', 'USD' => '$', 'EUR' => '€', 'SAR' => '�
     <div class="d-flex justify-content-between align-items-center mb-4 mt-4">
         <h1>Expense Tracking
             <?php if (!hasPermission('finance.expenses.all_accounts') && $region_slug !== 'factory'): ?>
-                <span class="badge bg-secondary fs-6 ms-2"><?= htmlspecialchars(ucfirst($region_slug)) ?></span>
+                <span class="badge bg-secondary fs-6 ms-2"><?= htmlspecialchars(getBrandName($region_slug)) ?></span>
             <?php endif; ?>
         </h1>
         <div>

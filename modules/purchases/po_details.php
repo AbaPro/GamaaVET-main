@@ -156,10 +156,11 @@ require_once '../../includes/header.php';
                             <tr>
                                 <th>SKU</th>
                                 <th>Product</th>
+                                <th>Unit</th>
                                 <th>Ordered Qty</th>
                                 <th>Received Qty</th>
                                 <th>Current Stock</th>
-                                <th>Selling Price</th>
+                                <th>Unit Price</th>
                                 <th>Total</th>
                             </tr>
                         </thead>
@@ -168,6 +169,7 @@ require_once '../../includes/header.php';
                                 <tr>
                                     <td><?= htmlspecialchars($item['sku']) ?></td>
                                     <td><?= htmlspecialchars($item['product_name']) ?></td>
+                                    <td><?= $item['unit'] ? '<span class="badge bg-secondary">' . htmlspecialchars($item['unit']) . '</span>' : '-' ?></td>
                                     <td><?= $item['quantity'] ?></td>
                                     <td><?= $item['received_quantity'] ?? 0 ?></td>
                                     <td><?= number_format($item['current_stock'] ?? 0, 2) ?></td>

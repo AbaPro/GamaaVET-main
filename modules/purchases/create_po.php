@@ -70,8 +70,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         // Insert PO items
         $stmt = $pdo->prepare("
             INSERT INTO purchase_order_items (
-                purchase_order_id, product_id, quantity, unit_price, total_price
-            ) VALUES (?, ?, ?, ?, ?)
+                purchase_order_id, product_id, quantity, unit_price, total_price, unit
+            ) VALUES (?, ?, ?, ?, ?, ?)
         ");
 
         foreach ($_POST['items'] as $item) {
@@ -83,7 +83,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     $item['product_id'],
                     $item['quantity'],
                     $item['price'],
-                    $total_price
+                    $total_price,
+                    $item['unit'] ?? null
                 ]);
             }
         }
@@ -112,7 +113,7 @@ $vendors = $pdo->query("SELECT id, name FROM vendors ORDER BY name")->fetchAll(P
 
 // Get products for dropdown (only material type for PO)
 $products = $pdo->query("
-    SELECT p.id, p.name, p.sku, p.cost_price, p.type, p.customer_id, p.category_id, p.subcategory_id, c.name as category 
+    SELECT p.id, p.name, p.sku, p.cost_price, p.type, p.unit, p.customer_id, p.category_id, p.subcategory_id, c.name as category
     FROM products p
     JOIN categories c ON p.category_id = c.id
     WHERE p.type = 'material'
@@ -211,8 +212,9 @@ require_once '../../includes/header.php';
                     <thead>
                         <tr>
                             <th>Product</th>
+                            <th>Unit</th>
                             <th>Quantity</th>
-                            <th>Selling Price</th>
+                            <th>Unit Price</th>
                             <th>Total</th>
                             <th>Action</th>
                         </tr>
@@ -222,7 +224,7 @@ require_once '../../includes/header.php';
                     </tbody>
                     <tfoot>
                         <tr>
-                            <td colspan="3" class="text-end"><strong>Total:</strong></td>
+                            <td colspan="4" class="text-end"><strong>Total:</strong></td>
                             <td><span id="poTotal">0.00</span></td>
                             <td></td>
                         </tr>
@@ -320,7 +322,8 @@ require_once '../../includes/header.php';
                                     <button type="button" class="btn btn-sm btn-primary select-product"
                                         data-id="<?= $product['id'] ?>"
                                         data-name="<?= htmlspecialchars($product['name']) ?>"
-                                        data-price="<?= $product['cost_price'] ?>">
+                                        data-price="<?= $product['cost_price'] ?>"
+                                        data-unit="<?= htmlspecialchars($product['unit'] ?? '') ?>">
                                         Select
                                     </button>
                                 </td>
@@ -456,12 +459,13 @@ require_once '../../includes/header.php';
             const productId = $(this).data('id');
             const productName = $(this).data('name');
             const productPrice = parseFloat($(this).data('price'));
+            const productUnit = $(this).data('unit') || '';
             const rowId = 'item_' + productId;
 
             if ($('#' + rowId).length) {
                 // If product already exists in table, just increase quantity
                 const qtyInput = $('#' + rowId).find('.item-qty');
-                qtyInput.val(parseInt(qtyInput.val()) + 1);
+                qtyInput.val(parseFloat(qtyInput.val()) + 1);
                 updateRowTotal($('#' + rowId));
             } else {
                 // Add new row
@@ -470,13 +474,15 @@ require_once '../../includes/header.php';
                     <td>
                         ${productName}
                         <input type="hidden" name="items[${productId}][product_id]" value="${productId}">
+                        <input type="hidden" name="items[${productId}][unit]" value="${productUnit}">
+                    </td>
+                    <td>${productUnit ? `<span class="badge bg-secondary">${productUnit}</span>` : '-'}</td>
+                    <td>
+                        <input type="number" class="form-control form-control-sm item-qty"
+                               name="items[${productId}][quantity]" value="1" min="0.01" step="0.01">
                     </td>
                     <td>
-                        <input type="number" class="form-control form-control-sm item-qty" 
-                               name="items[${productId}][quantity]" value="1" min="1">
-                    </td>
-                    <td>
-                        <input type="number" class="form-control form-control-sm item-price" 
+                        <input type="number" class="form-control form-control-sm item-price"
                                name="items[${productId}][price]" value="${productPrice}" step="0.01" min="0">
                     </td>
                     <td class="item-total">${productPrice.toFixed(2)}</td>

@@ -35,13 +35,19 @@
     $brand_name = 'GammaVet';
 
     if ($login_region === 'curva') {
-        $navbar_bg = 'bg-success'; // Green for Curva
+        $navbar_bg = 'bg-success';
         $brand_logo = 'logo_curva.png';
-        $brand_name = 'GammaVet - Curva';
+        $brand_name = 'GammaVet - CureVet';
     } elseif ($login_region === 'primer') {
-        $navbar_bg = 'bg-warning text-dark'; // Yellow/Orange for Primer
+        $navbar_bg = 'bg-warning text-dark';
         $brand_logo = 'logo_primer.png';
-        $brand_name = 'GammaVet - Primer';
+        $brand_name = 'GammaVet - PremiumVet';
+    } elseif ($login_region === 'naturous') {
+        $brand_logo = 'logo_naturous.png';
+        $brand_name = 'GammaVet - Naturous';
+    } elseif ($login_region === 'activita') {
+        $brand_logo = 'logo_activita.png';
+        $brand_name = 'GammaVet - Activita';
     }
 
     if (!file_exists(ROOT_PATH . '/' . $brand_logo)) {
@@ -364,6 +370,10 @@
                                 <?php endif; ?>
                                 <?php if (hasPermission('finance.vendor_wallet.view')): ?>
                                     <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/vendors.php"><i class="fas fa-truck-field me-2"></i> Vendor Wallets</a></li>
+                                <?php endif; ?>
+                                <?php if (hasPermission('analysis.view_reports')): ?>
+                                    <li><hr class="dropdown-divider"></li>
+                                    <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/analysis/financial_workbook.php"><i class="fas fa-file-excel me-2"></i> Financial Workbook Export</a></li>
                                 <?php endif; ?>
                             </ul>
                         </li>

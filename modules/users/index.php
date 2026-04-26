@@ -202,9 +202,7 @@ include __DIR__ . '/../../includes/header.php';
                             <div class="form-group">
                                 <label for="region">Region Permission</label>
                                 <select class="form-select" id="region" name="region">
-                                    <option value="">-- Factory (None) --</option>
-                                    <option value="curva">Curva</option>
-                                    <option value="primer">Primer</option>
+                                    <?= getRegionPermissionOptions() ?>
                                 </select>
                             </div>
                         </div>
