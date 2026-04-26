@@ -1029,7 +1029,7 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                 <?php elseif (!empty($formulaComponentsRaw)): ?>
                     <p class="small text-muted mb-2">
                         Standard batch: <strong><?= fmt_qty((float)$order['formula_batch_size'], $order['batch_unit'] ?? ''); ?></strong>
-                        &rarr; This order: <strong><?= fmt_qty((float)$order['batch_size'], $order['bottle_size_unit'] ?? ''); ?></strong>
+                        &rarr; This order: <strong><?= fmt_qty((float)$order['batch_size'], $order['bottle_size_unit'] ?: ($order['batch_unit'] ?? '')); ?></strong>
                     </p>
                     <div class="table-responsive">
                         <table class="table table-sm mb-0">

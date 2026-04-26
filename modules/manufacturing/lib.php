@@ -986,7 +986,10 @@ function manufacturing_recalculate_components($order, $components) {
         $orderBatchSize = (float)($order['batch_size'] ?? 0);
         $targetProductionAmount = manufacturing_to_base_unit($orderBatchSize * $bottleSizeValue, $bottleSizeUnit);
     } else {
-        $targetProductionAmount = (float)($order['batch_size'] ?? 0);
+        // No bottle size — order batch_size is in the same unit as the formula batch unit.
+        // Normalise to base unit so the ratio is dimensionally consistent.
+        $orderBatchSize = (float)($order['batch_size'] ?? 0);
+        $targetProductionAmount = manufacturing_to_base_unit($orderBatchSize, $formulaBatchUnit);
     }
 
     $productionRatio = $targetProductionAmount > 0 ? ($targetProductionAmount / $formulaBatchSizeNorm) : 1;
