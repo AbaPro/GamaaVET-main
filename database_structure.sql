@@ -421,6 +421,7 @@ CREATE TABLE `purchase_order_payments` (
   `payment_method` enum('cash','transfer','wallet') NOT NULL,
   `reference` varchar(100) DEFAULT NULL,
   `notes` text DEFAULT NULL,
+  `screenshot_path` varchar(255) DEFAULT NULL,
   `created_by` int(11) NOT NULL,
   `created_at` timestamp NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;

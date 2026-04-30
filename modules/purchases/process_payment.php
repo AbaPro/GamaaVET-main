@@ -38,21 +38,54 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $selectedPaymentMethod = $payment_method;
     $reference = $_POST['reference'] ?? '';
     $notes = $_POST['notes'] ?? '';
-    
+
     // Validate amount
     if ($amount <= 0 || $amount > $balance) {
         $_SESSION['error'] = "Invalid payment amount";
     } elseif (empty($reference) || empty($notes)) {
         $_SESSION['error'] = "Reference and Notes are required fields.";
     } else {
+        // Handle screenshot upload
+        $screenshotPath = null;
+        if (!empty($_FILES['screenshot']['name'])) {
+            $uploadDir = __DIR__ . '/../../assets/uploads/po_payments';
+            if (!is_dir($uploadDir)) {
+                mkdir($uploadDir, 0775, true);
+            }
+            $allowedExt = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+            $ext = strtolower(pathinfo($_FILES['screenshot']['name'], PATHINFO_EXTENSION));
+            if ($_FILES['screenshot']['error'] !== UPLOAD_ERR_OK) {
+                $_SESSION['error'] = "Failed to upload screenshot.";
+                header("Location: process_payment.php?po_id=" . $po_id);
+                exit();
+            }
+            if (!in_array($ext, $allowedExt, true)) {
+                $_SESSION['error'] = "Unsupported file type. Allowed: JPG, PNG, GIF, WEBP.";
+                header("Location: process_payment.php?po_id=" . $po_id);
+                exit();
+            }
+            if ($_FILES['screenshot']['size'] > 5 * 1024 * 1024) {
+                $_SESSION['error'] = "Screenshot exceeds the 5MB limit.";
+                header("Location: process_payment.php?po_id=" . $po_id);
+                exit();
+            }
+            $newFile = 'payment_' . $po_id . '_' . uniqid('', true) . '.' . $ext;
+            if (!move_uploaded_file($_FILES['screenshot']['tmp_name'], $uploadDir . '/' . $newFile)) {
+                $_SESSION['error'] = "Failed to upload screenshot.";
+                header("Location: process_payment.php?po_id=" . $po_id);
+                exit();
+            }
+            $screenshotPath = 'assets/uploads/po_payments/' . $newFile;
+        }
+
         try {
             $pdo->beginTransaction();
-            
+
             // Insert payment record
             $stmt = $pdo->prepare("
-                INSERT INTO purchase_order_payments 
-                (purchase_order_id, amount, payment_method, reference, notes, created_by)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO purchase_order_payments
+                (purchase_order_id, amount, payment_method, reference, notes, screenshot_path, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             ");
             $stmt->execute([
                 $po_id,
@@ -60,6 +93,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $payment_method,
                 $reference,
                 $notes,
+                $screenshotPath,
                 $_SESSION['user_id']
             ]);
             
@@ -132,11 +166,11 @@ require_once '../../includes/header.php';
                 </div>
             </div>
             
-            <form method="post">
+            <form method="post" enctype="multipart/form-data">
                 <div class="row g-3">
                     <div class="col-md-6">
                         <label for="amount" class="form-label">Amount</label>
-                        <input type="number" class="form-control" id="amount" name="amount" 
+                        <input type="number" class="form-control" id="amount" name="amount"
                                step="0.01" min="0.01" max="<?= $balance ?>" value="<?= $balance ?>" required>
                     </div>
                     <div class="col-md-6">
@@ -158,6 +192,13 @@ require_once '../../includes/header.php';
                         <textarea class="form-control" id="notes" name="notes" rows="1" required></textarea>
                     </div>
                     <div class="col-md-12">
+                        <label for="screenshot" class="form-label">Payment Screenshot <span class="text-muted">(optional - JPG, PNG, GIF, WEBP, max 5MB)</span></label>
+                        <input type="file" class="form-control" id="screenshot" name="screenshot" accept="image/jpeg,image/png,image/gif,image/webp">
+                        <div id="screenshot-preview" class="mt-2 d-none">
+                            <img id="preview-img" src="#" alt="Preview" class="img-thumbnail" style="max-height:200px;">
+                        </div>
+                    </div>
+                    <div class="col-md-12">
                         <button type="submit" class="btn btn-primary">Record Payment</button>
                         <a href="po_details.php?id=<?= $po_id ?>" class="btn btn-secondary">Cancel</a>
                     </div>
@@ -176,7 +217,7 @@ $(document).ready(function() {
         const method = $(this).val();
         const balance = <?= $balance ?>;
         const walletBalance = <?= $po['wallet_balance'] ?>;
-        
+
         if (method == 'wallet') {
             $('#amount').attr('max', Math.min(balance, walletBalance));
             if ($('#amount').val() > walletBalance) {
@@ -186,6 +227,20 @@ $(document).ready(function() {
             $('#amount').attr('max', balance);
         }
     });
+
+    // Screenshot preview
+    $('#screenshot').change(function() {
+        const file = this.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                $('#preview-img').attr('src', e.target.result);
+                $('#screenshot-preview').removeClass('d-none');
+            };
+            reader.readAsDataURL(file);
+        } else {
+            $('#screenshot-preview').addClass('d-none');
+        }
+    });
 });
 </script>
-

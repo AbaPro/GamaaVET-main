@@ -166,6 +166,7 @@ require_once '../../includes/header.php';
                         </thead>
                         <tbody>
                             <?php foreach ($items as $item) : ?>
+                                <?php if (!canViewProductCost($item['type'])) continue; ?>
                                 <tr>
                                     <td><?= htmlspecialchars($item['sku']) ?></td>
                                     <td><?= htmlspecialchars($item['product_name']) ?></td>
@@ -173,44 +174,35 @@ require_once '../../includes/header.php';
                                     <td><?= $item['quantity'] ?></td>
                                     <td><?= $item['received_quantity'] ?? 0 ?></td>
                                     <td><?= number_format($item['current_stock'] ?? 0, 2) ?></td>
-                                    <td>
-                                        <?php if (canViewProductCost($item['type'])): ?>
-                                            <?= number_format($item['unit_price'], 2) ?>
-                                        <?php else: ?>
-                                            <span class="text-muted">Hidden</span>
-                                        <?php endif; ?>
-                                    </td>
-                                    <td>
-                                        <?php if (canViewProductCost($item['type'])): ?>
-                                            <?= number_format($item['total_price'], 2) ?>
-                                        <?php else: ?>
-                                            <span class="text-muted">Hidden</span>
-                                        <?php endif; ?>
-                                    </td>
+                                    <td><?= number_format($item['unit_price'], 2) ?></td>
+                                    <td><?= number_format($item['total_price'], 2) ?></td>
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>
+                        <?php if ($canViewMaterialCosts): ?>
                         <tfoot>
                             <tr>
                                 <td colspan="6" class="text-end"><strong>Subtotal:</strong></td>
-                                <td><?= $canViewMaterialCosts ? number_format($po['total_amount'], 2) : '<span class="text-muted">Hidden</span>' ?></td>
+                                <td><?= number_format($po['total_amount'], 2) ?></td>
                             </tr>
                             <tr>
                                 <td colspan="6" class="text-end"><strong>Paid Amount:</strong></td>
-                                <td><?= $canViewMaterialCosts ? number_format($po['paid_amount'], 2) : '<span class="text-muted">Hidden</span>' ?></td>
+                                <td><?= number_format($po['paid_amount'], 2) ?></td>
                             </tr>
                             <tr>
                                 <td colspan="6" class="text-end"><strong>Balance:</strong></td>
                                 <td class="<?= ($po['total_amount'] - $po['paid_amount']) > 0 ? 'text-danger' : 'text-success' ?>">
-                                    <?= $canViewMaterialCosts ? number_format($po['total_amount'] - $po['paid_amount'], 2) : '<span class="text-muted">Hidden</span>' ?>
+                                    <?= number_format($po['total_amount'] - $po['paid_amount'], 2) ?>
                                 </td>
                             </tr>
                         </tfoot>
+                        <?php endif; ?>
                     </table>
                 </div>
             </div>
             
             <div class="row">
+                <?php if (hasPermission('finance.po_payment.process') || $canDeletePayments): ?>
                 <div class="col-md-6">
                     <h5>Payment History</h5>
                     <?php if (empty($payments)) : ?>
@@ -223,6 +215,7 @@ require_once '../../includes/header.php';
                                     <th>Amount</th>
                                     <th>Method</th>
                                     <th>By</th>
+                                    <th>Screenshot</th>
                                     <?php if ($canDeletePayments): ?>
                                         <th class="text-end">Actions</th>
                                     <?php endif; ?>
@@ -235,10 +228,19 @@ require_once '../../includes/header.php';
                                         <td><?= number_format($payment['amount'], 2) ?></td>
                                         <td><?= ucfirst($payment['payment_method']) ?></td>
                                         <td><?= htmlspecialchars($payment['created_by_name']) ?></td>
+                                        <td>
+                                            <?php if (!empty($payment['screenshot_path'])): ?>
+                                                <a href="/<?= htmlspecialchars($payment['screenshot_path']) ?>" target="_blank">
+                                                    <img src="/<?= htmlspecialchars($payment['screenshot_path']) ?>" alt="Payment screenshot" style="height:40px;width:auto;object-fit:cover;border-radius:4px;cursor:pointer;">
+                                                </a>
+                                            <?php else: ?>
+                                                <span class="text-muted">—</span>
+                                            <?php endif; ?>
+                                        </td>
                                         <?php if ($canDeletePayments): ?>
                                             <td class="text-end">
-                                                <button type="button" class="btn btn-sm btn-outline-danger js-delete-payment" 
-                                                        data-id="<?= $payment['id'] ?>" 
+                                                <button type="button" class="btn btn-sm btn-outline-danger js-delete-payment"
+                                                        data-id="<?= $payment['id'] ?>"
                                                         data-amount="<?= number_format($payment['amount'], 2) ?>">
                                                     <i class="fas fa-trash"></i>
                                                 </button>
@@ -250,6 +252,7 @@ require_once '../../includes/header.php';
                         </table>
                     <?php endif; ?>
                 </div>
+                <?php endif; ?>
                 
                 <div class="col-md-6">
                     <h5>Order Notes</h5>
@@ -276,7 +279,7 @@ require_once '../../includes/header.php';
                         </form>
                     <?php endif; ?>
 
-                    <?php if ($po['status'] != 'cancelled' && ($po['total_amount'] - $po['paid_amount']) > 0) : ?>
+                    <?php if (hasPermission('finance.po_payment.process') && $po['status'] != 'cancelled' && ($po['total_amount'] - $po['paid_amount']) > 0) : ?>
                         <a href="process_payment.php?po_id=<?= $po_id ?>" class="btn btn-success">Record Payment</a>
                     <?php endif; ?>
                 </div>

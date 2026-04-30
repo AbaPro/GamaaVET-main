@@ -1,14 +1,27 @@
 <?php
 require_once '../../includes/auth.php';
-require_once '../../includes/header.php';
 require_once '../../config/database.php';
 
+$canViewDashboard = hasPermission('sales.dashboard.view');
+$canViewThisMonth = hasPermission('sales.dashboard.this_month');
+$canViewPendingOrders = hasPermission('sales.dashboard.orders_pending');
+$canViewOverallOrders = hasPermission('sales.dashboard.overall_orders');
+$canViewRecentOrders = hasPermission('sales.dashboard.recent_orders');
+$canAccessDashboard = $canViewDashboard || $canViewThisMonth || $canViewPendingOrders || $canViewOverallOrders || $canViewRecentOrders;
+$canCreateOrders = hasPermission('sales.orders.create');
+$canViewAllOrders = hasPermission('sales.orders.view_all');
+$canViewOrderDetails = hasPermission('sales.orders.view');
+$canProcessPayments = hasPermission('finance.customer_payment.process');
+
 // Permission check
-if (!hasPermission('sales.orders.view_all')) {
+if (!$canAccessDashboard) {
     $_SESSION['error'] = "You don't have permission to access this page";
     header("Location: ../../dashboard.php");
     exit();
 }
+
+$page_title = 'Sales Dashboard';
+require_once '../../includes/header.php';
 
 // Get statistics for dashboard
 $today = date('Y-m-d');
@@ -18,7 +31,7 @@ $stats = [
     'today_sales' => 0,
     'month_sales' => 0,
     'pending_orders' => 0,
-    'unpaid_orders' => 0
+    'overall_orders' => 0
 ];
 
 /* Use $conn (MySQLi) instead of $pdo (PDO) */
@@ -53,12 +66,12 @@ $stmt->fetch();
 $stats['pending_orders'] = $pending_orders ?: 0;
 $stmt->close();
 
-// Unpaid orders
-$stmt = $conn->prepare("SELECT COUNT(*) FROM orders WHERE paid_amount < total_amount");
+// Overall orders
+$stmt = $conn->prepare("SELECT COUNT(*) FROM orders");
 $stmt->execute();
-$stmt->bind_result($unpaid_orders);
+$stmt->bind_result($overall_orders);
 $stmt->fetch();
-$stats['unpaid_orders'] = $unpaid_orders ?: 0;
+$stats['overall_orders'] = $overall_orders ?: 0;
 $stmt->close();
 
 ?>
@@ -74,6 +87,7 @@ $stmt->close();
     if (empty($all_currencies)) $all_currencies = ['EGP'];
     $cur_symbols = ['EGP' => 'ج.م', 'USD' => '$', 'EUR' => '€', 'SAR' => 'ر.س'];
     ?>
+    <?php if ($canViewThisMonth): ?>
     <?php foreach ($all_currencies as $cur):
         $sym = $cur_symbols[$cur] ?? $cur;
         $today_val = $today_by_currency[$cur] ?? 0;
@@ -99,7 +113,9 @@ $stmt->close();
         </div>
     </div>
     <?php endforeach; ?>
+    <?php endif; ?>
     <div class="row mb-4">
+        <?php if ($canViewPendingOrders): ?>
         <div class="col-md-3">
             <div class="card text-white bg-warning">
                 <div class="card-body">
@@ -108,22 +124,30 @@ $stmt->close();
                 </div>
             </div>
         </div>
+        <?php endif; ?>
+        <?php if ($canViewOverallOrders): ?>
         <div class="col-md-3">
             <div class="card text-white bg-danger">
                 <div class="card-body">
-                    <h5 class="card-title">Unpaid Orders</h5>
-                    <p class="card-text h4"><?= $stats['unpaid_orders'] ?></p>
+                    <h5 class="card-title">Overall Orders</h5>
+                    <p class="card-text h4"><?= $stats['overall_orders'] ?></p>
                 </div>
             </div>
         </div>
+        <?php endif; ?>
     </div>
 
+    <?php if ($canViewRecentOrders): ?>
     <div class="card">
         <div class="card-header d-flex justify-content-between align-items-center">
             <h4>Recent Orders</h4>
             <div>
+                <?php if ($canCreateOrders): ?>
                 <a href="create_order.php" class="btn btn-primary btn-sm">New Order</a>
+                <?php endif; ?>
+                <?php if ($canViewAllOrders): ?>
                 <a href="order_list.php" class="btn btn-secondary btn-sm">View All</a>
+                <?php endif; ?>
             </div>
         </div>
         <div class="card-body">
@@ -180,8 +204,10 @@ $stmt->close();
                                     </span>
                                 </td>
                                 <td>
+                                    <?php if ($canViewOrderDetails): ?>
                                     <a href="order_details.php?id=<?= $order['id'] ?>" class="btn btn-sm btn-info">View</a>
-                                    <?php if ($order['status'] == 'new') : ?>
+                                    <?php endif; ?>
+                                    <?php if ($canProcessPayments && $order['status'] == 'new') : ?>
                                         <a href="process_payment.php?order_id=<?= $order['id'] ?>" class="btn btn-sm btn-success">Payment</a>
                                     <?php endif; ?>
                                 </td>
@@ -198,6 +224,7 @@ $stmt->close();
             </table>
         </div>
     </div>
+    <?php endif; ?>
 </div>
 
 <?php require_once '../../includes/footer.php'; ?>

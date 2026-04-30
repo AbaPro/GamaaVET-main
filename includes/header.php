@@ -91,16 +91,30 @@
                         <?php endif; ?>
 
                         <!-- Sales -->
-                        <?php $canSales = hasPermission('sales.orders.view_all') || hasPermission('sales.orders.create') || hasPermission('quotations.manage') || hasPermission('customers.view'); ?>
+                        <?php
+                        $canSalesDashboard = hasPermission('sales.dashboard.view')
+                            || hasPermission('sales.dashboard.orders_pending')
+                            || hasPermission('sales.dashboard.overall_orders')
+                            || hasPermission('sales.dashboard.this_month')
+                            || hasPermission('sales.dashboard.recent_orders');
+                        $canSales = $canSalesDashboard || hasPermission('sales.orders.view_all') || hasPermission('sales.orders.create') || hasPermission('quotations.manage') || hasPermission('customers.view');
+                        ?>
                         <?php if ($canSales): ?>
                             <li class="nav-item dropdown">
                                 <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
                                     <i class="fas fa-cart-shopping me-1"></i> Sales
                                 </a>
                                 <ul class="dropdown-menu">
-                                    <?php if (hasPermission('sales.orders.view_all')): ?>
+                                    <?php if ($canSalesDashboard): ?>
                                         <li>
                                             <a class="dropdown-item" href="<?= BASE_URL ?>modules/sales/">
+                                                <i class="fas fa-chart-line me-2"></i> Dashboard
+                                            </a>
+                                        </li>
+                                    <?php endif; ?>
+                                    <?php if (hasPermission('sales.orders.view_all')): ?>
+                                        <li>
+                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/sales/order_list.php">
                                                 <i class="fas fa-list me-2"></i> All Orders
                                             </a>
                                         </li>

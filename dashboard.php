@@ -4,12 +4,19 @@ require_once 'includes/functions.php';
 
 $page_title = 'Dashboard';
 require_once 'includes/header.php';
+
+$canSalesDashboard = hasPermission('sales.dashboard.view')
+    || hasPermission('sales.dashboard.orders_pending')
+    || hasPermission('sales.dashboard.overall_orders')
+    || hasPermission('sales.dashboard.this_month')
+    || hasPermission('sales.dashboard.recent_orders');
+$salesDashboardUrl = $canSalesDashboard ? BASE_URL . 'modules/sales/' : BASE_URL . 'modules/finance/bills.php';
 ?>
 
 <div class="row">
-    <?php if (hasPermission('sales.orders.view_all') || hasPermission('finance.customer_payment.process')): ?>
+    <?php if (hasPermission('sales.dashboard.view') || hasPermission('finance.customer_payment.process')): ?>
     <div class="col-md-6 col-lg-3 mb-4">
-        <a href="<?= BASE_URL ?>modules/sales/" class="text-decoration-none">
+        <a href="<?= $salesDashboardUrl ?>" class="text-decoration-none">
             <div class="card bg-primary text-white">
                 <div class="card-body">
                     <div class="d-flex justify-content-between align-items-center">
@@ -35,7 +42,7 @@ require_once 'includes/header.php';
     </div>
     <?php endif; ?>
 
-    <?php if (hasPermission('sales.orders.view_all')): ?>
+    <?php if (hasPermission('sales.dashboard.overall_orders')): ?>
     <div class="col-md-6 col-lg-3 mb-4">
         <a href="<?= BASE_URL ?>modules/sales/" class="text-decoration-none">
             <div class="card bg-success text-white">
@@ -64,7 +71,7 @@ require_once 'includes/header.php';
     </div>
     <?php endif; ?>
 
-    <?php if (hasPermission('sales.orders.view_all') || hasPermission('sales.orders.create')): ?>
+    <?php if (hasPermission('sales.dashboard.this_month')): ?>
     <div class="col-md-6 col-lg-3 mb-4">
         <a href="<?= BASE_URL ?>modules/sales/" class="text-decoration-none">
             <div class="card bg-info text-white">
@@ -119,7 +126,7 @@ require_once 'includes/header.php';
 
 <!-- Extra analytics row -->
 <div class="row">
-    <?php if (hasPermission('finance.customer_payment.process') || hasPermission('sales.orders.view_all')): ?>
+    <?php if (hasPermission('finance.customer_payment.process') || hasPermission('sales.dashboard.view')): ?>
     <div class="col-md-6 col-lg-3 mb-4">
         <a href="<?= BASE_URL ?>modules/finance/bills.php" class="text-decoration-none">
             <div class="card bg-dark text-white">
@@ -227,7 +234,7 @@ require_once 'includes/header.php';
 </div>
 
 <div class="row">
-    <?php if (hasPermission('sales.orders.view_all')): ?>
+    <?php if (hasPermission('sales.dashboard.recent_orders')): ?>
     <div class="col-md-8 mb-4">
         <div class="card">
             <div class="card-header">

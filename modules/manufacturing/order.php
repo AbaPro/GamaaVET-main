@@ -69,6 +69,16 @@ $formulaComponents = manufacturing_recalculate_components($order, $formulaCompon
 $canViewFormula = hasPermission('manufacturing.formula.view_all');
 $canViewComponentName = hasPermission('manufacturing.component.name.view');
 
+$stepStatusesByKey = [];
+$statusStmt = $conn->prepare("SELECT step_key, status FROM manufacturing_order_steps WHERE manufacturing_order_id = ?");
+$statusStmt->bind_param("i", $orderId);
+$statusStmt->execute();
+$statusResult = $statusStmt->get_result();
+while ($statusRow = $statusResult->fetch_assoc()) {
+    $stepStatusesByKey[$statusRow['step_key']] = $statusRow['status'];
+}
+$statusStmt->close();
+
 $compProductIds = [];
 foreach ($formulaComponents as $fc) {
     if (!empty($fc['product_id'])) {
@@ -83,84 +93,86 @@ if (!empty($compProductIds)) {
     }
 }
 
-// Check and sync sourcing components to match current formula components.
-// Only read formula-sourced rows so packaging rows (same index range) don't collide.
-$existingSourcing = [];
-$hasSourceCol = $conn->query("SHOW COLUMNS FROM manufacturing_sourcing_components LIKE 'source'")->num_rows > 0;
-$getSourcingSQL = $hasSourceCol
-    ? "SELECT id, formula_component_index FROM manufacturing_sourcing_components WHERE manufacturing_order_id = ? AND (source = 'formula' OR source IS NULL)"
-    : "SELECT id, formula_component_index FROM manufacturing_sourcing_components WHERE manufacturing_order_id = ?";
-$getSourcingStmt = $conn->prepare($getSourcingSQL);
-$getSourcingStmt->bind_param("i", $orderId);
-$getSourcingStmt->execute();
-$res = $getSourcingStmt->get_result();
-while ($row = $res->fetch_assoc()) {
-    $existingSourcing[$row['formula_component_index']] = $row['id'];
-}
-$getSourcingStmt->close();
+if (($stepStatusesByKey['sourcing'] ?? null) !== 'completed') {
+    // Check and sync sourcing components to match current formula components.
+    // Only read formula-sourced rows so packaging rows (same index range) don't collide.
+    $existingSourcing = [];
+    $hasSourceCol = $conn->query("SHOW COLUMNS FROM manufacturing_sourcing_components LIKE 'source'")->num_rows > 0;
+    $getSourcingSQL = $hasSourceCol
+        ? "SELECT id, formula_component_index FROM manufacturing_sourcing_components WHERE manufacturing_order_id = ? AND (source = 'formula' OR source IS NULL)"
+        : "SELECT id, formula_component_index FROM manufacturing_sourcing_components WHERE manufacturing_order_id = ?";
+    $getSourcingStmt = $conn->prepare($getSourcingSQL);
+    $getSourcingStmt->bind_param("i", $orderId);
+    $getSourcingStmt->execute();
+    $res = $getSourcingStmt->get_result();
+    while ($row = $res->fetch_assoc()) {
+        $existingSourcing[$row['formula_component_index']] = $row['id'];
+    }
+    $getSourcingStmt->close();
 
-$formulaIndices = [];
-foreach ($formulaComponents as $index => $component) {
-    $formulaIndices[] = $index;
-    $productId = $component['product_id'] ?? null;
-    $componentName = $component['name'] ?? '';
-    $requiredQty = $component['quantity'] ?? $component['ratio'] ?? 0;
-    $unit = $component['unit'] ?? '';
+    $formulaIndices = [];
+    foreach ($formulaComponents as $index => $component) {
+        $formulaIndices[] = $index;
+        $productId = $component['product_id'] ?? null;
+        $componentName = $component['name'] ?? '';
+        $requiredQty = $component['quantity'] ?? $component['ratio'] ?? 0;
+        $unit = $component['unit'] ?? '';
 
-    if (isset($existingSourcing[$index])) {
-        // Update existing record to match current formula data
-        $updateSourcingStmt = $conn->prepare("
-            UPDATE manufacturing_sourcing_components 
-            SET product_id = ?, component_name = ?, required_quantity = ?, unit = ?
-            WHERE id = ?
-        ");
-        $updateSourcingStmt->bind_param("isdsi", $productId, $componentName, $requiredQty, $unit, $existingSourcing[$index]);
-        $updateSourcingStmt->execute();
-        $updateSourcingStmt->close();
-    } else {
-        // Insert new record for new formula component
-        if ($hasSourceCol) {
-            $insertSourcingStmt = $conn->prepare("
-                INSERT INTO manufacturing_sourcing_components
-                (manufacturing_order_id, source, formula_component_index, product_id, component_name, required_quantity, unit, available_quantity)
-                VALUES (?, 'formula', ?, ?, ?, ?, ?, 0)
+        if (isset($existingSourcing[$index])) {
+            // Update existing record to match current formula data
+            $updateSourcingStmt = $conn->prepare("
+                UPDATE manufacturing_sourcing_components
+                SET product_id = ?, component_name = ?, required_quantity = ?, unit = ?
+                WHERE id = ?
             ");
-            $insertSourcingStmt->bind_param("iiisds", $orderId, $index, $productId, $componentName, $requiredQty, $unit);
+            $updateSourcingStmt->bind_param("isdsi", $productId, $componentName, $requiredQty, $unit, $existingSourcing[$index]);
+            $updateSourcingStmt->execute();
+            $updateSourcingStmt->close();
         } else {
-            $insertSourcingStmt = $conn->prepare("
-                INSERT INTO manufacturing_sourcing_components
-                (manufacturing_order_id, formula_component_index, product_id, component_name, required_quantity, unit, available_quantity)
-                VALUES (?, ?, ?, ?, ?, ?, 0)
-            ");
-            $insertSourcingStmt->bind_param("iiisds", $orderId, $index, $productId, $componentName, $requiredQty, $unit);
+            // Insert new record for new formula component
+            if ($hasSourceCol) {
+                $insertSourcingStmt = $conn->prepare("
+                    INSERT INTO manufacturing_sourcing_components
+                    (manufacturing_order_id, source, formula_component_index, product_id, component_name, required_quantity, unit, available_quantity)
+                    VALUES (?, 'formula', ?, ?, ?, ?, ?, 0)
+                ");
+                $insertSourcingStmt->bind_param("iiisds", $orderId, $index, $productId, $componentName, $requiredQty, $unit);
+            } else {
+                $insertSourcingStmt = $conn->prepare("
+                    INSERT INTO manufacturing_sourcing_components
+                    (manufacturing_order_id, formula_component_index, product_id, component_name, required_quantity, unit, available_quantity)
+                    VALUES (?, ?, ?, ?, ?, ?, 0)
+                ");
+                $insertSourcingStmt->bind_param("iiisds", $orderId, $index, $productId, $componentName, $requiredQty, $unit);
+            }
+            $insertSourcingStmt->execute();
+            $insertSourcingStmt->close();
         }
-        $insertSourcingStmt->execute();
-        $insertSourcingStmt->close();
     }
-}
 
-// Remove sourcing components that are no longer in the formula
-foreach ($existingSourcing as $index => $id) {
-    if (!in_array($index, $formulaIndices)) {
-        $deleteSourcingStmt = $conn->prepare("DELETE FROM manufacturing_sourcing_components WHERE id = ?");
-        $deleteSourcingStmt->bind_param("i", $id);
-        $deleteSourcingStmt->execute();
-        $deleteSourcingStmt->close();
+    // Remove sourcing components that are no longer in the formula
+    foreach ($existingSourcing as $index => $id) {
+        if (!in_array($index, $formulaIndices)) {
+            $deleteSourcingStmt = $conn->prepare("DELETE FROM manufacturing_sourcing_components WHERE id = ?");
+            $deleteSourcingStmt->bind_param("i", $id);
+            $deleteSourcingStmt->execute();
+            $deleteSourcingStmt->close();
+        }
     }
-}
 
-// Clean up stale duplicate formula rows: keep only the IDs tracked in $existingSourcing,
-// delete any other formula-source rows for this order that slipped in from old bug.
-if ($hasSourceCol) {
-    $knownIds = array_values($existingSourcing);
-    if (!empty($knownIds)) {
-        $placeholders = implode(',', array_fill(0, count($knownIds), '?'));
-        $types = str_repeat('i', count($knownIds) + 1);
-        $cleanupStmt = $conn->prepare("DELETE FROM manufacturing_sourcing_components WHERE manufacturing_order_id = ? AND (source = 'formula' OR source IS NULL) AND id NOT IN ($placeholders)");
-        $params = array_merge([$orderId], $knownIds);
-        $cleanupStmt->bind_param($types, ...$params);
-        $cleanupStmt->execute();
-        $cleanupStmt->close();
+    // Clean up stale duplicate formula rows: keep only the IDs tracked in $existingSourcing,
+    // delete any other formula-source rows for this order that slipped in from old bug.
+    if ($hasSourceCol) {
+        $knownIds = array_values($existingSourcing);
+        if (!empty($knownIds)) {
+            $placeholders = implode(',', array_fill(0, count($knownIds), '?'));
+            $types = str_repeat('i', count($knownIds) + 1);
+            $cleanupStmt = $conn->prepare("DELETE FROM manufacturing_sourcing_components WHERE manufacturing_order_id = ? AND (source = 'formula' OR source IS NULL) AND id NOT IN ($placeholders)");
+            $params = array_merge([$orderId], $knownIds);
+            $cleanupStmt->bind_param($types, ...$params);
+            $cleanupStmt->execute();
+            $cleanupStmt->close();
+        }
     }
 }
 
@@ -352,6 +364,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? 'update';
     $statusInput = $_POST['status'] ?? '';
     $notesInput = trim($_POST['notes'] ?? '');
+
+    $stepStmt = $pdo->prepare("
+        SELECT * FROM manufacturing_order_steps
+        WHERE manufacturing_order_id = ? AND step_key = ?
+        LIMIT 1
+    ");
+    $stepStmt->execute([$orderId, $stepKey]);
+    $stepRow = $stepStmt->fetch(PDO::FETCH_ASSOC);
+    $stepStmt = null;
+
+    if (!$stepRow) {
+        setAlert('danger', 'Selected step cannot be found.');
+        redirect('order.php?id=' . $orderId);
+    }
+
+    if ($stepRow['status'] === 'completed') {
+        setAlert('danger', 'This manufacturing step is completed and locked. Completed steps cannot be changed.');
+        redirect('order.php?id=' . $orderId);
+    }
 
     // Store component notes for sourcing step (always save notes regardless of status)
     if ($stepKey === 'sourcing') {
@@ -702,20 +733,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             setAlert('danger', 'Cannot complete quality step: ' . count($unapprovedItems) . ' items are not approved. Missing: ' . implode(', ', $unapprovedItems));
             redirect('order.php?id=' . $orderId);
         }
-    }
-
-    $stepStmt = $pdo->prepare("
-        SELECT * FROM manufacturing_order_steps 
-        WHERE manufacturing_order_id = ? AND step_key = ? 
-        LIMIT 1
-    ");
-    $stepStmt->execute([$orderId, $stepKey]);
-    $stepRow = $stepStmt->fetch(PDO::FETCH_ASSOC);
-    $stepStmt = null;
-
-    if (!$stepRow) {
-        setAlert('danger', 'Selected step cannot be found.');
-        redirect('order.php?id=' . $orderId);
     }
 
     // Check if previous step is completed (sequential workflow enforcement)
@@ -1157,6 +1174,7 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                     }
                     $documents = $orderDocuments[$stepRow['id']] ?? []; 
                     $isOpen = ($stepRow['step_key'] === $activeStepKey);
+                    $isStepLocked = ($stepRow['status'] === 'completed');
                 ?>
                 <details class="border rounded mb-2" <?= $isOpen ? 'open' : ''; ?>>
                     <summary class="p-3 fw-bold cursor-pointer bg-light d-flex justify-content-between align-items-center" style="list-style: none;">
@@ -1171,6 +1189,15 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                             <p class="text-muted small mb-3"><?= manufacturing_get_step_instruction($stepRow['step_key']); ?></p>
                             
                             <form method="post" enctype="multipart/form-data">
+                                <input type="hidden" name="order_id" value="<?= $order['id']; ?>">
+                                <input type="hidden" name="step_key" value="<?= htmlspecialchars($stepRow['step_key']); ?>">
+                                <?php if ($isStepLocked): ?>
+                                    <div class="alert alert-success small mb-3">
+                                        <i class="fas fa-lock me-2"></i>
+                                        This step is completed and locked. Its saved data, notes, files, and status can no longer be changed.
+                                    </div>
+                                <?php endif; ?>
+                                <fieldset <?= $isStepLocked ? 'disabled' : ''; ?>>
                                 <?php if ($stepRow['step_key'] === 'sourcing'): ?>
                                     <!-- Sourcing Components Table -->
                                     <?php
@@ -1984,8 +2011,6 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                     </div>
                                 <?php endif; ?>
                             
-                                <input type="hidden" name="order_id" value="<?= $order['id']; ?>">
-                                <input type="hidden" name="step_key" value="<?= htmlspecialchars($stepRow['step_key']); ?>">
                                 <div class="row g-3 mb-3">
                                     <div class="col-md-4">
                                         <label class="form-label">Step status</label>
@@ -2044,6 +2069,7 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                         <i class="fas fa-sync-alt me-1"></i> Regenerate Excel/PDF
                                     </button>
                                 </div>
+                                </fieldset>
                             </form>
                             <div class="mt-4 border rounded p-3 bg-light">
                                 <div class="d-flex justify-content-between align-items-center mb-2">
