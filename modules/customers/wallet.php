@@ -2,7 +2,10 @@
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
 
-if (!hasPermission('customers.wallet') && !hasPermission('finance.customer_wallet.view')) {
+$canManageCustomerWallet = hasPermission('customers.wallet') || hasPermission('finance.customer_payment.process');
+$canViewCustomerWallet = hasPermission('customers.wallet.view') || $canManageCustomerWallet || hasPermission('finance.customer_wallet.view');
+
+if (!$canViewCustomerWallet) {
     setAlert('danger', 'You do not have permission to access this page.');
     redirect('../../dashboard.php');
 }
@@ -49,6 +52,11 @@ if ($banks_result) {
 
 // Handle wallet transactions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!$canManageCustomerWallet) {
+        setAlert('danger', 'You do not have permission to process customer wallet transactions.');
+        redirect('wallet.php?id=' . $customer_id);
+    }
+
     $amount = sanitize($_POST['amount']);
     $type = sanitize($_POST['type']);
     $notes = sanitize($_POST['notes']);
@@ -134,6 +142,7 @@ require_once '../../includes/header.php';
 </div>
 
 <div class="row mb-4">
+    <?php if ($canManageCustomerWallet): ?>
     <div class="col-md-6">
         <div class="card">
             <div class="card-header">
@@ -179,6 +188,7 @@ require_once '../../includes/header.php';
             </div>
         </div>
     </div>
+    <?php endif; ?>
 </div>
 
 <div class="card">

@@ -50,7 +50,7 @@ require_once '../../includes/header.php';
             <td><?= (int)$r['perms_count'] ?></td>
             <td class="d-flex gap-2">
               <a class="btn btn-sm btn-outline-primary" href="edit.php?id=<?= (int)$r['id'] ?>"><i class="fas fa-edit"></i> Edit</a>
-              <!-- <a class="btn btn-sm btn-outline-info" href="permissions.php?id=<?= (int)$r['id'] ?>"><i class="fas fa-key"></i> Permissions</a> -->
+              <a class="btn btn-sm btn-outline-info" href="permissions.php?id=<?= (int)$r['id'] ?>"><i class="fas fa-key"></i> Permissions</a>
               <a class="btn btn-sm btn-outline-danger" href="delete.php?id=<?= (int)$r['id'] ?>" onclick="return confirm('Delete role?');"><i class="fas fa-trash"></i> Delete</a>
             </td>
           </tr>
@@ -61,4 +61,3 @@ require_once '../../includes/header.php';
 </div>
 
 <?php require_once '../../includes/footer.php'; ?>
-

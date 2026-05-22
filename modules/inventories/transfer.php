@@ -12,10 +12,22 @@ require_once '../../includes/header.php';
 
 // Handle transfer submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $from_inventory_id = sanitize($_POST['from_inventory_id']);
-    $to_inventory_id = sanitize($_POST['to_inventory_id']);
+    $from_inventory_id = (int)sanitize($_POST['from_inventory_id']);
+    $to_inventory_id = (int)sanitize($_POST['to_inventory_id']);
     $notes = sanitize($_POST['notes']);
     $user_id = $_SESSION['user_id'];
+    $transferred_at = date('Y-m-d H:i:s');
+    $transferImagePath = null;
+
+    if ($from_inventory_id === $to_inventory_id) {
+        setAlert('danger', 'Source and destination inventories must be different.');
+        redirect('transfer.php');
+    }
+
+    if (empty($_POST['product_id']) || !is_array($_POST['product_id'])) {
+        setAlert('danger', 'Please add at least one item to transfer.');
+        redirect('transfer.php');
+    }
     
     // Generate transfer reference
     $transfer_reference = 'TR-' . date('Ymd') . '-' . generateRandomString(6);
@@ -24,22 +36,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $conn->begin_transaction();
     
     try {
+        $transferImageError = null;
+        $transferImagePath = uploadImageAttachment(
+            'transfer_image',
+            'assets/uploads/inventory_transfers',
+            'inventory_transfer_' . $transfer_reference,
+            true,
+            $transferImageError
+        );
+
+        if ($transferImageError !== null) {
+            throw new Exception($transferImageError);
+        }
+
         // Create transfer record
-        $transfer_sql = "INSERT INTO inventory_transfers 
-                         (transfer_reference, from_inventory_id, to_inventory_id, requested_by, notes) 
-                         VALUES (?, ?, ?, ?, ?)";
+        $transfer_sql = "INSERT INTO inventory_transfers
+                         (transfer_reference, from_inventory_id, to_inventory_id, status, requested_by, accepted_by, transferred_by, transferred_at, image_path, notes)
+                         VALUES (?, ?, ?, 'accepted', ?, ?, ?, ?, ?, ?)";
         $transfer_stmt = $conn->prepare($transfer_sql);
-        $transfer_stmt->bind_param("siiis", $transfer_reference, $from_inventory_id, $to_inventory_id, $user_id, $notes);
+        $transfer_stmt->bind_param("siiiiisss", $transfer_reference, $from_inventory_id, $to_inventory_id, $user_id, $user_id, $user_id, $transferred_at, $transferImagePath, $notes);
         $transfer_stmt->execute();
         $transfer_id = $transfer_stmt->insert_id;
         $transfer_stmt->close();
         
         // Process transfer items
         foreach ($_POST['product_id'] as $key => $product_id) {
-            $product_id = sanitize($product_id);
-            $quantity = sanitize($_POST['quantity'][$key]);
+            $product_id = (int)sanitize($product_id);
+            $quantity = (float)sanitize($_POST['quantity'][$key]);
             
             if ($quantity > 0) {
+                $source_before = getInventoryProductQuantity($from_inventory_id, $product_id);
                 // Add to transfer items
                 $item_sql = "INSERT INTO transfer_items (transfer_id, product_id, quantity) VALUES (?, ?, ?)";
                 $item_stmt = $conn->prepare($item_sql);
@@ -52,24 +78,61 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                SET quantity = quantity - ? 
                                WHERE inventory_id = ? AND product_id = ? AND quantity >= ?";
                 $deduct_stmt = $conn->prepare($deduct_sql);
-                $deduct_stmt->bind_param("diii", $quantity, $from_inventory_id, $product_id, $quantity);
+                $deduct_stmt->bind_param("diid", $quantity, $from_inventory_id, $product_id, $quantity);
                 $deduct_stmt->execute();
                 
                 if ($deduct_stmt->affected_rows === 0) {
                     throw new Exception("Insufficient quantity for product ID: $product_id");
                 }
                 $deduct_stmt->close();
+
+                $destination_before = getInventoryProductQuantity($to_inventory_id, $product_id);
+                $add_sql = "INSERT INTO inventory_products (inventory_id, product_id, quantity)
+                            VALUES (?, ?, ?)
+                            ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)";
+                $add_stmt = $conn->prepare($add_sql);
+                $add_stmt->bind_param("iid", $to_inventory_id, $product_id, $quantity);
+                $add_stmt->execute();
+                $add_stmt->close();
+
+                logInventoryStockChange(
+                    $from_inventory_id,
+                    $product_id,
+                    -(float)$quantity,
+                    $source_before,
+                    $source_before - (float)$quantity,
+                    'inventory_transfer',
+                    $transfer_id,
+                    null,
+                    null,
+                    'Transfer out to inventory ID: ' . $to_inventory_id
+                );
+                logInventoryStockChange(
+                    $to_inventory_id,
+                    $product_id,
+                    (float)$quantity,
+                    $destination_before,
+                    $destination_before + (float)$quantity,
+                    'inventory_transfer',
+                    $transfer_id,
+                    null,
+                    null,
+                    'Transfer in from inventory ID: ' . $from_inventory_id
+                );
             }
         }
         
         // Commit transaction
         $conn->commit();
-        setAlert('success', 'Transfer created successfully. Reference: ' . $transfer_reference);
-        logActivity("Created inventory transfer: $transfer_reference (ID: $transfer_id)");
-        redirect('index.php');
+        setAlert('success', 'Transfer completed successfully. Reference: ' . $transfer_reference);
+        logActivity("Created and accepted inventory transfer: $transfer_reference (ID: $transfer_id) by user ID $user_id at $transferred_at");
+        redirect('transfers_list.php');
     } catch (Exception $e) {
         // Rollback transaction on error
         $conn->rollback();
+        if ($transferImagePath && is_file(ROOT_PATH . '/' . $transferImagePath)) {
+            unlink(ROOT_PATH . '/' . $transferImagePath);
+        }
         setAlert('danger', 'Error creating transfer: ' . $e->getMessage());
         redirect('transfer.php');
     }
@@ -95,7 +158,7 @@ $products_result = $conn->query($products_sql);
 
 <div class="card">
     <div class="card-body">
-        <form action="transfer.php" method="POST" id="transferForm">
+        <form action="transfer.php" method="POST" id="transferForm" enctype="multipart/form-data">
             <div class="row mb-3">
                 <div class="col-md-6">
                     <label for="from_inventory_id" class="form-label">From Inventory</label>
@@ -122,6 +185,12 @@ $products_result = $conn->query($products_sql);
             <div class="mb-3">
                 <label for="notes" class="form-label">Notes</label>
                 <textarea class="form-control" id="notes" name="notes" rows="2"></textarea>
+            </div>
+
+            <div class="mb-3">
+                <label for="transfer_image" class="form-label">Transfer Image <span class="text-danger">*</span></label>
+                <input type="file" class="form-control" id="transfer_image" name="transfer_image" accept="image/jpeg,image/png,image/gif,image/webp" required>
+                <small class="text-muted">Attach the transfer image or receipt. JPG, PNG, GIF, WEBP, max 5MB.</small>
             </div>
             
             <div class="table-responsive mb-3">
@@ -278,8 +347,13 @@ $(document).ready(function() {
         if ($('#transferItemsBody tr').length === 0) {
             e.preventDefault();
             alert('Please add at least one item to transfer.');
+            return;
+        }
+
+        if (!$('#transfer_image').val()) {
+            e.preventDefault();
+            alert('Please upload a transfer image.');
         }
     });
 });
 </script>
-

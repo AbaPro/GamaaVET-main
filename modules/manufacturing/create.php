@@ -46,6 +46,8 @@ if ($bottleSizesResult) {
     }
 }
 
+$hasPackagingProductColumn = $conn->query("SHOW COLUMNS FROM packaging_options LIKE 'product_id'")->num_rows > 0;
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $customerId         = isset($_POST['customer_id'])        ? (int)$_POST['customer_id']        : 0;
     $productId          = isset($_POST['product_id'])         ? (int)$_POST['product_id']         : 0;
@@ -79,6 +81,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         try {
             $pdo->beginTransaction();
+
+            if ($packagingOptionId) {
+                if ($hasPackagingProductColumn) {
+                    $pkgCheckStmt = $pdo->prepare("
+                        SELECT COUNT(*)
+                        FROM packaging_options
+                        WHERE id = ? AND customer_id = ? AND (product_id = ? OR product_id IS NULL)
+                    ");
+                    $pkgCheckStmt->execute([$packagingOptionId, $customerId, $productId]);
+                } else {
+                    $pkgCheckStmt = $pdo->prepare("
+                        SELECT COUNT(*)
+                        FROM packaging_options
+                        WHERE id = ? AND customer_id = ?
+                    ");
+                    $pkgCheckStmt->execute([$packagingOptionId, $customerId]);
+                }
+                if ((int)$pkgCheckStmt->fetchColumn() === 0) {
+                    throw new Exception('Selected packaging option does not match this customer and final product.');
+                }
+            }
 
             $formulaId = $selectedFormulaId;
 
@@ -376,6 +399,7 @@ foreach ($bottleSizes as $bs) {
     let loadedFormulas = [];
     let pendingFormulaSelection = <?php echo json_encode($selectedFormulaId ?: ''); ?>;
     let pendingProductSelection = <?php echo json_encode($_POST['product_id'] ?? ''); ?>;
+    let pendingPackagingSelection = <?php echo json_encode($_POST['packaging_option_id'] ?? ''); ?>;
 
     function escapeForAttr(value) {
         if (!value) return '';
@@ -423,6 +447,15 @@ foreach ($bottleSizes as $bs) {
         let html = '<div class="fw-bold mb-1">' + escapeForAttr(formula.name || 'Untitled formula') + '</div>';
         html += formula.description ? '<p class="text-muted mb-1">' + escapeForAttr(formula.description) + '</p>' : '';
         html += '<div class="text-muted small mb-1">Standard batch size: ' + (formula.batch_size || 'N/A') + (formula.batch_unit ? ' ' + escapeForAttr(formula.batch_unit) : '') + '</div>';
+        if (formula.sample_images && formula.sample_images.length) {
+            html += '<div class="d-flex flex-wrap gap-2 my-2">';
+            formula.sample_images.forEach(function (image) {
+                if (!image.path) return;
+                const imagePath = '../../' + escapeForAttr(image.path);
+                html += '<a href="' + imagePath + '" target="_blank"><img src="' + imagePath + '" class="rounded border" style="width:64px;height:64px;object-fit:cover;" alt="Formula sample"></a>';
+            });
+            html += '</div>';
+        }
         if (formula.components && formula.components.length) {
             html += '<div class="table-responsive mb-1"><table class="table table-sm table-borderless mb-0"><tbody>';
             formula.components.forEach(function (c) {
@@ -464,6 +497,7 @@ foreach ($bottleSizes as $bs) {
                 }
                 productSelect.html(opts);
                 if ($.fn.select2) productSelect.trigger('change.select2');
+                loadPackagingOptions(customerId, productSelect.val());
                 pendingProductSelection = '';
             });
 
@@ -486,19 +520,30 @@ foreach ($bottleSizes as $bs) {
                 }
             });
 
-        // Load packaging options
+        loadPackagingOptions(customerId, productSelect.val());
+    }
+
+    function loadPackagingOptions(customerId, productId) {
+        if (!customerId || !productId) {
+            packagingSelect.html('<option value="">— Select customer and product first —</option>').prop('disabled', true);
+            if ($.fn.select2) packagingSelect.trigger('change.select2');
+            return;
+        }
+
         packagingSelect.prop('disabled', true).html('<option>Loading…</option>');
-        $.getJSON('../../ajax/get_packaging_options.php', { customer_id: customerId })
+        $.getJSON('../../ajax/get_packaging_options.php', { customer_id: customerId, product_id: productId })
             .done(function (resp) {
                 let opts = '<option value="">— No packaging option —</option>';
                 if (resp.success && resp.options.length) {
                     resp.options.forEach(function (o) {
-                        opts += `<option value="${o.id}">${escapeForAttr(o.name)}</option>`;
+                        const sel = pendingPackagingSelection && String(o.id) === String(pendingPackagingSelection) ? 'selected' : '';
+                        opts += `<option value="${o.id}" ${sel}>${escapeForAttr(o.name)}</option>`;
                     });
                     packagingSelect.prop('disabled', false);
                 }
                 packagingSelect.html(opts);
                 if ($.fn.select2) packagingSelect.trigger('change.select2');
+                pendingPackagingSelection = '';
             });
     }
 
@@ -514,7 +559,12 @@ foreach ($bottleSizes as $bs) {
         customerSelect.on('change', function () {
             pendingFormulaSelection = '';
             pendingProductSelection = '';
+            pendingPackagingSelection = '';
             loadForCustomer($(this).val());
+        });
+
+        productSelect.on('change', function () {
+            loadPackagingOptions(customerSelect.val(), $(this).val());
         });
 
         formulaSelect.on('change', function () {

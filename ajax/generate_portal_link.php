@@ -50,15 +50,15 @@ if (empty($customer['portal_token']) || !$expiresAt || $expiresAt < $now) {
 
 $portalUrl = BASE_URL . 'portal/customer_portal.php?token=' . urlencode($customer['portal_token']);
 $rawPhone = !empty($customer['whatsapp_phone']) ? $customer['whatsapp_phone'] : $customer['phone'];
-$digitsOnly = preg_replace('/\D+/', '', $rawPhone);
+$whatsappNumber = normalizeEgyptWhatsappNumber($rawPhone);
 
-if (empty($digitsOnly)) {
+if (empty($whatsappNumber)) {
     echo json_encode(['success' => false, 'message' => 'No WhatsApp number on file.']);
     exit;
 }
 
 $message = "مرحباً {$customer['name']}، يمكنك متابعة طلباتك ومدفوعاتك من خلال الرابط التالي: {$portalUrl}";
-$whatsappUrl = 'https://wa.me/' . $digitsOnly . '?text=' . rawurlencode($message);
+$whatsappUrl = 'https://wa.me/' . $whatsappNumber . '?text=' . rawurlencode($message);
 
 echo json_encode([
     'success' => true,

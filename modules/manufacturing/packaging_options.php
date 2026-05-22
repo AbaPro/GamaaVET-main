@@ -11,7 +11,9 @@ $page_title = 'Packaging Options';
 require_once '../../includes/header.php';
 
 $customerFilter = isset($_GET['customer_id']) ? (int)$_GET['customer_id'] : 0;
+$productFilter = isset($_GET['product_id']) ? (int)$_GET['product_id'] : 0;
 $search = sanitize($_GET['search'] ?? '');
+$hasPackagingProductColumn = $conn->query("SHOW COLUMNS FROM packaging_options LIKE 'product_id'")->num_rows > 0;
 
 $customers = [];
 $customerResult = $conn->query("SELECT id, name FROM customers ORDER BY name");
@@ -21,19 +23,34 @@ if ($customerResult) {
     }
 }
 
+$finalProducts = [];
+$finalProductResult = $conn->query("SELECT id, customer_id, name, sku FROM products WHERE type = 'final' ORDER BY name");
+if ($finalProductResult) {
+    while ($row = $finalProductResult->fetch_assoc()) {
+        $finalProducts[] = $row;
+    }
+}
+
 $whereClauses = ['1=1'];
 if ($customerFilter > 0) {
     $whereClauses[] = "po.customer_id = " . (int)$customerFilter;
+}
+if ($hasPackagingProductColumn && $productFilter > 0) {
+    $whereClauses[] = "po.product_id = " . (int)$productFilter;
 }
 if ($search !== '') {
     $whereClauses[] = "(po.name LIKE '%" . $conn->real_escape_string($search) . "%' OR po.description LIKE '%" . $conn->real_escape_string($search) . "%')";
 }
 
+$productSelect = $hasPackagingProductColumn ? ", p.name AS product_name, p.sku AS product_sku" : "";
+$productJoin = $hasPackagingProductColumn ? "LEFT JOIN products p ON p.id = po.product_id" : "";
+
 $query = "
-    SELECT po.*, c.name AS customer_name,
+    SELECT po.*, c.name AS customer_name{$productSelect},
            COUNT(poi.id) AS item_count
     FROM packaging_options po
     JOIN customers c ON c.id = po.customer_id
+    {$productJoin}
     LEFT JOIN packaging_option_items poi ON poi.packaging_option_id = po.id
     WHERE " . implode(' AND ', $whereClauses) . "
     GROUP BY po.id
@@ -67,7 +84,7 @@ if ($result) {
 <div class="card mb-4">
     <div class="card-body">
         <form class="row g-3" method="get">
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <label class="form-label">Customer</label>
                 <select class="form-select select2" name="customer_id">
                     <option value="">All customers</option>
@@ -78,11 +95,26 @@ if ($result) {
                     <?php endforeach; ?>
                 </select>
             </div>
-            <div class="col-md-4">
+            <?php if ($hasPackagingProductColumn): ?>
+            <div class="col-md-3">
+                <label class="form-label">Final Product</label>
+                <select class="form-select select2" name="product_id">
+                    <option value="">All final products</option>
+                    <?php foreach ($finalProducts as $product): ?>
+                        <option value="<?= $product['id']; ?>"
+                                data-customer-id="<?= (int)$product['customer_id']; ?>"
+                                <?= $productFilter === (int)$product['id'] ? 'selected' : ''; ?>>
+                            <?= htmlspecialchars($product['name']) . ($product['sku'] ? ' (' . htmlspecialchars($product['sku']) . ')' : ''); ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <?php endif; ?>
+            <div class="<?= $hasPackagingProductColumn ? 'col-md-3' : 'col-md-4'; ?>">
                 <label class="form-label">Search</label>
                 <input type="text" class="form-control" name="search" placeholder="Search by name or description" value="<?= htmlspecialchars($search); ?>">
             </div>
-            <div class="col-md-4 d-flex align-items-end gap-2">
+            <div class="<?= $hasPackagingProductColumn ? 'col-md-3' : 'col-md-4'; ?> d-flex align-items-end gap-2">
                 <button type="submit" class="btn btn-primary flex-grow-1">Apply</button>
                 <a href="packaging_options.php" class="btn btn-outline-secondary flex-grow-1">Reset</a>
             </div>
@@ -98,6 +130,9 @@ if ($result) {
                     <tr>
                         <th>Name</th>
                         <th>Customer</th>
+                        <?php if ($hasPackagingProductColumn): ?>
+                            <th>Final Product</th>
+                        <?php endif; ?>
                         <th>Items</th>
                         <th>Description</th>
                         <th>Status</th>
@@ -111,6 +146,16 @@ if ($result) {
                             <tr>
                                 <td><strong><?= htmlspecialchars($opt['name']); ?></strong></td>
                                 <td><?= htmlspecialchars($opt['customer_name']); ?></td>
+                                <?php if ($hasPackagingProductColumn): ?>
+                                    <td>
+                                        <?php if (!empty($opt['product_name'])): ?>
+                                            <?= htmlspecialchars($opt['product_name']); ?>
+                                            <?= $opt['product_sku'] ? '<small class="text-muted">(' . htmlspecialchars($opt['product_sku']) . ')</small>' : ''; ?>
+                                        <?php else: ?>
+                                            <span class="text-muted">—</span>
+                                        <?php endif; ?>
+                                    </td>
+                                <?php endif; ?>
                                 <td><span class="badge bg-secondary"><?= (int)$opt['item_count']; ?> items</span></td>
                                 <td>
                                     <?php if ($opt['description']): ?>
@@ -144,7 +189,7 @@ if ($result) {
                         <?php endforeach; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="7" class="text-center py-4 text-muted">No packaging options found.</td>
+                            <td colspan="<?= $hasPackagingProductColumn ? 8 : 7; ?>" class="text-center py-4 text-muted">No packaging options found.</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>

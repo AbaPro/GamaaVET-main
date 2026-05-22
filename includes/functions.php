@@ -12,6 +12,27 @@ function e($value) {
     return htmlspecialchars((string)($value ?? ''), ENT_QUOTES, 'UTF-8');
 }
 
+function normalizeEgyptWhatsappNumber($phone) {
+    $digits = preg_replace('/\D+/', '', (string)$phone);
+    if ($digits === '') {
+        return '';
+    }
+
+    if (strpos($digits, '00') === 0) {
+        $digits = substr($digits, 2);
+    }
+
+    if (strpos($digits, '20') === 0) {
+        return $digits;
+    }
+
+    if ($digits[0] === '0') {
+        return '20' . substr($digits, 1);
+    }
+
+    return '20' . $digits;
+}
+
 // Function to generate random string
 function generateRandomString($length = 10) {
     $characters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -26,6 +47,50 @@ function generateRandomString($length = 10) {
 // Function to generate unique ID
 function generateUniqueId($prefix = 'ORD') {
     return $prefix . '-' . date('Ymd') . '-' . generateRandomString(6);
+}
+
+function uploadImageAttachment($fieldName, $relativeDir, $filenamePrefix, $required = false, &$error = null) {
+    $error = null;
+
+    if (empty($_FILES[$fieldName]['name'])) {
+        if ($required) {
+            $error = 'Image upload is required.';
+        }
+        return null;
+    }
+
+    if ($_FILES[$fieldName]['error'] !== UPLOAD_ERR_OK) {
+        $error = 'Failed to upload image.';
+        return null;
+    }
+
+    $allowedExt = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+    $ext = strtolower(pathinfo($_FILES[$fieldName]['name'], PATHINFO_EXTENSION));
+    if (!in_array($ext, $allowedExt, true)) {
+        $error = 'Unsupported image type. Allowed: JPG, PNG, GIF, WEBP.';
+        return null;
+    }
+
+    if ($_FILES[$fieldName]['size'] > 5 * 1024 * 1024) {
+        $error = 'Image exceeds the 5MB limit.';
+        return null;
+    }
+
+    $relativeDir = trim($relativeDir, '/');
+    $uploadDir = ROOT_PATH . '/' . $relativeDir;
+    if (!is_dir($uploadDir) && !mkdir($uploadDir, 0775, true)) {
+        $error = 'Failed to prepare upload folder.';
+        return null;
+    }
+
+    $safePrefix = preg_replace('/[^a-zA-Z0-9_-]/', '_', $filenamePrefix);
+    $newFile = $safePrefix . '_' . uniqid('', true) . '.' . $ext;
+    if (!move_uploaded_file($_FILES[$fieldName]['tmp_name'], $uploadDir . '/' . $newFile)) {
+        $error = 'Failed to save uploaded image.';
+        return null;
+    }
+
+    return $relativeDir . '/' . $newFile;
 }
 
 // Function to generate unique SKU
@@ -178,6 +243,119 @@ function logActivity($action, $details = null) {
         $stmt->bind_param("isss", $userId, $action, $detailsPayload, $ipAddress);
     }
 
+    $stmt->execute();
+    $stmt->close();
+}
+
+function tableExists($tableName) {
+    global $conn;
+    static $cache = [];
+
+    $tableName = preg_replace('/[^a-zA-Z0-9_]/', '', (string)$tableName);
+    if ($tableName === '') {
+        return false;
+    }
+
+    if (!array_key_exists($tableName, $cache)) {
+        $stmt = $conn->prepare("
+            SELECT COUNT(*)
+            FROM information_schema.tables
+            WHERE table_schema = DATABASE() AND table_name = ?
+        ");
+        if (!$stmt) {
+            $cache[$tableName] = false;
+            return false;
+        }
+        $stmt->bind_param("s", $tableName);
+        $stmt->execute();
+        $stmt->bind_result($count);
+        $stmt->fetch();
+        $stmt->close();
+        $cache[$tableName] = ((int)$count) > 0;
+    }
+
+    return $cache[$tableName];
+}
+
+function getInventoryProductQuantity($inventoryId, $productId) {
+    global $conn;
+
+    $stmt = $conn->prepare("SELECT quantity FROM inventory_products WHERE inventory_id = ? AND product_id = ? LIMIT 1");
+    if (!$stmt) {
+        return 0.0;
+    }
+    $stmt->bind_param("ii", $inventoryId, $productId);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $row = $result ? $result->fetch_assoc() : null;
+    $stmt->close();
+
+    return (float)($row['quantity'] ?? 0);
+}
+
+function logInventoryStockChange($inventoryId, $productId, $changeQuantity, $quantityBefore, $quantityAfter, $sourceType, $sourceId = null, $unitPrice = null, $sellPrice = null, $notes = null) {
+    global $conn;
+
+    if (!tableExists('inventory_stock_logs')) {
+        return;
+    }
+
+    $createdBy = $_SESSION['user_id'] ?? null;
+    $sourceType = substr((string)$sourceType, 0, 50);
+    $sourceId = $sourceId !== null ? (int)$sourceId : null;
+    $unitPrice = ($unitPrice !== null && $unitPrice !== '') ? (float)$unitPrice : null;
+    $sellPrice = ($sellPrice !== null && $sellPrice !== '') ? (float)$sellPrice : null;
+
+    $stmt = $conn->prepare("
+        INSERT INTO inventory_stock_logs
+            (inventory_id, product_id, change_quantity, quantity_before, quantity_after, source_type, source_id, unit_price, sell_price, notes, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ");
+    if (!$stmt) {
+        return;
+    }
+
+    $stmt->bind_param(
+        "iidddsiddsi",
+        $inventoryId,
+        $productId,
+        $changeQuantity,
+        $quantityBefore,
+        $quantityAfter,
+        $sourceType,
+        $sourceId,
+        $unitPrice,
+        $sellPrice,
+        $notes,
+        $createdBy
+    );
+    $stmt->execute();
+    $stmt->close();
+}
+
+function logProductPrice($productId, $priceType, $price, $quantity = 1, $sourceType = null, $sourceId = null, $notes = null) {
+    global $conn;
+
+    $price = (float)$price;
+    $quantity = (float)$quantity;
+    if ($price <= 0 || $quantity <= 0 || !in_array($priceType, ['unit', 'sell'], true) || !tableExists('product_price_logs')) {
+        return;
+    }
+
+    $createdBy = $_SESSION['user_id'] ?? null;
+    $sourceType = $sourceType !== null ? substr((string)$sourceType, 0, 50) : null;
+    $sourceId = $sourceId !== null ? (int)$sourceId : null;
+
+    $stmt = $conn->prepare("
+        INSERT INTO product_price_logs
+            (product_id, price_type, price, quantity, source_type, source_id, notes, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ");
+    if (!$stmt) {
+        return;
+    }
+
+    $stmt->bind_param("isddsisi", $productId, $priceType, $price, $quantity, $sourceType, $sourceId, $notes, $createdBy);
     $stmt->execute();
     $stmt->close();
 }
@@ -363,7 +541,7 @@ function createNotification($type, $title, $message, $module = null, $entity_typ
     $sql = "INSERT INTO notifications (type,title,message,module,entity_type,entity_id,severity,created_for_role_id,created_for_user_id,created_by) 
             VALUES (?,?,?,?,?,?,?,?,?,?)";
     $stmt = $conn->prepare($sql);
-    $stmt->bind_param('sssssiissi', $type, $title, $message, $module, $entity_type, $entity_id, $severity, $for_role_id, $for_user_id, $created_by);
+    $stmt->bind_param('sssssisiii', $type, $title, $message, $module, $entity_type, $entity_id, $severity, $for_role_id, $for_user_id, $created_by);
     $stmt->execute();
     $id = $stmt->insert_id;
     $stmt->close();

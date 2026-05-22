@@ -43,11 +43,28 @@ $inventories = $pdo->query("SELECT id, name FROM inventories WHERE is_active = 1
 
 // Handle item receipt
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+    $receiptImagePath = null;
+
     try {
         $pdo->beginTransaction();
+
+        $receiptImageError = null;
+        $receiptImagePath = uploadImageAttachment(
+            'receipt_image',
+            'assets/uploads/po_receipts',
+            'po_receipt_' . (int)$po_id,
+            true,
+            $receiptImageError
+        );
+
+        if ($receiptImageError !== null) {
+            throw new Exception($receiptImageError);
+        }
         
         $all_received = true;
         $some_received = false;
+        $stockLogs = [];
+        $priceLogs = [];
         
         // Update received quantities
         foreach ($items as $item) {
@@ -57,6 +74,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             
             if ($received_qty > 0 && $received_qty <= $max_qty) {
                 $some_received = true;
+                $beforeStmt = $pdo->prepare("SELECT quantity FROM inventory_products WHERE inventory_id = ? AND product_id = ? LIMIT 1");
+                $beforeStmt->execute([$inventory_id, $item['product_id']]);
+                $quantityBefore = (float)($beforeStmt->fetchColumn() ?: 0);
                 
                 // Update PO item received quantity
                 // Update PO item received quantity and total price based on received quantity
@@ -75,6 +95,23 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     ON DUPLICATE KEY UPDATE quantity = quantity + ?
                 ");
                 $stmt->execute([$inventory_id, $item['product_id'], $received_qty, $received_qty]);
+                $stockLogs[] = [
+                    'inventory_id' => $inventory_id,
+                    'product_id' => (int)$item['product_id'],
+                    'change_quantity' => $received_qty,
+                    'quantity_before' => $quantityBefore,
+                    'quantity_after' => $quantityBefore + $received_qty,
+                    'source_id' => (int)$item['id'],
+                    'unit_price' => (float)$item['unit_price'],
+                    'notes' => 'Purchase order receipt #' . $po_id,
+                ];
+                $priceLogs[] = [
+                    'product_id' => (int)$item['product_id'],
+                    'price' => (float)$item['unit_price'],
+                    'quantity' => $received_qty,
+                    'source_id' => (int)$item['id'],
+                    'notes' => 'Purchase order receipt #' . $po_id,
+                ];
             }
             
             // Check if this item is now fully received (considering the new quantity)
@@ -100,14 +137,47 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $new_status = $all_received ? 'received' : 'partially-received';
         $stmt = $pdo->prepare("UPDATE purchase_orders SET status = ?, total_amount = ? WHERE id = ?");
         $stmt->execute([$new_status, $new_total_amount, $po_id]);
+
+        $notes = trim($_POST['notes'] ?? '');
+        $stmt = $pdo->prepare("
+            INSERT INTO purchase_order_receipts
+            (purchase_order_id, image_path, notes, created_by)
+            VALUES (?, ?, ?, ?)
+        ");
+        $stmt->execute([
+            $po_id,
+            $receiptImagePath,
+            $notes !== '' ? $notes : null,
+            $_SESSION['user_id']
+        ]);
         
         $pdo->commit();
+        foreach ($stockLogs as $stockLog) {
+            logInventoryStockChange(
+                $stockLog['inventory_id'],
+                $stockLog['product_id'],
+                $stockLog['change_quantity'],
+                $stockLog['quantity_before'],
+                $stockLog['quantity_after'],
+                'purchase_receipt',
+                $stockLog['source_id'],
+                $stockLog['unit_price'],
+                null,
+                $stockLog['notes']
+            );
+        }
+        foreach ($priceLogs as $priceLog) {
+            logProductPrice($priceLog['product_id'], 'unit', $priceLog['price'], $priceLog['quantity'], 'purchase_receipt', $priceLog['source_id'], $priceLog['notes']);
+        }
         
         $_SESSION['success'] = "Items received successfully! PO status updated to " . $new_status;
         header("Location: po_details.php?id=" . $po_id);
         exit();
     } catch (Exception $e) {
         $pdo->rollBack();
+        if ($receiptImagePath && is_file(ROOT_PATH . '/' . $receiptImagePath)) {
+            unlink(ROOT_PATH . '/' . $receiptImagePath);
+        }
         $_SESSION['error'] = "Error receiving items: " . $e->getMessage();
     }
 }
@@ -136,7 +206,7 @@ require_once '../../includes/header.php';
                 </div>
             </div>
             
-            <form method="post">
+            <form method="post" enctype="multipart/form-data">
                 <div class="table-responsive">
                     <table class="table table-striped">
                         <thead>
@@ -188,6 +258,12 @@ require_once '../../includes/header.php';
                         <label for="notes" class="form-label">Receiving Notes</label>
                         <textarea class="form-control" id="notes" name="notes" rows="2"></textarea>
                     </div>
+
+                    <div class="form-group mt-3">
+                        <label for="receipt_image" class="form-label">Receipt Image <span class="text-danger">*</span></label>
+                        <input type="file" class="form-control" id="receipt_image" name="receipt_image" accept="image/jpeg,image/png,image/gif,image/webp" required>
+                        <small class="text-muted">Attach the received items image or receipt. JPG, PNG, GIF, WEBP, max 5MB.</small>
+                    </div>
                     
                     <div class="d-flex justify-content-between mt-3">
                         <a href="po_details.php?id=<?= $po_id ?>" class="btn btn-secondary">Cancel</a>
@@ -206,7 +282,7 @@ $(document).ready(function() {
     $('form').on('submit', function(e) {
         let someReceived = false;
         $('input[name^="received_qty"]').each(function() {
-            if (parseInt($(this).val()) > 0) {
+            if (parseFloat($(this).val()) > 0) {
                 someReceived = true;
             }
         });
@@ -214,6 +290,12 @@ $(document).ready(function() {
         if (!someReceived) {
             e.preventDefault();
             alert('Please enter a quantity for at least one item.');
+            return;
+        }
+
+        if (!$('#receipt_image').val()) {
+            e.preventDefault();
+            alert('Please upload a receipt image.');
         }
     });
 });

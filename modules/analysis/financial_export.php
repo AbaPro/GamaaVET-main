@@ -109,7 +109,7 @@ $sheets = [
     ['2. Accounts Receivable', 'Customer orders, payments, and outstanding balances', 'Included'],
     ['3. Accounts Payable', 'Vendor purchase orders, payments, and outstanding balances', 'Included'],
     ['4. Cash & Bank', 'Combined cash, bank, wallet inflows/outflows and transfers', 'Included'],
-    ['5. Inventory', 'Stock levels, cost values, and low-stock alerts', 'Included'],
+    ['5. Inventory', 'Stock levels, cost values, average prices, and low-stock alerts', 'Included'],
     ['6. Purchasing', 'Purchase order register with line items', 'Included'],
     ['7. Sales & Billing', 'Sales order register with line items', 'Included'],
 ];
@@ -470,19 +470,52 @@ $invData[] = [
 ];
 $invData[] = [''];
 
+$priceAverageJoin = tableExists('product_price_logs')
+    ? "LEFT JOIN (
+            SELECT product_id,
+                   SUM(CASE WHEN price_type = 'unit' AND price > 0 AND quantity > 0 THEN price * quantity ELSE 0 END)
+                       / NULLIF(SUM(CASE WHEN price_type = 'unit' AND price > 0 AND quantity > 0 THEN quantity ELSE 0 END), 0) AS avg_unit_price,
+                   SUM(CASE WHEN price_type = 'sell' AND price > 0 AND quantity > 0 THEN price * quantity ELSE 0 END)
+                       / NULLIF(SUM(CASE WHEN price_type = 'sell' AND price > 0 AND quantity > 0 THEN quantity ELSE 0 END), 0) AS avg_sell_price
+            FROM product_price_logs
+            GROUP BY product_id
+       ) price_avg ON price_avg.product_id = p.id"
+    : "LEFT JOIN (
+            SELECT p2.id AS product_id,
+                   (
+                       SELECT SUM(poi.unit_price * CASE WHEN COALESCE(poi.received_quantity, 0) > 0 THEN poi.received_quantity ELSE poi.quantity END)
+                              / NULLIF(SUM(CASE WHEN COALESCE(poi.received_quantity, 0) > 0 THEN poi.received_quantity ELSE poi.quantity END), 0)
+                       FROM purchase_order_items poi
+                       WHERE poi.product_id = p2.id
+                         AND poi.unit_price > 0
+                         AND (CASE WHEN COALESCE(poi.received_quantity, 0) > 0 THEN poi.received_quantity ELSE poi.quantity END) > 0
+                   ) AS avg_unit_price,
+                   (
+                       SELECT SUM(oi.unit_price * oi.quantity) / NULLIF(SUM(oi.quantity), 0)
+                       FROM order_items oi
+                       WHERE oi.product_id = p2.id
+                         AND oi.unit_price > 0
+                         AND oi.quantity > 0
+                         AND COALESCE(oi.is_free_sample, 0) = 0
+                   ) AS avg_sell_price
+            FROM products p2
+       ) price_avg ON price_avg.product_id = p.id";
+
 $invSql = "SELECT p.sku, p.name as product_name, p.type, p.unit, p.cost_price, p.min_stock_level,
                    c1.name as category_name, c2.name as subcategory_name,
+                   price_avg.avg_unit_price, price_avg.avg_sell_price,
                    COALESCE((SELECT SUM(ip.quantity) FROM inventory_products ip
                              JOIN inventories inv ON ip.inventory_id = inv.id
                              WHERE ip.product_id = p.id AND inv.is_active = 1), 0) AS total_quantity
             FROM products p
             LEFT JOIN categories c1 ON p.category_id = c1.id
             LEFT JOIN categories c2 ON p.subcategory_id = c2.id
+            $priceAverageJoin
             ORDER BY p.name";
 $invResult = $conn->query($invSql);
 if (!$invResult) { $invResult = null; }
 
-$invHeaders = ['<b>SKU</b>', '<b>Product</b>', '<b>Category</b>', '<b>Subcategory</b>', '<b>Type</b>', '<b>Unit</b>', '<b>Quantity</b>', '<b>Unit Cost</b>', '<b>Total Value</b>', '<b>Min Stock</b>', '<b>Low Stock</b>'];
+$invHeaders = ['<b>SKU</b>', '<b>Product</b>', '<b>Category</b>', '<b>Subcategory</b>', '<b>Type</b>', '<b>Unit</b>', '<b>Quantity</b>', '<b>Unit Cost</b>', '<b>Avg Unit Price</b>', '<b>Avg Sell Price</b>', '<b>Total Value</b>', '<b>Min Stock</b>', '<b>Low Stock</b>'];
 $invData[] = $invHeaders;
 if ($invResult === null) {
     appendQueryErrorRow($invData, $conn->error, count($invHeaders));
@@ -497,6 +530,8 @@ if ($invResult) {
     while ($row = $invResult->fetch_assoc()) {
         $qty = fmtNum($row['total_quantity']);
         $cost = fmtNum($row['cost_price']);
+        $avgUnitPrice = $row['avg_unit_price'] !== null ? fmtNum($row['avg_unit_price']) : '';
+        $avgSellPrice = $row['avg_sell_price'] !== null ? fmtNum($row['avg_sell_price']) : '';
         $totalValue = $qty * $cost;
         $minStock = (int)($row['min_stock_level'] ?? 0);
         $lowStock = ($qty <= $minStock && $minStock > 0) ? 'Yes' : 'No';
@@ -512,6 +547,8 @@ if ($invResult) {
             ucfirst($row['unit'] ?? ''),
             $qty,
             $cost,
+            $avgUnitPrice,
+            $avgSellPrice,
             $totalValue,
             $minStock,
             $lowStock,
@@ -525,7 +562,7 @@ if ($invResult) {
 $invData[] = [''];
 $invData[] = [
     '<b>Totals (' . $invRowCount . ' products)</b>', '', '', '', '', '',
-    $invTotalQty, '', $invTotalValue, '', $lowStockCount . ' low-stock items'
+    $invTotalQty, '', '', '', $invTotalValue, '', $lowStockCount . ' low-stock items'
 ];
 
 $xlsx->addSheet($invData, '5. Inventory');

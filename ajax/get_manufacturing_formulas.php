@@ -16,7 +16,7 @@ if ($providerId <= 0) {
 }
 
 $stmt = $conn->prepare("
-    SELECT id, name, description, batch_size, batch_unit, components_json, instructions
+    SELECT id, name, description, batch_size, batch_unit, components_json, instructions, sample_images_json
     FROM manufacturing_formulas 
     WHERE customer_id = ? AND is_active = 1 
     ORDER BY created_at DESC
@@ -27,8 +27,11 @@ $result = $stmt->get_result();
 $formulas = [];
 while ($row = $result->fetch_assoc()) {
     $components = json_decode($row['components_json'] ?? '[]', true);
+    $sampleImages = json_decode($row['sample_images_json'] ?? '[]', true);
     $row['components'] = is_array($components) ? $components : [];
+    $row['sample_images'] = is_array($sampleImages) ? $sampleImages : [];
     unset($row['components_json']);
+    unset($row['sample_images_json']);
     $formulas[] = $row;
 }
 $stmt->close();

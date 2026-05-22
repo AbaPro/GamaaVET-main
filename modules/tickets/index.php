@@ -23,7 +23,8 @@ if (hasPermission('tickets.manage')) {
     $stmt = $conn->prepare("SELECT t.*, r.name AS assigned_role
                             FROM tickets t
                             LEFT JOIN roles r ON r.id = t.assigned_to_role_id
-                            WHERE (t.assigned_to_role_id = ? OR t.assigned_to_user_id = ? OR t.created_by = ?)
+                            WHERE (t.assigned_to_role_id IS NULL AND t.assigned_to_user_id IS NULL)
+                               OR (t.assigned_to_role_id = ? OR t.assigned_to_user_id = ? OR t.created_by = ?)
                             ORDER BY FIELD(status,'open','in_progress','resolved','closed'), priority DESC, created_at DESC");
     $stmt->bind_param('iii', $roleId, $userId, $userId);
     $stmt->execute();

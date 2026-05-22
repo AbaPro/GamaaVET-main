@@ -102,6 +102,57 @@ function manufacturing_get_storage_path_for_step($orderNumber, $stepKey) {
     return $target;
 }
 
+function manufacturing_get_storage_path_for_type($type) {
+    $base = manufacturing_get_storage_base_path();
+    $target = $base . '/' . manufacturing_slugify($type ?: 'misc');
+    if (!is_dir($target)) {
+        mkdir($target, 0777, true);
+    }
+    return $target;
+}
+
+function manufacturing_store_uploaded_image($file, $targetDir, $relativeDir, $prefix) {
+    if (empty($file) || ($file['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+        return null;
+    }
+    if (($file['error'] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK) {
+        throw new Exception('Failed to upload image.');
+    }
+    if (($file['size'] ?? 0) > 5 * 1024 * 1024) {
+        throw new Exception('Image exceeds the 5MB limit.');
+    }
+
+    $allowedExt = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+    $ext = strtolower(pathinfo($file['name'] ?? '', PATHINFO_EXTENSION));
+    if (!in_array($ext, $allowedExt, true)) {
+        throw new Exception('Unsupported image type. Allowed: JPG, PNG, GIF, WEBP.');
+    }
+    if (!is_dir($targetDir)) {
+        mkdir($targetDir, 0775, true);
+    }
+
+    $fileName = manufacturing_slugify($prefix) . '_' . uniqid('', true) . '.' . $ext;
+    $destination = rtrim($targetDir, '/\\') . DIRECTORY_SEPARATOR . $fileName;
+    if (!move_uploaded_file($file['tmp_name'], $destination)) {
+        throw new Exception('Unable to save uploaded image.');
+    }
+
+    return [
+        'path' => rtrim($relativeDir, '/\\') . '/' . $fileName,
+        'original_name' => $file['name'] ?? $fileName,
+    ];
+}
+
+function manufacturing_normalize_uploaded_file($files, $idx) {
+    return [
+        'name' => $files['name'][$idx] ?? '',
+        'type' => $files['type'][$idx] ?? '',
+        'tmp_name' => $files['tmp_name'][$idx] ?? '',
+        'error' => $files['error'][$idx] ?? UPLOAD_ERR_NO_FILE,
+        'size' => $files['size'][$idx] ?? 0,
+    ];
+}
+
 function manufacturing_convert_to_relative_path($fullPath) {
     $fullPath = str_replace('\\', '/', $fullPath);
     $root = str_replace('\\', '/', realpath(__DIR__ . '/../../'));
@@ -208,6 +259,22 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
             $html .= '</tbody></table>';
         }
         $prepStmt->close();
+
+        $prepImageStmt = $conn->prepare("SELECT file_path, original_name FROM manufacturing_preparation_images WHERE manufacturing_order_id = ? ORDER BY uploaded_at DESC");
+        $prepImageStmt->bind_param("i", $order['id']);
+        $prepImageStmt->execute();
+        $prepImageResult = $prepImageStmt->get_result();
+        if ($prepImageResult->num_rows > 0) {
+            $html .= '<h4>Preparation & Mixing Images</h4>';
+            $html .= '<table><thead><tr><th>Image</th><th>File</th></tr></thead><tbody>';
+            while ($image = $prepImageResult->fetch_assoc()) {
+                $imagePath = htmlspecialchars($image['file_path']);
+                $imageName = htmlspecialchars($image['original_name'] ?: basename($image['file_path']));
+                $html .= '<tr><td><img src="' . $imagePath . '" style="max-width:140px;max-height:100px;"></td><td>' . $imageName . '</td></tr>';
+            }
+            $html .= '</tbody></table>';
+        }
+        $prepImageStmt->close();
     }
 
     // Add Quality Validation Checklist for quality step
@@ -333,8 +400,10 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
                 $breakageRecorded = '';
                 $breakageCount = '';
                 $breakageNotes = '';
+                $customMaterialName = 'مطبوعات';
                 
                 foreach ($packagingData['after'] as $item) {
+                    if ($item['item_key'] === 'custom_material_name' && trim((string)($item['item_value'] ?? '')) !== '') $customMaterialName = $item['item_value'];
                     if ($item['item_key'] === 'final_product_count') $finalProductCount = $item['item_value'];
                     if ($item['item_key'] === 'carton_count') $cartonCount = $item['item_value'];
                     if ($item['item_key'] === 'units_per_carton') $unitsPerCarton = $item['item_value'];
@@ -350,8 +419,8 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
                 $html .= '<tr><td style="text-align:right;"><strong>عدد المنتج النهائي:</strong></td><td>' . htmlspecialchars($finalProductCount ?: '_____') . '</td></tr>';
                 $html .= '<tr><td style="text-align:right;"><strong>عدد الكراتين:</strong></td><td>' . htmlspecialchars($cartonCount ?: '_____') . '</td></tr>';
                 $html .= '<tr><td style="text-align:right;"><strong>وحدات/كرتونة:</strong></td><td>' . htmlspecialchars($unitsPerCarton ?: '_____') . '</td></tr>';
-                $html .= '<tr><td style="text-align:right;"><strong>مطابقة المطبوعات:</strong></td><td>مصروف ' . htmlspecialchars($printsIssued ?: '___') . ' / مستخدم ' . htmlspecialchars($printsUsed ?: '___') . ' / راجع ' . htmlspecialchars($printsReturned ?: '___') . '</td></tr>';
-                $html .= '<tr><td style="text-align:right;"><strong>إعادة المطبوعات للمخزن:</strong></td><td>' . $printsReturnedToStock . '</td></tr>';
+                $html .= '<tr><td style="text-align:right;"><strong>مطابقة ' . htmlspecialchars($customMaterialName) . ':</strong></td><td>مصروف ' . htmlspecialchars($printsIssued ?: '___') . ' / مستخدم ' . htmlspecialchars($printsUsed ?: '___') . ' / راجع ' . htmlspecialchars($printsReturned ?: '___') . '</td></tr>';
+                $html .= '<tr><td style="text-align:right;"><strong>إعادة ' . htmlspecialchars($customMaterialName) . ' للمخزن:</strong></td><td>' . $printsReturnedToStock . '</td></tr>';
                 $html .= '<tr><td style="text-align:right;"><strong>أي كسر تم تسجيله:</strong></td><td>' . $breakageRecorded . ' العدد: ' . htmlspecialchars($breakageCount ?: '___') . '</td></tr>';
                 $html .= '<tr><td style="text-align:right;"><strong>ملاحظات الكسر:</strong></td><td>' . htmlspecialchars($breakageNotes ?: '-') . '</td></tr>';
                 
@@ -373,6 +442,7 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
                     'stickers' => 'الاستيكر',
                     'leaflets' => 'نشره'
                 ];
+                $materials['prints'] = $customMaterialName;
                 
                 foreach ($materials as $matKey => $matLabel) {
                     $issued = '';
@@ -493,6 +563,13 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
                     'stickers' => 'الاستيكر',
                     'leaflets' => 'نشره'
                 ];
+                $customMaterialName = 'مطبوعات';
+                foreach ($pkgData['after'] as $pi) {
+                    if ($pi['item_key'] === 'custom_material_name' && trim((string)($pi['item_value'] ?? '')) !== '') {
+                        $customMaterialName = $pi['item_value'];
+                    }
+                }
+                $materials['prints'] = $customMaterialName;
                 
                 foreach ($materials as $matKey => $matLabel) {
                     $issued = ''; $issuedNote = '';
@@ -756,6 +833,214 @@ function manufacturing_get_document_url($relativePath) {
     return rtrim(BASE_URL, '/') . '/' . $relativePath;
 }
 
+function manufacturing_table_has_column($conn, $tableName, $columnName) {
+    $tableName = preg_replace('/[^a-zA-Z0-9_]/', '', $tableName);
+    $columnName = $conn->real_escape_string($columnName);
+    $result = $conn->query("SHOW COLUMNS FROM {$tableName} LIKE '{$columnName}'");
+    return $result && $result->num_rows > 0;
+}
+
+function manufacturing_format_duration($startedAt, $completedAt) {
+    if (!$startedAt || !$completedAt) {
+        return '-';
+    }
+    $seconds = max(0, strtotime($completedAt) - strtotime($startedAt));
+    $hours = floor($seconds / 3600);
+    $minutes = floor(($seconds % 3600) / 60);
+    if ($hours > 0) {
+        return $hours . 'h ' . $minutes . 'm';
+    }
+    return max(1, $minutes) . 'm';
+}
+
+function manufacturing_get_step_people($conn, $stepIds) {
+    if (empty($stepIds) || !manufacturing_table_has_column($conn, 'manufacturing_order_steps', 'started_by')) {
+        return [];
+    }
+    $ids = implode(',', array_map('intval', $stepIds));
+    $people = [];
+    $result = $conn->query("
+        SELECT mos.id, su.name AS started_by_name, cu.name AS completed_by_name, uu.name AS updated_by_name
+        FROM manufacturing_order_steps mos
+        LEFT JOIN users su ON su.id = mos.started_by
+        LEFT JOIN users cu ON cu.id = mos.completed_by
+        LEFT JOIN users uu ON uu.id = mos.last_updated_by
+        WHERE mos.id IN ({$ids})
+    ");
+    if ($result) {
+        while ($row = $result->fetch_assoc()) {
+            $people[(int)$row['id']] = $row;
+        }
+    }
+    return $people;
+}
+
+function manufacturing_get_related_purchase_orders($conn, $orderId) {
+    $stmt = $conn->prepare("
+        SELECT DISTINCT po.id, po.order_date, po.status, v.name AS vendor_name,
+               GROUP_CONCAT(DISTINCT p.name ORDER BY p.name SEPARATOR ', ') AS products
+        FROM manufacturing_sourcing_components msc
+        JOIN purchase_order_items poi ON poi.product_id = msc.product_id
+        JOIN purchase_orders po ON po.id = poi.purchase_order_id
+        LEFT JOIN vendors v ON v.id = po.vendor_id
+        LEFT JOIN products p ON p.id = poi.product_id
+        WHERE msc.manufacturing_order_id = ? AND msc.product_id IS NOT NULL
+        GROUP BY po.id, po.order_date, po.status, v.name
+        ORDER BY po.order_date DESC, po.id DESC
+        LIMIT 20
+    ");
+    $stmt->bind_param('i', $orderId);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $rows = [];
+    while ($row = $result->fetch_assoc()) {
+        $rows[] = $row;
+    }
+    $stmt->close();
+    return $rows;
+}
+
+function manufacturing_get_image_original_date($relativePath) {
+    if (!function_exists('exif_read_data') || !$relativePath) {
+        return null;
+    }
+    $root = realpath(__DIR__ . '/../../');
+    $fullPath = $root . '/' . ltrim(str_replace('\\', '/', $relativePath), '/');
+    if (!is_file($fullPath)) {
+        return null;
+    }
+    $exif = @exif_read_data($fullPath);
+    $date = $exif['DateTimeOriginal'] ?? $exif['DateTime'] ?? null;
+    if (!$date) {
+        return null;
+    }
+    $timestamp = strtotime(str_replace(':', '-', substr($date, 0, 10)) . substr($date, 10));
+    return $timestamp ? date('Y-m-d H:i:s', $timestamp) : null;
+}
+
+function manufacturing_detect_order_audit_notes($conn, $order, $steps) {
+    $notes = [];
+    $orderId = (int)$order['id'];
+
+    foreach ($steps as $step) {
+        if ($step['step_key'] === 'quality' && $step['started_at'] && $step['completed_at']) {
+            $durationSeconds = strtotime($step['completed_at']) - strtotime($step['started_at']);
+            if ($durationSeconds > 0 && $durationSeconds < 300) {
+                $notes[] = [
+                    'severity' => 'warning',
+                    'title' => 'Quality report submitted very quickly',
+                    'detail' => 'Quality step was completed in ' . manufacturing_format_duration($step['started_at'], $step['completed_at']) . '. Review whether the checklist was inspected carefully.'
+                ];
+            }
+        }
+    }
+
+    $missingStmt = $conn->prepare("
+        SELECT component_name, required_quantity, unit, COALESCE(SUM(DISTINCT ip.quantity), 0) AS available_qty
+        FROM manufacturing_sourcing_components msc
+        LEFT JOIN inventories inv ON inv.location_id = ?
+        LEFT JOIN inventory_products ip ON ip.product_id = msc.product_id AND ip.inventory_id = inv.id
+        WHERE msc.manufacturing_order_id = ? AND msc.product_id IS NOT NULL
+        GROUP BY msc.component_name, msc.product_id, msc.required_quantity, msc.unit
+        HAVING available_qty < required_quantity
+    ");
+    $locationId = (int)($order['location_id'] ?? 0);
+    $missingStmt->bind_param('ii', $locationId, $orderId);
+    $missingStmt->execute();
+    $missingResult = $missingStmt->get_result();
+    while ($row = $missingResult->fetch_assoc()) {
+        $notes[] = [
+            'severity' => 'danger',
+            'title' => 'Missing material quantity',
+            'detail' => $row['component_name'] . ' needs ' . $row['required_quantity'] . ' ' . $row['unit'] . ', available ' . $row['available_qty'] . '.'
+        ];
+    }
+    $missingStmt->close();
+
+    $receiptStmt = $conn->prepare("SELECT component_name, receipt_status FROM manufacturing_sourcing_components WHERE manufacturing_order_id = ? AND COALESCE(receipt_status, 'pending') <> 'approved'");
+    $receiptStmt->bind_param('i', $orderId);
+    $receiptStmt->execute();
+    $receiptResult = $receiptStmt->get_result();
+    while ($row = $receiptResult->fetch_assoc()) {
+        $notes[] = [
+            'severity' => $row['receipt_status'] === 'rejected' ? 'danger' : 'warning',
+            'title' => 'Receipt item not approved',
+            'detail' => $row['component_name'] . ' is ' . ($row['receipt_status'] ?: 'pending') . '.'
+        ];
+    }
+    $receiptStmt->close();
+
+    $qualityStmt = $conn->prepare("SELECT item_text, status FROM manufacturing_quality_checklist WHERE manufacturing_order_id = ? AND LOWER(TRIM(COALESCE(status, ''))) <> 'approved'");
+    $qualityStmt->bind_param('i', $orderId);
+    $qualityStmt->execute();
+    $qualityResult = $qualityStmt->get_result();
+    while ($row = $qualityResult->fetch_assoc()) {
+        $notes[] = [
+            'severity' => $row['status'] === 'rejected' ? 'danger' : 'warning',
+            'title' => 'Quality checklist point not approved',
+            'detail' => mb_substr($row['item_text'], 0, 90) . ' (' . ($row['status'] ?: 'pending') . ')'
+        ];
+    }
+    $qualityStmt->close();
+
+    $packagingStmt = $conn->prepare("SELECT item_key, item_value FROM manufacturing_packaging_checklist WHERE manufacturing_order_id = ? AND section_name = 'after'");
+    $packagingStmt->bind_param('i', $orderId);
+    $packagingStmt->execute();
+    $packagingResult = $packagingStmt->get_result();
+    $pkg = [];
+    while ($row = $packagingResult->fetch_assoc()) {
+        $pkg[$row['item_key']] = (float)($row['item_value'] ?: 0);
+    }
+    $packagingStmt->close();
+    foreach (['prints', 'boxes', 'stickers', 'leaflets'] as $key) {
+        $issued = $pkg[$key . '_issued'] ?? 0;
+        if ($issued <= 0) {
+            continue;
+        }
+        $balanced = ($pkg[$key . '_used'] ?? 0) + ($pkg[$key . '_returned'] ?? 0) + ($pkg[$key . '_waste'] ?? 0);
+        if (abs($issued - $balanced) > 0.001) {
+            $notes[] = [
+                'severity' => 'warning',
+                'title' => 'Packaging material balance mismatch',
+                'detail' => ucfirst($key) . ' issued quantity (' . $issued . ') does not equal used + returned + waste (' . $balanced . ').'
+            ];
+        }
+    }
+
+    $imageRows = [];
+    if ($prepStmt = $conn->prepare("SELECT file_path, original_name FROM manufacturing_preparation_images WHERE manufacturing_order_id = ?")) {
+        $prepStmt->bind_param('i', $orderId);
+        $prepStmt->execute();
+        $prepResult = $prepStmt->get_result();
+        while ($row = $prepResult->fetch_assoc()) {
+            $imageRows[] = $row;
+        }
+        $prepStmt->close();
+    }
+    $deliveryStmt = $conn->prepare("SELECT photo_path AS file_path, 'Delivery photo' AS original_name FROM manufacturing_delivery_info WHERE manufacturing_order_id = ? AND photo_path IS NOT NULL AND photo_path <> ''");
+    $deliveryStmt->bind_param('i', $orderId);
+    $deliveryStmt->execute();
+    $deliveryResult = $deliveryStmt->get_result();
+    while ($row = $deliveryResult->fetch_assoc()) {
+        $imageRows[] = $row;
+    }
+    $deliveryStmt->close();
+
+    $orderCreated = strtotime($order['created_at'] ?? '');
+    foreach ($imageRows as $image) {
+        $originalDate = manufacturing_get_image_original_date($image['file_path']);
+        if ($originalDate && $orderCreated && strtotime($originalDate) < ($orderCreated - 86400)) {
+            $notes[] = [
+                'severity' => 'warning',
+                'title' => 'Uploaded image appears older than this order',
+                'detail' => ($image['original_name'] ?: basename($image['file_path'])) . ' has image metadata date ' . $originalDate . '.'
+            ];
+        }
+    }
+
+    return $notes;
+}
+
 /**
  * Builds a comprehensive HTML report for all steps in a manufacturing order.
  */
@@ -764,13 +1049,15 @@ function manufacturing_build_full_report_html($conn, $orderId) {
     $orderStmt = $conn->prepare("
         SELECT mo.*, c.name AS customer_name, f.name AS formula_name, f.description AS formula_description, f.components_json, f.batch_size AS formula_batch_size,
                l.name AS location_name, l.address AS location_address, p.name AS product_name, p.sku AS product_sku,
-               bs.name AS bottle_size_name, bs.size AS bottle_size_value, bs.unit AS bottle_size_unit, bs.type AS bottle_size_type
+               bs.name AS bottle_size_name, bs.size AS bottle_size_value, bs.unit AS bottle_size_unit, bs.type AS bottle_size_type,
+               creator.name AS created_by_name
         FROM manufacturing_orders mo
         JOIN customers c ON c.id = mo.customer_id
         JOIN manufacturing_formulas f ON f.id = mo.formula_id
         LEFT JOIN locations l ON l.id = mo.location_id
         LEFT JOIN products p ON p.id = mo.product_id
         LEFT JOIN bottle_sizes bs ON bs.id = mo.bottle_size_id
+        LEFT JOIN users creator ON creator.id = mo.created_by
         WHERE mo.id = ?
         LIMIT 1
     ");
@@ -797,6 +1084,10 @@ function manufacturing_build_full_report_html($conn, $orderId) {
     $res = $stepStmt->get_result();
     while ($row = $res->fetch_assoc()) $steps[] = $row;
     $stepStmt->close();
+
+    $stepPeople = manufacturing_get_step_people($conn, array_column($steps, 'id'));
+    $auditNotes = manufacturing_detect_order_audit_notes($conn, $order, $steps);
+    $relatedPOs = manufacturing_get_related_purchase_orders($conn, $orderId);
 
     $orderNumber = htmlspecialchars($order['order_number'] ?? 'UNKNOWN');
     $customerName = htmlspecialchars($order['customer_name'] ?? 'Unknown provider');
@@ -846,8 +1137,31 @@ function manufacturing_build_full_report_html($conn, $orderId) {
     $html .= "<tr><td class=\"col-label\">Batch Size</td><td>" . htmlspecialchars($order['batch_size'] ?? '0') . "</td><td class=\"col-label\">Due Date</td><td>{$dueDate}</td></tr>";
     $html .= "<tr><td class=\"col-label\">Target Product</td><td>" . htmlspecialchars($order['product_name'] ?? 'N/A') . "</td><td class=\"col-label\">Product SKU</td><td>" . htmlspecialchars($order['product_sku'] ?? 'N/A') . "</td></tr>";
     $html .= "<tr><td class=\"col-label\">Production Site</td><td>" . htmlspecialchars($order['location_name'] ?? 'N/A') . "</td><td class=\"col-label\">Current Stage</td><td>" . htmlspecialchars(ucfirst($order['status'])) . "</td></tr>";
+    $html .= "<tr><td class=\"col-label\">Created By</td><td>" . htmlspecialchars($order['created_by_name'] ?? 'Unknown') . "</td><td class=\"col-label\">Created At</td><td>" . htmlspecialchars($order['created_at'] ?? '-') . "</td></tr>";
     $html .= '</tbody></table>';
     $html .= '</div>';
+
+    $html .= '<div class="section-header">Points to Check / Audit Notes</div>';
+    if (!empty($auditNotes)) {
+        $html .= '<table><thead><tr><th>Severity</th><th>Point</th><th>Details</th></tr></thead><tbody>';
+        foreach ($auditNotes as $note) {
+            $html .= '<tr><td>' . htmlspecialchars(strtoupper($note['severity'])) . '</td><td>' . htmlspecialchars($note['title']) . '</td><td>' . htmlspecialchars($note['detail']) . '</td></tr>';
+        }
+        $html .= '</tbody></table>';
+    } else {
+        $html .= '<div class="notes-box">No audit warnings were detected automatically.</div>';
+    }
+
+    $html .= '<div class="section-header">Related Purchase Orders</div>';
+    if (!empty($relatedPOs)) {
+        $html .= '<table><thead><tr><th>PO #</th><th>Vendor</th><th>Date</th><th>Status</th><th>Matching Products</th></tr></thead><tbody>';
+        foreach ($relatedPOs as $po) {
+            $html .= '<tr><td>#' . (int)$po['id'] . '</td><td>' . htmlspecialchars($po['vendor_name'] ?? '-') . '</td><td>' . htmlspecialchars($po['order_date'] ?? '-') . '</td><td>' . htmlspecialchars($po['status'] ?? '-') . '</td><td>' . htmlspecialchars($po['products'] ?? '-') . '</td></tr>';
+        }
+        $html .= '</tbody></table>';
+    } else {
+        $html .= '<div class="notes-box">No related purchase orders were found for the sourced materials.</div>';
+    }
 
     // Formula Components
     $html .= '<div class="section-header">1. Material Formulation</div>';
@@ -873,6 +1187,12 @@ function manufacturing_build_full_report_html($conn, $orderId) {
         $html .= '<td style="border:none; width:33%;"><strong>Status:</strong> <span class="status-badge ' . $statusClass . '">' . $stepStatus . '</span></td>';
         if ($step['started_at']) $html .= '<td style="border:none; width:33%;"><strong>Start:</strong> ' . date('d/m/Y H:i', strtotime($step['started_at'])) . '</td>';
         if ($step['completed_at']) $html .= '<td style="border:none; width:33%;"><strong>End:</strong> ' . date('d/m/Y H:i', strtotime($step['completed_at'])) . '</td>';
+        $html .= '</tr></tbody></table>';
+        $people = $stepPeople[(int)$step['id']] ?? [];
+        $html .= '<table><tbody><tr>';
+        $html .= '<td style="border:none; width:33%;"><strong>Started By:</strong> ' . htmlspecialchars($people['started_by_name'] ?? '-') . '</td>';
+        $html .= '<td style="border:none; width:33%;"><strong>Completed By:</strong> ' . htmlspecialchars($people['completed_by_name'] ?? '-') . '</td>';
+        $html .= '<td style="border:none; width:33%;"><strong>Duration:</strong> ' . htmlspecialchars(manufacturing_format_duration($step['started_at'], $step['completed_at'])) . '</td>';
         $html .= '</tr></tbody></table>';
         
         if ($step['notes']) {

@@ -14,6 +14,8 @@ if (!isset($_GET['id']) || !is_numeric($_GET['id'])) {
 
 $customer_id = sanitize($_GET['id']);
 $page_title = 'Customer Details';
+$canViewPhoneNumbers = hasPermission('contacts.phone.view');
+$canViewCustomerWallet = hasPermission('customers.wallet.view') || hasPermission('customers.wallet') || hasPermission('finance.customer_wallet.view');
 require_once '../../includes/header.php';
 
 // Get customer info
@@ -110,11 +112,12 @@ if ($factories_result) {
                 <?php if (hasPermission('customers.contacts.manage')): ?>
                     <li><a class="dropdown-item" href="contacts.php?id=<?php echo $customer['id']; ?>"><i class="fas fa-address-book"></i> Contacts</a></li>
                 <?php endif; ?>
-                <?php if (hasPermission('customers.wallet')): ?>
+                <?php if ($canViewCustomerWallet): ?>
                     <li><a class="dropdown-item" href="wallet.php?id=<?php echo $customer['id']; ?>"><i class="fas fa-wallet"></i> Wallet</a></li>
                 <?php endif; ?>
                 <?php if (hasPermission('customers.whatsapp_portal')): ?>
                     <li><a class="dropdown-item" href="portal_access.php?id=<?php echo $customer['id']; ?>"><i class="fas fa-lock"></i> Portal Access</a></li>
+                    <?php if ($canViewPhoneNumbers): ?>
                     <li>
                         <button type="button"
                                 class="dropdown-item send-portal-link"
@@ -124,6 +127,7 @@ if ($factories_result) {
                             <i class="fab fa-whatsapp"></i> WhatsApp Portal Link
                         </button>
                     </li>
+                    <?php endif; ?>
                 <?php endif; ?>
                 <?php if (hasPermission('customers.delete')): ?>
                     <li><hr class="dropdown-divider"></li>
@@ -143,9 +147,13 @@ if ($factories_result) {
             </div>
             <div class="card-body">
                 <p><strong>Email:</strong> <?php echo $customer['email'] ? e($customer['email']) : '-'; ?></p>
-                <p><strong>Phone:</strong> <?php echo e($customer['phone']); ?></p>
+                <?php if ($canViewPhoneNumbers): ?>
+                    <p><strong>Phone:</strong> <?php echo e($customer['phone']); ?></p>
+                <?php endif; ?>
                 <p><strong>Tax Number:</strong> <?php echo $customer['tax_number'] ? e($customer['tax_number']) : '-'; ?></p>
-                <p><strong>Wallet Balance:</strong> <?php echo number_format($customer['wallet_balance'], 2); ?></p>
+                <?php if ($canViewCustomerWallet): ?>
+                    <p><strong>Wallet Balance:</strong> <?php echo number_format($customer['wallet_balance'], 2); ?></p>
+                <?php endif; ?>
                 <p><strong>Created:</strong> <?php echo date('M d, Y H:i', strtotime($customer['created_at'])); ?></p>
                 <p><strong>Last Updated:</strong> <?php echo date('M d, Y H:i', strtotime($customer['updated_at'])); ?></p>
             </div>
@@ -161,7 +169,9 @@ if ($factories_result) {
                     <p><strong>Name:</strong> <?php echo e($primary_contact['name']); ?></p>
                     <p><strong>Position:</strong> <?php echo $primary_contact['position'] ? e($primary_contact['position']) : '-'; ?></p>
                     <p><strong>Email:</strong> <?php echo $primary_contact['email'] ? e($primary_contact['email']) : '-'; ?></p>
-                    <p><strong>Phone:</strong> <?php echo e($primary_contact['phone']); ?></p>
+                    <?php if ($canViewPhoneNumbers): ?>
+                        <p><strong>Phone:</strong> <?php echo e($primary_contact['phone']); ?></p>
+                    <?php endif; ?>
                 <?php else: ?>
                     <p class="text-muted">No primary contact found</p>
                 <?php endif; ?>

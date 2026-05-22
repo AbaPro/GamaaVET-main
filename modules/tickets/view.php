@@ -58,7 +58,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // Access control check
 if (!hasPermission('tickets.manage')) {
-    $allowed = ((int)($ticket['assigned_to_role_id'] ?? 0) === (int)$roleId)
+    $isUnassigned = empty($ticket['assigned_to_role_id']) && empty($ticket['assigned_to_user_id']);
+    $allowed = $isUnassigned
+        || ((int)($ticket['assigned_to_role_id'] ?? 0) === (int)$roleId)
         || ((int)($ticket['assigned_to_user_id'] ?? 0) === (int)$userId)
         || ((int)($ticket['created_by'] ?? 0) === (int)$userId);
     if (!$allowed) {
@@ -146,8 +148,8 @@ require_once '../../includes/header.php';
   </div>
   <div class="card mt-3">
     <div class="card-body">
-      <h5 class="mb-3">Ticket Notes</h5>
-      <div class="accordion" id="ticketNotesAccordion">
+      <h5 class="mb-3">Ticket Notes <span id="notes-refresh-indicator" class="badge bg-secondary ms-2" style="font-size:0.7rem;">Live</span></h5>
+      <div id="ticketNotesAccordion" class="accordion">
         <?php if (empty($notes)): ?>
           <div class="text-muted">No notes yet.</div>
         <?php else: ?>
@@ -170,7 +172,7 @@ require_once '../../includes/header.php';
       </div>
 
       <?php if (hasPermission('tickets.manage') || hasPermission('tickets.create')): ?>
-        <form method="post" class="mt-3">
+        <form method="post" class="mt-3" id="addNoteForm">
           <div class="mb-2">
             <label for="note" class="form-label">Add Note</label>
             <textarea id="note" name="note" class="form-control" rows="3" required></textarea>
@@ -182,5 +184,66 @@ require_once '../../includes/header.php';
   </div>
 
 </div>
+
+<script>
+(function() {
+  var ticketId = <?= (int)$id ?>;
+  var accordion = document.getElementById('ticketNotesAccordion');
+  var indicator = document.getElementById('notes-refresh-indicator');
+  var noteForm = document.getElementById('addNoteForm');
+  var lastCount = <?= count($notes) ?>;
+
+  function fetchNotes() {
+    fetch('../../ajax/get_ticket_notes.php?ticket_id=' + ticketId + '&_=' + Date.now())
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (!data.success) return;
+        if (data.count === lastCount) return;
+        lastCount = data.count;
+
+        var openIds = [];
+        accordion.querySelectorAll('.accordion-collapse.show').forEach(function(el) {
+          openIds.push(el.id);
+        });
+
+        var html = '';
+        data.notes.forEach(function(note, i) {
+          var hId = 'noteHeading' + i;
+          var cId = 'noteCollapse' + i;
+          var isOpen = openIds.includes(cId);
+          html += '<div class="accordion-item">'
+            + '<h2 class="accordion-header" id="' + hId + '">'
+            + '<button class="accordion-button ' + (isOpen ? '' : 'collapsed') + '" type="button" data-bs-toggle="collapse" data-bs-target="#' + cId + '" aria-expanded="' + (isOpen ? 'true' : 'false') + '" aria-controls="' + cId + '">'
+            + note.user_name + ' - ' + note.created_at
+            + '</button></h2>'
+            + '<div id="' + cId + '" class="accordion-collapse collapse ' + (isOpen ? 'show' : '') + '" aria-labelledby="' + hId + '" data-bs-parent="#ticketNotesAccordion">'
+            + '<div class="accordion-body">' + note.note_html + '</div>'
+            + '</div></div>';
+        });
+
+        if (html === '') html = '<div class="text-muted">No notes yet.</div>';
+        accordion.innerHTML = html;
+
+        indicator.textContent = 'Updated';
+        indicator.className = 'badge bg-success ms-2';
+        setTimeout(function() {
+          indicator.textContent = 'Live';
+          indicator.className = 'badge bg-secondary ms-2';
+        }, 1500);
+      })
+      .catch(function() {});
+  }
+
+  var noteTextarea = document.getElementById('note');
+  var autoFetchInterval = setInterval(fetchNotes, 5000);
+
+  if (noteTextarea) {
+    noteTextarea.addEventListener('focus', function() { clearInterval(autoFetchInterval); });
+    noteTextarea.addEventListener('blur', function() {
+      autoFetchInterval = setInterval(fetchNotes, 5000);
+    });
+  }
+})();
+</script>
 
 <?php require_once '../../includes/footer.php'; ?>

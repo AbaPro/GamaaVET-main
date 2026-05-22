@@ -186,6 +186,20 @@ $canViewComponentName = hasPermission('manufacturing.component.name.view');
                                     <?php if ($formula['description']): ?>
                                         <br><small class="text-muted"><?= htmlspecialchars($formula['description']); ?></small>
                                     <?php endif; ?>
+                                    <?php
+                                    $sampleImages = json_decode($formula['sample_images_json'] ?? '[]', true);
+                                    $sampleImages = is_array($sampleImages) ? $sampleImages : [];
+                                    ?>
+                                    <?php if (!empty($sampleImages)): ?>
+                                        <div class="d-flex flex-wrap gap-1 mt-2">
+                                            <?php foreach (array_slice($sampleImages, 0, 3) as $sampleImage): ?>
+                                                <?php if (empty($sampleImage['path'])) continue; ?>
+                                                <a href="../../<?= htmlspecialchars($sampleImage['path']); ?>" target="_blank">
+                                                    <img src="../../<?= htmlspecialchars($sampleImage['path']); ?>" class="rounded border" style="width:42px;height:42px;object-fit:cover;" alt="Formula sample">
+                                                </a>
+                                            <?php endforeach; ?>
+                                        </div>
+                                    <?php endif; ?>
                                 </td>
                                 <td><?= htmlspecialchars($formula['customer_name']); ?></td>
                                 <td>

@@ -14,11 +14,22 @@ require_once '../../includes/header.php';
 $sql = "SELECT it.*, 
                i1.name as from_inventory, 
                i2.name as to_inventory,
-               u.name as requested_by_name
+               u.name as requested_by_name,
+               au.name as accepted_by_name,
+               tu.name as transferred_by_name,
+               COALESCE(items.item_count, 0) as item_count,
+               COALESCE(items.total_quantity, 0) as total_quantity
         FROM inventory_transfers it
         JOIN inventories i1 ON it.from_inventory_id = i1.id
         JOIN inventories i2 ON it.to_inventory_id = i2.id
         LEFT JOIN users u ON it.requested_by = u.id
+        LEFT JOIN users au ON it.accepted_by = au.id
+        LEFT JOIN users tu ON it.transferred_by = tu.id
+        LEFT JOIN (
+            SELECT transfer_id, COUNT(*) as item_count, SUM(quantity) as total_quantity
+            FROM transfer_items
+            GROUP BY transfer_id
+        ) items ON items.transfer_id = it.id
         ORDER BY it.created_at DESC";
 $result = $conn->query($sql);
 ?>
@@ -45,9 +56,14 @@ $result = $conn->query($sql);
                         <th>From</th>
                         <th>To</th>
                         <th>Status</th>
-                        <th>Requested By</th>
-                        <th>Date</th>
                         <th>Items</th>
+                        <th>Total Qty</th>
+                        <th>Requested By</th>
+                        <th>Accepted By</th>
+                        <th>Transferred By</th>
+                        <th>Transferred At</th>
+                        <th>Image</th>
+                        <th>Details</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -64,57 +80,33 @@ $result = $conn->query($sql);
                                     <?= ucfirst($row['status']) ?>
                                 </span>
                             </td>
+                            <td><?= (int)$row['item_count'] ?></td>
+                            <td><?= (float)$row['total_quantity'] ?></td>
                             <td><?= htmlspecialchars($row['requested_by_name'] ?? 'System') ?></td>
-                            <td><?= date('M d, Y H:i', strtotime($row['created_at'])) ?></td>
+                            <td><?= htmlspecialchars($row['accepted_by_name'] ?? ($row['status'] === 'accepted' ? ($row['transferred_by_name'] ?? '-') : '-')) ?></td>
+                            <td><?= htmlspecialchars($row['transferred_by_name'] ?? $row['requested_by_name'] ?? 'System') ?></td>
+                            <td><?= !empty($row['transferred_at']) ? date('M d, Y H:i', strtotime($row['transferred_at'])) : date('M d, Y H:i', strtotime($row['created_at'])) ?></td>
                             <td>
-                                <button type="button" class="btn btn-sm btn-outline-info" data-bs-toggle="modal" data-bs-target="#itemsModal<?= $row['id'] ?>">
-                                    View Items
-                                </button>
-                                
-                                <!-- Items Modal -->
-                                <div class="modal fade" id="itemsModal<?= $row['id'] ?>" tabindex="-1">
-                                    <div class="modal-dialog">
-                                        <div class="modal-content">
-                                            <div class="modal-header">
-                                                <h5 class="modal-title">Items for <?= htmlspecialchars($row['transfer_reference']) ?></h5>
-                                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                                            </div>
-                                            <div class="modal-body">
-                                                <?php
-                                                $items_sql = "SELECT ti.*, p.name as product_name, p.sku 
-                                                             FROM transfer_items ti 
-                                                             JOIN products p ON ti.product_id = p.id 
-                                                             WHERE ti.transfer_id = ?";
-                                                $stmt = $conn->prepare($items_sql);
-                                                $stmt->bind_param("i", $row['id']);
-                                                $stmt->execute();
-                                                $items_result = $stmt->get_result();
-                                                ?>
-                                                <table class="table table-sm">
-                                                    <thead>
-                                                        <tr>
-                                                            <th>Product</th>
-                                                            <th>SKU</th>
-                                                            <th>Qty</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody>
-                                                        <?php while ($item = $items_result->fetch_assoc()): ?>
-                                                            <tr>
-                                                                <td><?= htmlspecialchars($item['product_name']) ?></td>
-                                                                <td><?= htmlspecialchars($item['sku']) ?></td>
-                                                                <td><?= (float)$item['quantity'] ?></td>
-                                                            </tr>
-                                                        <?php endwhile; ?>
-                                                    </tbody>
-                                                </table>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
+                                <?php if (!empty($row['image_path'])): ?>
+                                    <a href="../../<?= htmlspecialchars($row['image_path']) ?>" target="_blank" rel="noopener">
+                                        <img src="../../<?= htmlspecialchars($row['image_path']) ?>" alt="Transfer image" style="height:40px;width:auto;object-fit:cover;border-radius:4px;cursor:pointer;">
+                                    </a>
+                                <?php else: ?>
+                                    <span class="text-muted">-</span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <a href="transfer_details.php?id=<?= $row['id'] ?>" class="btn btn-sm btn-outline-info">
+                                    <i class="fas fa-eye"></i> View Details
+                                </a>
                             </td>
                             <td>
                                 <?php if ($row['status'] == 'pending'): ?>
+                                    <a href="accept_transfer.php?id=<?= $row['id'] ?>"
+                                       class="btn btn-sm btn-outline-success"
+                                       onclick="return confirm('Accept this transfer and add stock to the destination inventory?')">
+                                        <i class="fas fa-check"></i> Accept
+                                    </a>
                                     <a href="delete_transfer.php?id=<?= $row['id'] ?>" 
                                        class="btn btn-sm btn-outline-danger" 
                                        onclick="return confirm('Are you sure? This will return stock to the source inventory.')">
@@ -130,5 +122,4 @@ $result = $conn->query($sql);
     </div>
 </div>
 
-<?php require_once '../../includes/header.php'; // Wait, header is already included. Should be footer. ?>
 <?php require_once '../../includes/footer.php'; ?>

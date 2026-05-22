@@ -1,6 +1,7 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+require_once 'lib.php';
 
 if (!hasPermission('manufacturing.view')) {
     setAlert('danger', 'Access denied.');
@@ -67,6 +68,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $batchUnit = sanitize($_POST['batch_unit'] ?? '');
     $instructions = sanitize($_POST['instructions'] ?? '');
     $isActive = isset($_POST['is_active']) ? 1 : 0;
+    $sampleImages = [];
+    if (!empty($formula['sample_images_json'])) {
+        $decodedSampleImages = json_decode($formula['sample_images_json'], true);
+        $sampleImages = is_array($decodedSampleImages) ? $decodedSampleImages : [];
+    }
+    $removeSampleImages = $_POST['remove_sample_images'] ?? [];
+    if (is_array($removeSampleImages) && !empty($removeSampleImages)) {
+        $sampleImages = array_values(array_filter($sampleImages, function ($image) use ($removeSampleImages) {
+            return empty($image['path']) || !in_array($image['path'], $removeSampleImages, true);
+        }));
+    }
 
     // Preparation fields
     $prepFieldNames  = $_POST['prep_field_names']  ?? [];
@@ -121,25 +133,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $componentsJson = json_encode($components, JSON_UNESCAPED_UNICODE);
 
         try {
+            if (!empty($_FILES['sample_images']) && is_array($_FILES['sample_images']['name'])) {
+                $targetDir = manufacturing_get_storage_path_for_type('formula_samples');
+                $relativeDir = 'assets/uploads/manufacturing/formula_samples';
+                foreach ($_FILES['sample_images']['name'] as $idx => $originalName) {
+                    if ($originalName === '') {
+                        continue;
+                    }
+                    $uploaded = manufacturing_store_uploaded_image(
+                        manufacturing_normalize_uploaded_file($_FILES['sample_images'], $idx),
+                        $targetDir,
+                        $relativeDir,
+                        'formula_sample_' . ($id > 0 ? $id : 'new')
+                    );
+                    if ($uploaded) {
+                        $sampleImages[] = $uploaded;
+                    }
+                }
+            }
+            $sampleImagesJson = !empty($sampleImages) ? json_encode($sampleImages, JSON_UNESCAPED_UNICODE) : null;
+
             if ($id > 0) {
                 $stmt = $pdo->prepare("
                     UPDATE manufacturing_formulas
                     SET customer_id = ?, product_id = ?, name = ?, type = ?, description = ?, batch_size = ?, batch_unit = ?,
-                        components_json = ?, instructions = ?, preparation_fields_json = ?, is_active = ?
+                        components_json = ?, instructions = ?, preparation_fields_json = ?, sample_images_json = ?, is_active = ?
                     WHERE id = ?
                 ");
                 $stmt->execute([$customerId, $productId, $name, $type, $description, $batchSize, $batchUnit,
-                                $componentsJson, $instructions, $preparationFieldsJson, $isActive, $id]);
+                                $componentsJson, $instructions, $preparationFieldsJson, $sampleImagesJson, $isActive, $id]);
                 setAlert('success', 'Formula updated successfully.');
             } else {
                 $stmt = $pdo->prepare("
                     INSERT INTO manufacturing_formulas
                         (customer_id, product_id, name, type, description, batch_size, batch_unit,
-                         components_json, instructions, preparation_fields_json, is_active)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         components_json, instructions, preparation_fields_json, sample_images_json, is_active)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ");
                 $stmt->execute([$customerId, $productId, $name, $type, $description, $batchSize, $batchUnit,
-                                $componentsJson, $instructions, $preparationFieldsJson, $isActive]);
+                                $componentsJson, $instructions, $preparationFieldsJson, $sampleImagesJson, $isActive]);
                 setAlert('success', 'Formula created successfully.');
             }
             redirect('formulas.php');
@@ -160,6 +192,10 @@ if ($formula && !empty($formula['components_json'])) {
 } elseif (isset($_POST['components'])) {
     $currentComponents = $_POST['components'];
 }
+$currentSampleImages = [];
+if ($formula && !empty($formula['sample_images_json'])) {
+    $currentSampleImages = json_decode($formula['sample_images_json'], true) ?: [];
+}
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-3">
@@ -169,7 +205,7 @@ if ($formula && !empty($formula['components_json'])) {
     </a>
 </div>
 
-<form method="post">
+<form method="post" enctype="multipart/form-data">
     <div class="row">
         <div class="col-md-8">
             <div class="card mb-4 border-0 shadow-sm">
@@ -351,6 +387,35 @@ if ($formula && !empty($formula['components_json'])) {
                             <strong>Standard fields</strong> (pH, TDS, Temperature, Humidity) are always included. Add custom fields for any additional measurements specific to this formula.
                         </div>
                     </div>
+                </div>
+            </div>
+
+            <div class="card mb-4 border-0 shadow-sm">
+                <div class="card-header bg-light">
+                    <h5 class="mb-0">Formula Sample Images</h5>
+                </div>
+                <div class="card-body">
+                    <label class="form-label">Upload Samples</label>
+                    <input type="file" class="form-control" name="sample_images[]" accept="image/jpeg,image/png,image/gif,image/webp" multiple>
+                    <div class="form-text">Allowed: JPG, PNG, GIF, WEBP. Max 5MB per image.</div>
+                    <?php if (!empty($currentSampleImages)): ?>
+                        <div class="row g-3 mt-2">
+                            <?php foreach ($currentSampleImages as $image): ?>
+                                <?php if (empty($image['path'])) continue; ?>
+                                <div class="col-md-4">
+                                    <div class="border rounded p-2 h-100">
+                                        <a href="../../<?= htmlspecialchars($image['path']); ?>" target="_blank">
+                                            <img src="../../<?= htmlspecialchars($image['path']); ?>" class="img-fluid rounded mb-2" alt="Formula sample">
+                                        </a>
+                                        <div class="form-check small">
+                                            <input class="form-check-input" type="checkbox" name="remove_sample_images[]" value="<?= htmlspecialchars($image['path']); ?>" id="remove_sample_<?= md5($image['path']); ?>">
+                                            <label class="form-check-label" for="remove_sample_<?= md5($image['path']); ?>">Remove</label>
+                                        </div>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
                 </div>
             </div>
 

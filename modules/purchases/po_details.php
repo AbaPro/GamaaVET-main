@@ -44,6 +44,7 @@ $stmt = $pdo->prepare("
 $stmt->execute([$po_id]);
 $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $canViewMaterialCosts = canViewProductCost('material');
+$canViewPhoneNumbers = hasPermission('contacts.phone.view');
 
 // Fetch payments
 $stmt = $pdo->prepare("
@@ -55,6 +56,16 @@ $stmt = $pdo->prepare("
 ");
 $stmt->execute([$po_id]);
 $payments = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+$stmt = $pdo->prepare("
+    SELECT por.*, u.name AS created_by_name
+    FROM purchase_order_receipts por
+    JOIN users u ON por.created_by = u.id
+    WHERE por.purchase_order_id = ?
+    ORDER BY por.created_at DESC
+");
+$stmt->execute([$po_id]);
+$receipts = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $canDeletePayments = hasPermission('finance.purchase_payments.delete');
 
@@ -122,6 +133,8 @@ require_once '../../includes/header.php';
                     <p><strong>Vendor:</strong> <?= htmlspecialchars($po['vendor_name']) ?></p>
                     <?php if (hasPermission('contacts.view')): ?>
                         <p><strong>Contact Person:</strong> <?= htmlspecialchars($po['contact_name']) ?></p>
+                    <?php endif; ?>
+                    <?php if ($canViewPhoneNumbers): ?>
                         <p><strong>Contact Phone:</strong> <?= htmlspecialchars($po['contact_phone']) ?></p>
                     <?php endif; ?>
                 </div>
@@ -166,7 +179,7 @@ require_once '../../includes/header.php';
                         </thead>
                         <tbody>
                             <?php foreach ($items as $item) : ?>
-                                <?php if (!canViewProductCost($item['type'])) continue; ?>
+                                <?php $canViewItemCost = canViewProductCost($item['type']); ?>
                                 <tr>
                                     <td><?= htmlspecialchars($item['sku']) ?></td>
                                     <td><?= htmlspecialchars($item['product_name']) ?></td>
@@ -174,8 +187,8 @@ require_once '../../includes/header.php';
                                     <td><?= $item['quantity'] ?></td>
                                     <td><?= $item['received_quantity'] ?? 0 ?></td>
                                     <td><?= number_format($item['current_stock'] ?? 0, 2) ?></td>
-                                    <td><?= number_format($item['unit_price'], 2) ?></td>
-                                    <td><?= number_format($item['total_price'], 2) ?></td>
+                                    <td><?= $canViewItemCost ? number_format($item['unit_price'], 2) : '<span class="text-muted">Hidden</span>' ?></td>
+                                    <td><?= $canViewItemCost ? number_format($item['total_price'], 2) : '<span class="text-muted">Hidden</span>' ?></td>
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>
@@ -255,6 +268,37 @@ require_once '../../includes/header.php';
                 <?php endif; ?>
                 
                 <div class="col-md-6">
+                    <h5>Receiving Images</h5>
+                    <?php if (empty($receipts)) : ?>
+                        <p>No receiving images uploaded yet.</p>
+                    <?php else : ?>
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>By</th>
+                                    <th>Image</th>
+                                    <th>Notes</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($receipts as $receipt) : ?>
+                                    <tr>
+                                        <td><?= date('M d, Y H:i', strtotime($receipt['created_at'])) ?></td>
+                                        <td><?= htmlspecialchars($receipt['created_by_name']) ?></td>
+                                        <td>
+                                            <a href="/<?= htmlspecialchars($receipt['image_path']) ?>" target="_blank">
+                                                <img src="/<?= htmlspecialchars($receipt['image_path']) ?>" alt="Receiving image" style="height:40px;width:auto;object-fit:cover;border-radius:4px;cursor:pointer;">
+                                            </a>
+                                        </td>
+                                        <td><?= htmlspecialchars($receipt['notes'] ?? '') ?></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    <?php endif; ?>
+
+                    <hr>
                     <h5>Order Notes</h5>
                     <p><?= nl2br(htmlspecialchars($po['notes'] ?? 'No notes available')) ?></p>
                     

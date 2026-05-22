@@ -15,6 +15,7 @@ require_once '../../includes/header.php';
 $statusFilter = sanitize($_GET['status'] ?? '');
 $providerFilter = isset($_GET['provider_id']) ? (int)$_GET['provider_id'] : 0;
 $productFilter = isset($_GET['product_id']) ? (int)$_GET['product_id'] : 0;
+$hasPackagingProductColumn = $conn->query("SHOW COLUMNS FROM packaging_options LIKE 'product_id'")->num_rows > 0;
 
 $customers = [];
 $customerResult = $conn->query("SELECT id, name FROM customers ORDER BY name");
@@ -25,7 +26,7 @@ if ($customerResult) {
 }
 
 $allProducts = [];
-$productResult = $conn->query("SELECT id, name, sku FROM products ORDER BY name");
+$productResult = $conn->query("SELECT id, name, sku FROM products WHERE type = 'final' ORDER BY name");
 if ($productResult) {
     while ($pRow = $productResult->fetch_assoc()) {
         $allProducts[] = $pRow;
@@ -41,15 +42,24 @@ if ($providerFilter > 0) {
     $whereClauses[] = "mo.customer_id = " . (int)$providerFilter;
 }
 if ($productFilter > 0) {
-    $whereClauses[] = "mo.product_id = " . (int)$productFilter;
+    $whereClauses[] = $hasPackagingProductColumn
+        ? "(mo.product_id = " . (int)$productFilter . " OR po.product_id = " . (int)$productFilter . ")"
+        : "mo.product_id = " . (int)$productFilter;
 }
 
+$packagingProductSelect = $hasPackagingProductColumn ? ", pp.name AS packaging_product_name" : ", NULL AS packaging_product_name";
+$packagingProductJoin = $hasPackagingProductColumn ? "
+    LEFT JOIN packaging_options po ON po.id = mo.packaging_option_id
+    LEFT JOIN products pp ON pp.id = po.product_id
+" : "";
+
 $ordersQuery = "
-    SELECT mo.*, c.name AS customer_name, f.name AS formula_name, p.name AS product_name
+    SELECT mo.*, c.name AS customer_name, f.name AS formula_name, p.name AS product_name{$packagingProductSelect}
     FROM manufacturing_orders mo
     JOIN customers c ON c.id = mo.customer_id
     JOIN manufacturing_formulas f ON f.id = mo.formula_id
     LEFT JOIN products p ON p.id = mo.product_id
+    {$packagingProductJoin}
 ";
 if (!empty($whereClauses)) {
     $ordersQuery .= ' WHERE ' . implode(' AND ', $whereClauses);
@@ -179,6 +189,7 @@ if (!empty($stepIds)) {
                         <th>Priority</th>
                         <th>Status</th>
                         <th>Next Step</th>
+                        <th>Points to Check</th>
                         <th>Progress</th>
                         <th>Docs</th>
                         <th>Actions</th>
@@ -200,17 +211,28 @@ if (!empty($stepIds)) {
                             $nextStepLabel = manufacturing_get_next_step_label($orderSteps);
                             $docCount = $orderDocumentCounts[$order['id']] ?? 0;
                             $badge = manufacturing_order_status_badge($order['status']);
+                            $auditNotes = manufacturing_detect_order_audit_notes($conn, $order, $orderSteps);
+                            $dangerCount = count(array_filter($auditNotes, function ($note) { return $note['severity'] === 'danger'; }));
                             ?>
                             <tr>
                                 <td><?= htmlspecialchars($order['order_number']); ?></td>
                                 <td><?= htmlspecialchars($order['customer_name']); ?></td>
-                                <td><?= htmlspecialchars($order['product_name'] ?? 'N/A'); ?></td>
+                                <td><?= htmlspecialchars($order['product_name'] ?? $order['packaging_product_name'] ?? 'N/A'); ?></td>
                                 <td><?= htmlspecialchars($order['formula_name']); ?></td>
                                 <td><?= ucfirst(htmlspecialchars($order['priority'])); ?></td>
                                 <td>
                                     <span class="badge <?= $badge['class']; ?> text-uppercase"><?= $badge['label']; ?></span>
                                 </td>
                                 <td><?= htmlspecialchars($nextStepLabel); ?></td>
+                                <td>
+                                    <?php if (!empty($auditNotes)): ?>
+                                        <span class="badge <?= $dangerCount > 0 ? 'bg-danger' : 'bg-warning text-dark'; ?>">
+                                            <?= count($auditNotes); ?> point<?= count($auditNotes) === 1 ? '' : 's'; ?>
+                                        </span>
+                                    <?php else: ?>
+                                        <span class="badge bg-success">Clear</span>
+                                    <?php endif; ?>
+                                </td>
                                 <td>
                                     <div class="progress" style="height:6px;">
                                         <div class="progress-bar" role="progressbar" style="width: <?= $progressPercent; ?>%;" aria-valuenow="<?= $progressPercent; ?>" aria-valuemin="0" aria-valuemax="100"></div>
@@ -225,9 +247,11 @@ if (!empty($stepIds)) {
                                         <a href="order.php?id=<?= $order['id']; ?>" class="btn btn-sm btn-outline-primary">
                                             <i class="fas fa-eye me-1"></i> View
                                         </a>
-                                        <a href="edit.php?id=<?= $order['id']; ?>" class="btn btn-sm btn-outline-warning">
-                                            <i class="fas fa-edit me-1"></i> Edit
-                                        </a>
+                                        <?php if ($order['status'] !== 'completed'): ?>
+                                            <a href="edit.php?id=<?= $order['id']; ?>" class="btn btn-sm btn-outline-warning">
+                                                <i class="fas fa-edit me-1"></i> Edit
+                                            </a>
+                                        <?php endif; ?>
                                         <?php if (hasPermission('manufacturing.delete')): ?>
                                             <a href="javascript:void(0)" class="btn btn-sm btn-outline-danger" 
                                                onclick="confirmDelete(<?= $order['id']; ?>, '<?= htmlspecialchars($order['order_number']); ?>')">
@@ -266,7 +290,7 @@ if (!empty($stepIds)) {
                     emptyTable: 'No manufacturing orders found.'
                 },
                 columnDefs: [
-                    { orderable: false, targets: [7, 8, 9] }
+                    { orderable: false, targets: [7, 8, 9, 10] }
                 ]
             });
         }

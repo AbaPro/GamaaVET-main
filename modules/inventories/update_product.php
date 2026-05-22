@@ -11,6 +11,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $inventory_id = sanitize($_POST['inventory_id']);
     $product_id = sanitize($_POST['product_id']);
     $quantity = sanitize($_POST['quantity']);
+    $quantity_before = getInventoryProductQuantity($inventory_id, $product_id);
     
     // Update product quantity in inventory
     $update_sql = "UPDATE inventory_products SET quantity = ? WHERE inventory_id = ? AND product_id = ?";
@@ -18,6 +19,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $update_stmt->bind_param("dii", $quantity, $inventory_id, $product_id);
     
     if ($update_stmt->execute()) {
+        logInventoryStockChange($inventory_id, $product_id, ((float)$quantity - $quantity_before), $quantity_before, $quantity, 'inventory_update', null, null, null, 'Manual quantity update');
         setAlert('success', 'Product quantity updated successfully.');
         logActivity("Updated product ID: $product_id quantity to $quantity in inventory ID: $inventory_id");
     } else {

@@ -216,12 +216,15 @@ if (isset($_SESSION['inventory_bulk_upload']) && $_SESSION['inventory_bulk_uploa
             }
 
             // Check if product already exists in this inventory
-            $check = $conn->prepare("SELECT id FROM inventory_products WHERE inventory_id = ? AND product_id = ?");
+            $check = $conn->prepare("SELECT id, quantity FROM inventory_products WHERE inventory_id = ? AND product_id = ?");
             $check->bind_param("ii", $inventory_id, $product_id);
             $check->execute();
             $res = $check->get_result();
+            $quantity_before = 0.0;
             
             if ($res->num_rows > 0) {
+                $existing = $res->fetch_assoc();
+                $quantity_before = (float)($existing['quantity'] ?? 0);
                 // Update existing record
                 $stmt = $conn->prepare("UPDATE inventory_products SET quantity = ? WHERE inventory_id = ? AND product_id = ?");
                 $stmt->bind_param("dii", $qty, $inventory_id, $product_id);
@@ -232,6 +235,7 @@ if (isset($_SESSION['inventory_bulk_upload']) && $_SESSION['inventory_bulk_uploa
             }
             
             if ($stmt->execute()) {
+                logInventoryStockChange($inventory_id, $product_id, ((float)$qty - $quantity_before), $quantity_before, $qty, 'inventory_upload', null, null, null, 'Bulk inventory upload');
                 $success_count++;
             } else {
                 $error_count++;

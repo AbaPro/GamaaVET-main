@@ -19,15 +19,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['product_ids']) && !e
         $conn->begin_transaction();
         
         $placeholders = implode(',', array_fill(0, count($product_ids), '?'));
+        $selectStmt = $conn->prepare("SELECT product_id, quantity FROM inventory_products WHERE inventory_id = ? AND product_id IN ($placeholders)");
+        if (!$selectStmt) {
+            throw new Exception("Error preparing stock lookup: " . $conn->error);
+        }
+        $types = 'i' . str_repeat('i', count($product_ids));
+        $params = array_merge([$inventory_id], $product_ids);
+        $selectStmt->bind_param($types, ...$params);
+        $selectStmt->execute();
+        $stockRows = $selectStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $selectStmt->close();
+
         $stmt = $conn->prepare("DELETE FROM inventory_products WHERE inventory_id = ? AND product_id IN ($placeholders)");
         
         if (!$stmt) {
             throw new Exception("Error preparing statement: " . $conn->error);
         }
 
-        $types = 'i' . str_repeat('i', count($product_ids));
-        $params = array_merge([$inventory_id], $product_ids);
-        
         $stmt->bind_param($types, ...$params);
         if (!$stmt->execute()) {
             throw new Exception("Error executing deletion: " . $stmt->error);
@@ -37,6 +45,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['product_ids']) && !e
         $stmt->close();
 
         $conn->commit();
+        foreach ($stockRows as $stockRow) {
+            logInventoryStockChange(
+                $inventory_id,
+                (int)$stockRow['product_id'],
+                -(float)$stockRow['quantity'],
+                (float)$stockRow['quantity'],
+                0,
+                'inventory_bulk_delete',
+                null,
+                null,
+                null,
+                'Bulk removed product from inventory'
+            );
+        }
         setAlert('success', "Successfully removed $success_count products from inventory.");
         logActivity("Bulk removed $success_count products from inventory ID: $inventory_id");
     } catch (Throwable $e) {

@@ -46,7 +46,7 @@ require_once '../../includes/messages.php';
                                 <li>Accounts Receivable - Customer orders & balances</li>
                                 <li>Accounts Payable - Vendor POs & balances</li>
                                 <li>Cash & Bank - Combined transaction register</li>
-                                <li>Inventory - Stock levels & valuation</li>
+                                <li>Inventory - Stock levels, valuation, and average unit/sell prices</li>
                                 <li>Purchasing - PO register with line items</li>
                                 <li>Sales & Billing - Order register with line items</li>
                             </ul>
@@ -72,6 +72,7 @@ require_once '../../includes/messages.php';
                         <li>AR balances = <code>orders.total_amount - orders.paid_amount</code></li>
                         <li>AP balances = <code>purchase_orders.total_amount - purchase_orders.paid_amount</code></li>
                         <li>Inventory value = <code>quantity x cost_price</code> per product</li>
+                        <li>Average unit/sell prices are weighted by quantity and exclude zero-priced rows.</li>
                         <li>Cash & Bank merges order payments, PO payments, expense payments, and finance transfers.</li>
                         <li>No due dates, aging buckets, tax columns, or chart-of-accounts structure (not modeled yet).</li>
                     </ul>

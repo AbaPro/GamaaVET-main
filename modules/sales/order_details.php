@@ -49,6 +49,9 @@ $stmt->execute([$order_id]);
 $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $canViewFinalPrices = canViewProductPrice('final');
 $canDeletePayments = hasPermission('finance.payments.delete');
+$canProcessPayments = hasPermission('finance.customer_payment.process');
+$canViewPaymentHistory = hasPermission('sales.orders.payments.history') || $canProcessPayments || $canDeletePayments;
+$canViewPhoneNumbers = hasPermission('contacts.phone.view');
 
 // Fetch payments
 $stmt = $pdo->prepare("
@@ -246,6 +249,8 @@ require_once '../../includes/header.php';
                     <p><strong>Customer:</strong> <?= htmlspecialchars($order['customer_name']) ?></p>
                     <?php if (hasPermission('contacts.view')): ?>
                         <p><strong>Contact Person:</strong> <?= htmlspecialchars($order['contact_name']) ?></p>
+                    <?php endif; ?>
+                    <?php if ($canViewPhoneNumbers): ?>
                         <p><strong>Contact Phone:</strong> <?= htmlspecialchars($order['contact_phone']) ?></p>
                     <?php endif; ?>
                     <p><strong>Factory:</strong> <?= $order['factory_name'] ? htmlspecialchars($order['factory_name']) : 'Not assigned' ?></p>
@@ -508,6 +513,7 @@ require_once '../../includes/header.php';
             </div>
             
             <div class="row">
+                <?php if ($canViewPaymentHistory): ?>
                 <div class="col-md-6">
                     <h5>Payment History</h5>
                     <?php if (empty($payments)) : ?>
@@ -559,12 +565,13 @@ require_once '../../includes/header.php';
                         </table>
                     <?php endif; ?>
                 </div>
+                <?php endif; ?>
                 
                 <div class="col-md-6">
                     <h5>Order Notes</h5>
                     <p><?= nl2br(htmlspecialchars($order['notes'] ?? 'No notes available')) ?></p>
                     
-                    <?php if ($canUpdateOrderStatus && ($order['total_amount'] - $order['paid_amount']) > 0) : ?>
+                    <?php if ($canProcessPayments && ($order['total_amount'] - $order['paid_amount']) > 0) : ?>
                         <hr>
                         <a href="process_payment.php?order_id=<?= $order_id ?>" class="btn btn-success">Record Payment</a>
                     <?php endif; ?>

@@ -11,6 +11,8 @@ $page_title = 'Customers Management';
 require_once '../../includes/header.php';
 
 $login_region = $_SESSION['login_region'] ?? 'factory';
+$canViewPhoneNumbers = hasPermission('contacts.phone.view');
+$canViewCustomerWallet = hasPermission('customers.wallet.view') || hasPermission('customers.wallet') || hasPermission('finance.customer_wallet.view');
 
 // Handle delete request
 if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
@@ -153,11 +155,15 @@ if ($factories_result) {
                         <th>Material Products</th>
                         <th>Final Products</th>
                         <th>Email</th>
-                        <th>Phone</th>
+                        <?php if ($canViewPhoneNumbers): ?>
+                            <th>Phone</th>
+                        <?php endif; ?>
                         <?php if ($login_region !== 'factory'): ?>
                             <th>Region</th>
                         <?php endif; ?>
-                        <th>Wallet Balance</th>
+                        <?php if ($canViewCustomerWallet): ?>
+                            <th>Wallet Balance</th>
+                        <?php endif; ?>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -176,11 +182,26 @@ if ($factories_result) {
                                 <td><?php echo (int) $row['material_count']; ?></td>
                                 <td><?php echo (int) $row['final_count']; ?></td>
                                 <td><?php echo e($row['email']); ?></td>
-                                <td><?php echo e($row['phone']); ?></td>
+                                <?php if ($canViewPhoneNumbers): ?>
+                                    <td>
+                                        <?php echo e($row['phone']); ?>
+                                        <?php
+                                            $waPhone = !empty($row['whatsapp_phone']) ? $row['whatsapp_phone'] : $row['phone'];
+                                            $waNumber = normalizeEgyptWhatsappNumber($waPhone);
+                                        ?>
+                                        <?php if ($waNumber): ?>
+                                            <a href="https://wa.me/<?php echo $waNumber; ?>" target="_blank" rel="noopener" class="ms-1 text-success" title="WhatsApp">
+                                                <i class="fab fa-whatsapp"></i>
+                                            </a>
+                                        <?php endif; ?>
+                                    </td>
+                                <?php endif; ?>
                                 <?php if ($login_region !== 'factory'): ?>
                                     <td><?php echo e($row['region'] ?: 'N/A'); ?></td>
                                 <?php endif; ?>
-                                <td><?php echo number_format($row['wallet_balance'], 2); ?></td>
+                                <?php if ($canViewCustomerWallet): ?>
+                                    <td><?php echo number_format($row['wallet_balance'], 2); ?></td>
+                                <?php endif; ?>
                                 <td>
                                     <div class="dropdown">
                                         <button class="btn btn-sm btn-outline-primary dropdown-toggle" type="button" id="customerActions" data-bs-toggle="dropdown">
@@ -190,8 +211,11 @@ if ($factories_result) {
                                             <li><a class="dropdown-item" href="view.php?id=<?php echo $row['id']; ?>"><i class="fas fa-eye"></i> View</a></li>
                                             <li><a class="dropdown-item edit-customer" href="#" data-id="<?php echo $row['id']; ?>"><i class="fas fa-edit"></i> Edit</a></li>
                                             <li><a class="dropdown-item" href="contacts.php?id=<?php echo $row['id']; ?>"><i class="fas fa-address-book"></i> Contacts</a></li>
-                                            <li><a class="dropdown-item" href="wallet.php?id=<?php echo $row['id']; ?>"><i class="fas fa-wallet"></i> Wallet</a></li>
+                                            <?php if ($canViewCustomerWallet): ?>
+                                                <li><a class="dropdown-item" href="wallet.php?id=<?php echo $row['id']; ?>"><i class="fas fa-wallet"></i> Wallet</a></li>
+                                            <?php endif; ?>
                                             <li><a class="dropdown-item" href="portal_access.php?id=<?php echo $row['id']; ?>"><i class="fas fa-lock"></i> Portal Access</a></li>
+                                            <?php if ($canViewPhoneNumbers): ?>
                                             <li>
                                                 <button type="button"
                                                         class="dropdown-item send-portal-link"
@@ -201,6 +225,7 @@ if ($factories_result) {
                                                     <i class="fab fa-whatsapp"></i> WhatsApp Portal Link
                                                 </button>
                                             </li>
+                                            <?php endif; ?>
                                             <li><hr class="dropdown-divider"></li>
                                             <li><a class="dropdown-item text-danger" href="index.php?delete=<?php echo $row['id']; ?>" onclick="return confirm('Are you sure you want to delete this customer?')"><i class="fas fa-trash"></i> Delete</a></li>
                                         </ul>

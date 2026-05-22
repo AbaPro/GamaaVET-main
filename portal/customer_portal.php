@@ -144,6 +144,38 @@ function touchPortalAccess(PDO $pdo, int $customerId): void
     $stmt->execute([$customerId]);
 }
 
+function normalizeEgyptWhatsappNumber(?string $phone): string
+{
+    $digits = preg_replace('/\D+/', '', (string)$phone);
+    if ($digits === '') {
+        return '';
+    }
+
+    if (strpos($digits, '00') === 0) {
+        $digits = substr($digits, 2);
+    }
+
+    if (strpos($digits, '20') === 0) {
+        return $digits;
+    }
+
+    if ($digits[0] === '0') {
+        return '20' . substr($digits, 1);
+    }
+
+    return '20' . $digits;
+}
+
+function whatsappUrl(?string $phone): ?string
+{
+    $number = normalizeEgyptWhatsappNumber($phone);
+    if ($number === '') {
+        return null;
+    }
+
+    return 'https://wa.me/' . $number;
+}
+
 /* =========================
    Data & Access Checks
 ========================= */
@@ -156,7 +188,7 @@ if (empty($token)) {
 }
 
 $stmt = $pdo->prepare("
-    SELECT c.*, f.name AS factory_name, f.contact_person, f.contact_phone
+    SELECT c.*, f.name AS factory_name, f.contact_person, f.contact_phone, f.whatsapp_number AS factory_whatsapp_number
     FROM customers c
     LEFT JOIN factories f ON c.factory_id = f.id
     WHERE c.portal_token = ?
@@ -249,6 +281,11 @@ $balanceStmt = $pdo->prepare("
 ");
 $balanceStmt->execute([$customerId]);
 $dueAmount = (float)($balanceStmt->fetchColumn() ?? 0);
+
+$presentOrderStatuses = [];
+foreach ($orders as $order) {
+    $presentOrderStatuses[$order['status']] = true;
+}
 
 $statusBadgeMap = [
     'new' => 'bg-indigo-600',
@@ -453,9 +490,24 @@ if (!empty($orders)) {
             <?php endif; ?>
 
             <?php if (!empty($customer['contact_phone'])): ?>
+              <?php $factoryWhatsappUrl = whatsappUrl($customer['factory_whatsapp_number'] ?: $customer['contact_phone']); ?>
               <div class="rounded-2xl bg-slate-50 border border-slate-200 p-4 dark:bg-slate-950 dark:border-slate-800">
                 <p class="text-xs text-slate-500 dark:text-slate-400 mb-1">رقم التواصل</p>
-                <p class="font-extrabold dir-ltr text-left"><?= htmlspecialchars($customer['contact_phone']); ?></p>
+                <div class="flex items-center justify-between gap-3 dir-ltr">
+                  <p class="font-extrabold text-left"><?= htmlspecialchars($customer['contact_phone']); ?></p>
+                  <?php if ($factoryWhatsappUrl): ?>
+                    <a
+                      href="<?= htmlspecialchars($factoryWhatsappUrl, ENT_QUOTES, 'UTF-8'); ?>"
+                      target="_blank"
+                      rel="noopener"
+                      class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-900/30 dark:text-emerald-200"
+                      title="WhatsApp"
+                      aria-label="WhatsApp"
+                    >
+                      <i class="bx bxl-whatsapp text-xl"></i>
+                    </a>
+                  <?php endif; ?>
+                </div>
               </div>
             <?php endif; ?>
           </div>
@@ -480,7 +532,41 @@ if (!empty($orders)) {
         </div>
 
         <?php if ($orders): ?>
-          <div class="space-y-3">
+          <div class="mb-5 grid gap-3 md:grid-cols-[1fr_180px_190px]">
+            <div class="relative">
+              <i class="bx bx-search absolute right-4 top-1/2 -translate-y-1/2 text-xl text-slate-400"></i>
+              <input
+                type="search"
+                id="orderSearch"
+                class="w-full rounded-2xl border border-slate-200 bg-white py-3 pr-12 pl-4 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-blue-900/40"
+                placeholder="ابحث برقم الطلب أو المنتج أو الملاحظات"
+              >
+            </div>
+            <select
+              id="orderStatusFilter"
+              class="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-blue-900/40"
+            >
+              <option value="">كل الحالات</option>
+              <?php foreach (array_keys($presentOrderStatuses) as $status): ?>
+                <option value="<?= htmlspecialchars($status, ENT_QUOTES, 'UTF-8'); ?>">
+                  <?= htmlspecialchars($statusLabelMap[$status] ?? $status); ?>
+                </option>
+              <?php endforeach; ?>
+            </select>
+            <select
+              id="orderSort"
+              class="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-blue-900/40"
+            >
+              <option value="date-desc">الأحدث أولاً</option>
+              <option value="date-asc">الأقدم أولاً</option>
+              <option value="total-desc">القيمة من الأعلى</option>
+              <option value="total-asc">القيمة من الأقل</option>
+              <option value="due-desc">المتبقي من الأعلى</option>
+              <option value="due-asc">المتبقي من الأقل</option>
+            </select>
+          </div>
+
+          <div id="ordersList" class="space-y-3">
             <?php foreach ($orders as $order): ?>
               <?php
                 $orderItems = $orderItemsByOrder[$order['id']] ?? [];
@@ -489,9 +575,25 @@ if (!empty($orders)) {
                 $statusClass = $statusBadgeMap[$order['status']] ?? 'bg-slate-600';
                 $statusLabel = $statusLabelMap[$order['status']] ?? $order['status'];
                 $discountLabel = $discountBasisMap[$order['discount_basis']] ?? 'خصم غير محدد';
+                $orderProductNames = implode(' ', array_column($orderItems, 'product_name'));
+                $orderSearchText = trim(implode(' ', [
+                    $order['internal_id'],
+                    $order['status'],
+                    $statusLabel,
+                    $order['order_date'],
+                    $order['notes'],
+                    $orderProductNames
+                ]));
               ?>
 
-              <article class="rounded-2xl border border-slate-200 bg-white overflow-hidden dark:border-slate-800 dark:bg-slate-950">
+              <article
+                class="portal-order rounded-2xl border border-slate-200 bg-white overflow-hidden dark:border-slate-800 dark:bg-slate-950"
+                data-status="<?= htmlspecialchars($order['status'], ENT_QUOTES, 'UTF-8'); ?>"
+                data-date="<?= htmlspecialchars($order['order_date'], ENT_QUOTES, 'UTF-8'); ?>"
+                data-total="<?= htmlspecialchars((string)(float)$order['total_amount'], ENT_QUOTES, 'UTF-8'); ?>"
+                data-due="<?= htmlspecialchars((string)$orderDue, ENT_QUOTES, 'UTF-8'); ?>"
+                data-search="<?= htmlspecialchars($orderSearchText, ENT_QUOTES, 'UTF-8'); ?>"
+              >
                 <button
                   type="button"
                   class="w-full flex items-start justify-between gap-4 p-5 sm:p-6 text-right hover:bg-slate-50 dark:hover:bg-slate-900/50 transition toggle-order"
@@ -600,6 +702,9 @@ if (!empty($orders)) {
               </article>
             <?php endforeach; ?>
           </div>
+          <div id="ordersEmpty" class="hidden rounded-2xl bg-slate-50 border border-slate-200 p-5 text-slate-600 dark:bg-slate-950 dark:border-slate-800 dark:text-slate-300">
+            لا توجد طلبات مطابقة للبحث الحالي.
+          </div>
         <?php else: ?>
           <div class="rounded-2xl bg-slate-50 border border-slate-200 p-5 text-slate-600 dark:bg-slate-950 dark:border-slate-800 dark:text-slate-300">
             لا توجد طلبات متاحة حالياً.
@@ -676,6 +781,36 @@ if (!empty($orders)) {
           </div>
 
           <?php if ($customerProducts): ?>
+            <div class="mb-5 grid gap-3 md:grid-cols-[1fr_150px_170px]">
+              <div class="relative">
+                <i class="bx bx-search absolute right-4 top-1/2 -translate-y-1/2 text-xl text-slate-400"></i>
+                <input
+                  type="search"
+                  id="productSearch"
+                  class="w-full rounded-2xl border border-slate-200 bg-white py-3 pr-12 pl-4 text-sm text-slate-900 placeholder-slate-400 focus:border-amber-500 focus:outline-none focus:ring-4 focus:ring-amber-100 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-amber-900/40"
+                  placeholder="ابحث باسم المنتج أو SKU"
+                >
+              </div>
+              <select
+                id="productStockFilter"
+                class="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 focus:border-amber-500 focus:outline-none focus:ring-4 focus:ring-amber-100 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-amber-900/40"
+              >
+                <option value="">كل المخزون</option>
+                <option value="in-stock">متوفر</option>
+                <option value="out-of-stock">غير متوفر</option>
+              </select>
+              <select
+                id="productSort"
+                class="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 focus:border-amber-500 focus:outline-none focus:ring-4 focus:ring-amber-100 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-amber-900/40"
+              >
+                <option value="name-asc">الاسم أ-ي</option>
+                <option value="name-desc">الاسم ي-أ</option>
+                <option value="price-desc">السعر من الأعلى</option>
+                <option value="price-asc">السعر من الأقل</option>
+                <option value="stock-desc">المخزون من الأعلى</option>
+                <option value="stock-asc">المخزون من الأقل</option>
+              </select>
+            </div>
             <div class="rounded-2xl border border-slate-200 overflow-x-auto dark:border-slate-800">
               <table class="min-w-full divide-y divide-slate-100 text-sm dark:divide-slate-800">
                 <thead class="bg-slate-50 text-slate-600 dark:bg-slate-950 dark:text-slate-300">
@@ -686,9 +821,22 @@ if (!empty($orders)) {
                     <th class="px-4 py-3 text-center font-bold">المخزون</th>
                   </tr>
                 </thead>
-                <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+                <tbody id="productsList" class="divide-y divide-slate-100 dark:divide-slate-800">
                   <?php foreach ($customerProducts as $product): ?>
-                    <tr class="hover:bg-slate-50 dark:hover:bg-slate-950/60 transition">
+                    <?php
+                      $productSearchText = trim(implode(' ', [
+                          $product['name'],
+                          $product['sku'],
+                          $product['category_name']
+                      ]));
+                    ?>
+                    <tr
+                      class="portal-product hover:bg-slate-50 dark:hover:bg-slate-950/60 transition"
+                      data-name="<?= htmlspecialchars((string)$product['name'], ENT_QUOTES, 'UTF-8'); ?>"
+                      data-price="<?= htmlspecialchars((string)(float)$product['unit_price'], ENT_QUOTES, 'UTF-8'); ?>"
+                      data-stock="<?= htmlspecialchars((string)(float)$product['stock'], ENT_QUOTES, 'UTF-8'); ?>"
+                      data-search="<?= htmlspecialchars($productSearchText, ENT_QUOTES, 'UTF-8'); ?>"
+                    >
                       <td class="px-4 py-3">
                         <div class="font-bold"><?= htmlspecialchars($product['name']); ?></div>
                         <div class="text-[10px] text-slate-400 font-mono"><?= htmlspecialchars($product['sku']); ?></div>
@@ -708,6 +856,9 @@ if (!empty($orders)) {
                   <?php endforeach; ?>
                 </tbody>
               </table>
+            </div>
+            <div id="productsEmpty" class="hidden mt-3 rounded-2xl bg-slate-50 border border-slate-200 p-5 text-slate-600 dark:bg-slate-950 dark:border-slate-800 dark:text-slate-300">
+              لا توجد منتجات مطابقة للبحث الحالي.
             </div>
           <?php else: ?>
             <div class="rounded-2xl bg-slate-50 border border-slate-200 p-5 text-slate-600 dark:bg-slate-950 dark:border-slate-800 dark:text-slate-300">
@@ -750,6 +901,109 @@ if (!empty($orders)) {
         }
       });
     });
+
+    const normalizeText = (value) => (value || '').toString().trim().toLowerCase();
+
+    const ordersList = document.getElementById('ordersList');
+    const orderSearch = document.getElementById('orderSearch');
+    const orderStatusFilter = document.getElementById('orderStatusFilter');
+    const orderSort = document.getElementById('orderSort');
+    const ordersEmpty = document.getElementById('ordersEmpty');
+
+    function applyOrderControls() {
+      if (!ordersList) return;
+
+      const query = normalizeText(orderSearch?.value);
+      const status = orderStatusFilter?.value || '';
+      const sortBy = orderSort?.value || 'date-desc';
+      const rows = Array.from(ordersList.querySelectorAll('.portal-order'));
+
+      rows.sort((a, b) => {
+        if (sortBy === 'date-asc' || sortBy === 'date-desc') {
+          const diff = new Date(a.dataset.date || 0) - new Date(b.dataset.date || 0);
+          return sortBy === 'date-asc' ? diff : -diff;
+        }
+
+        const [field, direction] = sortBy.split('-');
+        const diff = Number(a.dataset[field] || 0) - Number(b.dataset[field] || 0);
+        return direction === 'asc' ? diff : -diff;
+      });
+
+      let visibleCount = 0;
+      rows.forEach((row) => {
+        const matchesSearch = !query || normalizeText(row.dataset.search).includes(query);
+        const matchesStatus = !status || row.dataset.status === status;
+        const isVisible = matchesSearch && matchesStatus;
+
+        row.classList.toggle('hidden', !isVisible);
+        ordersList.appendChild(row);
+        if (isVisible) visibleCount += 1;
+      });
+
+      if (ordersEmpty) {
+        ordersEmpty.classList.toggle('hidden', visibleCount > 0);
+      }
+    }
+
+    [orderSearch, orderStatusFilter, orderSort].forEach((control) => {
+      if (control) {
+        control.addEventListener('input', applyOrderControls);
+        control.addEventListener('change', applyOrderControls);
+      }
+    });
+    applyOrderControls();
+
+    const productsList = document.getElementById('productsList');
+    const productSearch = document.getElementById('productSearch');
+    const productStockFilter = document.getElementById('productStockFilter');
+    const productSort = document.getElementById('productSort');
+    const productsEmpty = document.getElementById('productsEmpty');
+
+    function applyProductControls() {
+      if (!productsList) return;
+
+      const query = normalizeText(productSearch?.value);
+      const stockFilter = productStockFilter?.value || '';
+      const sortBy = productSort?.value || 'name-asc';
+      const rows = Array.from(productsList.querySelectorAll('.portal-product'));
+
+      rows.sort((a, b) => {
+        if (sortBy === 'name-asc' || sortBy === 'name-desc') {
+          const diff = normalizeText(a.dataset.name).localeCompare(normalizeText(b.dataset.name), 'ar');
+          return sortBy === 'name-asc' ? diff : -diff;
+        }
+
+        const [field, direction] = sortBy.split('-');
+        const diff = Number(a.dataset[field] || 0) - Number(b.dataset[field] || 0);
+        return direction === 'asc' ? diff : -diff;
+      });
+
+      let visibleCount = 0;
+      rows.forEach((row) => {
+        const stock = Number(row.dataset.stock || 0);
+        const matchesSearch = !query || normalizeText(row.dataset.search).includes(query);
+        const matchesStock = !stockFilter
+          || (stockFilter === 'in-stock' && stock > 0)
+          || (stockFilter === 'out-of-stock' && stock <= 0);
+        const isVisible = matchesSearch && matchesStock;
+
+        row.classList.toggle('hidden', !isVisible);
+        productsList.appendChild(row);
+        if (isVisible) visibleCount += 1;
+      });
+
+      if (productsEmpty) {
+        productsEmpty.classList.toggle('hidden', visibleCount > 0);
+      }
+    }
+
+    [productSearch, productStockFilter, productSort].forEach((control) => {
+      if (control) {
+        control.addEventListener('input', applyProductControls);
+        control.addEventListener('change', applyProductControls);
+      }
+    });
+    applyProductControls();
 
     // Optional dark mode toggle (enable button in header to use)
     // const toggle = document.getElementById('themeToggle');

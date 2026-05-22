@@ -11,6 +11,7 @@ $canSalesDashboard = hasPermission('sales.dashboard.view')
     || hasPermission('sales.dashboard.this_month')
     || hasPermission('sales.dashboard.recent_orders');
 $salesDashboardUrl = $canSalesDashboard ? BASE_URL . 'modules/sales/' : BASE_URL . 'modules/finance/bills.php';
+$accountsReceivableUrl = hasPermission('finance.customer_payment.process') ? BASE_URL . 'modules/finance/bills.php' : $salesDashboardUrl;
 ?>
 
 <div class="row">
@@ -128,7 +129,7 @@ $salesDashboardUrl = $canSalesDashboard ? BASE_URL . 'modules/sales/' : BASE_URL
 <div class="row">
     <?php if (hasPermission('finance.customer_payment.process') || hasPermission('sales.dashboard.view')): ?>
     <div class="col-md-6 col-lg-3 mb-4">
-        <a href="<?= BASE_URL ?>modules/finance/bills.php" class="text-decoration-none">
+        <a href="<?= $accountsReceivableUrl ?>" class="text-decoration-none">
             <div class="card bg-dark text-white">
                 <div class="card-body">
                     <div class="d-flex justify-content-between align-items-center">
@@ -268,7 +269,7 @@ $salesDashboardUrl = $canSalesDashboard ? BASE_URL . 'modules/sales/' : BASE_URL
                                             <td>' . date('d M Y', strtotime($row['order_date'])) . '</td>
                                             <td>' . number_format((float)$row['total_amount'], 2) . '</td>
                                             <td><span class="badge bg-' . getStatusColor($row['status']) . '">' . ucfirst(str_replace('-', ' ', $row['status'])) . '</span></td>
-                                            <td><a href="modules/sales/order_details.php?id=' . (int)$row['id'] . '" class="btn btn-sm btn-outline-primary">View</a></td>
+                                            <td>' . (hasPermission('sales.orders.view') ? '<a href="modules/sales/order_details.php?id=' . (int)$row['id'] . '" class="btn btn-sm btn-outline-primary">View</a>' : '<span class="text-muted">-</span>') . '</td>
                                           </tr>';
                                 }
                             } else {

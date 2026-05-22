@@ -32,6 +32,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $insert_stmt->bind_param("iid", $inventory_id, $product_id, $quantity);
     
     if ($insert_stmt->execute()) {
+        logInventoryStockChange($inventory_id, $product_id, $quantity, 0, $quantity, 'inventory_add', null, null, null, 'Manual add to inventory');
         setAlert('success', 'Product added to inventory successfully.');
         logActivity("Added product ID: $product_id to inventory ID: $inventory_id with quantity: $quantity");
     } else {

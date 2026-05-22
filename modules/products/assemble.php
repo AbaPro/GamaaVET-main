@@ -70,6 +70,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // Deduct components from inventory
         foreach ($components as $component) {
             $deduct_qty = $component['required_quantity'] * $quantity;
+            $quantity_before = getInventoryProductQuantity($inventory_id, $component['component_id']);
             
             $deduct_sql = "UPDATE inventory_products 
                            SET quantity = quantity - ? 
@@ -78,6 +79,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $deduct_stmt->bind_param("dii", $deduct_qty, $inventory_id, $component['component_id']);
             $deduct_stmt->execute();
             $deduct_stmt->close();
+            logInventoryStockChange(
+                $inventory_id,
+                $component['component_id'],
+                -$deduct_qty,
+                $quantity_before,
+                $quantity_before - $deduct_qty,
+                'product_assembly',
+                null,
+                null,
+                null,
+                'Component consumed for final product ID: ' . $final_product_id
+            );
         }
         
         // Add final product to inventory
@@ -87,8 +100,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $check_final_stmt->bind_param("ii", $inventory_id, $final_product_id);
         $check_final_stmt->execute();
         $check_final_result = $check_final_stmt->get_result();
+        $final_quantity_before = 0.0;
         
         if ($check_final_result->num_rows > 0) {
+            $finalRow = $check_final_result->fetch_assoc();
+            $final_quantity_before = (float)($finalRow['quantity'] ?? 0);
             // Update existing quantity
             $update_sql = "UPDATE inventory_products 
                            SET quantity = quantity + ? 
@@ -107,6 +123,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $insert_stmt->execute();
             $insert_stmt->close();
         }
+        logInventoryStockChange(
+            $inventory_id,
+            $final_product_id,
+            $quantity,
+            $final_quantity_before,
+            $final_quantity_before + (float)$quantity,
+            'product_assembly',
+            null,
+            null,
+            null,
+            'Final product assembled'
+        );
         $check_final_stmt->close();
         
         // Log assembly
@@ -282,4 +310,3 @@ $(document).ready(function() {
     });
 });
 </script>
-

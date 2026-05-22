@@ -8,6 +8,7 @@ if (!hasPermission('finance.customer_wallet.view')) {
 }
 
 $page_title = 'Customer Wallets';
+$canViewPhoneNumbers = hasPermission('contacts.phone.view');
 require_once '../../includes/header.php';
 
 $sql = "SELECT * FROM customers ORDER BY name";
@@ -27,7 +28,9 @@ $result = $conn->query($sql);
                         <th>ID</th>
                         <th>Name</th>
                         <th>Email</th>
-                        <th>Phone</th>
+                        <?php if ($canViewPhoneNumbers): ?>
+                            <th>Phone</th>
+                        <?php endif; ?>
                         <th>Wallet Balance</th>
                         <th>Actions</th>
                     </tr>
@@ -38,7 +41,9 @@ $result = $conn->query($sql);
                             <td><?= $row['id']; ?></td>
                             <td><?= htmlspecialchars($row['name']); ?></td>
                             <td><?= htmlspecialchars($row['email']); ?></td>
-                            <td><?= htmlspecialchars($row['phone']); ?></td>
+                            <?php if ($canViewPhoneNumbers): ?>
+                                <td><?= htmlspecialchars($row['phone']); ?></td>
+                            <?php endif; ?>
                             <td><?= number_format($row['wallet_balance'], 2); ?></td>
                             <td>
                                 <a href="../../modules/customers/wallet.php?id=<?= $row['id']; ?>" class="btn btn-sm btn-primary">

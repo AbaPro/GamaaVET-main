@@ -36,7 +36,7 @@ if ($orderId <= 0) {
 }
 
 $orderStmt = $conn->prepare("
-    SELECT mo.*, c.name AS customer_name, f.name AS formula_name, f.description AS formula_description, f.components_json, f.batch_size AS formula_batch_size, f.batch_unit,
+    SELECT mo.*, c.name AS customer_name, f.name AS formula_name, f.description AS formula_description, f.components_json, f.sample_images_json, f.batch_size AS formula_batch_size, f.batch_unit,
            l.name AS location_name, l.address AS location_address, p.name AS product_name, p.sku AS product_sku,
            bs.name AS bottle_size_name, bs.size AS bottle_size_value, bs.unit AS bottle_size_unit, bs.type AS bottle_size_type
     FROM manufacturing_orders mo
@@ -62,6 +62,10 @@ if (!$order) {
 $formulaComponentsRaw = json_decode($order['components_json'] ?? '[]', true);
 if (!is_array($formulaComponentsRaw)) {
     $formulaComponentsRaw = [];
+}
+$formulaSampleImages = json_decode($order['sample_images_json'] ?? '[]', true);
+if (!is_array($formulaSampleImages)) {
+    $formulaSampleImages = [];
 }
 // Scaled quantities used for sourcing; raw quantities shown in the formula card
 $formulaComponents = manufacturing_recalculate_components($order, $formulaComponentsRaw);
@@ -261,6 +265,7 @@ if ($packagingCheckRow['count'] == 0) {
             ['key' => 'final_product_count', 'text' => 'عدد المنتج النهائي', 'type' => 'number'],
             ['key' => 'carton_count', 'text' => 'عدد الكراتين', 'type' => 'number'],
             ['key' => 'units_per_carton', 'text' => 'وحدات/كرتونة', 'type' => 'number'],
+            ['key' => 'custom_material_name', 'text' => 'اسم المادة', 'type' => 'text'],
             ['key' => 'prints_issued', 'text' => 'مطبوعات: مصروف', 'type' => 'number'],
             ['key' => 'prints_used', 'text' => 'مطبوعات: مستخدم', 'type' => 'number'],
             ['key' => 'prints_returned', 'text' => 'مطبوعات: راجع', 'type' => 'number'],
@@ -300,6 +305,15 @@ if ($packagingCheckRow['count'] == 0) {
     }
     $insertPackagingStmt->close();
 }
+
+$ensureCustomMaterialStmt = $conn->prepare("
+    INSERT IGNORE INTO manufacturing_packaging_checklist
+        (manufacturing_order_id, section_name, item_key, item_text, item_type, item_value, item_order)
+    VALUES (?, 'after', 'custom_material_name', 'اسم المادة', 'text', 'مطبوعات', 263)
+");
+$ensureCustomMaterialStmt->bind_param("i", $orderId);
+$ensureCustomMaterialStmt->execute();
+$ensureCustomMaterialStmt->close();
 
 // Initialize Dispatch Prep checklist if not exists
 $checkDispatchStmt = $conn->prepare("SELECT COUNT(*) as cnt FROM manufacturing_dispatch_checklist WHERE manufacturing_order_id = ?");
@@ -435,6 +449,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $wasDeducted = $hasDeductedAt ? ($prevComp['deducted_at'] ?? null) !== null : false;
                 if ($prevComp && $newStatus === 'rejected' && $wasDeducted && $prevComp['product_id']) {
+                    $stockBeforeStmt = $conn->prepare("
+                        SELECT ip.inventory_id, ip.quantity
+                        FROM inventory_products ip
+                        JOIN inventories inv ON inv.id = ip.inventory_id
+                        WHERE ip.product_id = ? AND inv.location_id = ?
+                    ");
+                    $stockBeforeStmt->bind_param("ii", $prevComp['product_id'], $order['location_id']);
+                    $stockBeforeStmt->execute();
+                    $stockBeforeRows = $stockBeforeStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+                    $stockBeforeStmt->close();
+
                     // Restock: add the quantity back to the location's inventory
                     $pdo->prepare("
                         UPDATE inventory_products ip
@@ -445,6 +470,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     if ($hasDeductedAt) {
                         $pdo->prepare("UPDATE manufacturing_sourcing_components SET deducted_at = NULL WHERE id = ?")->execute([$compId]);
+                    }
+
+                    foreach ($stockBeforeRows as $stockBeforeRow) {
+                        logInventoryStockChange(
+                            (int)$stockBeforeRow['inventory_id'],
+                            (int)$prevComp['product_id'],
+                            (float)$prevComp['required_quantity'],
+                            (float)$stockBeforeRow['quantity'],
+                            (float)$stockBeforeRow['quantity'] + (float)$prevComp['required_quantity'],
+                            'manufacturing_receipt_reject',
+                            $orderId,
+                            null,
+                            null,
+                            'Rejected material restocked from manufacturing receipt'
+                        );
                     }
                 }
 
@@ -479,6 +519,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $insertPrepStmt->close();
         }
+
+        if (!empty($_FILES['preparation_images']) && is_array($_FILES['preparation_images']['name'])) {
+            $targetDir = manufacturing_get_storage_path_for_step($order['order_number'], 'preparation_images');
+            $relativeDir = 'assets/uploads/manufacturing/' . manufacturing_slugify($order['order_number']) . '/preparation_images';
+            $insertImageStmt = $conn->prepare("INSERT INTO manufacturing_preparation_images (manufacturing_order_id, manufacturing_order_step_id, file_path, original_name, uploaded_by) VALUES (?, ?, ?, ?, ?)");
+            $stepId = (int)$stepRow['id'];
+            foreach ($_FILES['preparation_images']['name'] as $idx => $originalName) {
+                if ($originalName === '') {
+                    continue;
+                }
+                $uploaded = manufacturing_store_uploaded_image(
+                    manufacturing_normalize_uploaded_file($_FILES['preparation_images'], $idx),
+                    $targetDir,
+                    $relativeDir,
+                    'preparation_' . $orderId
+                );
+                if ($uploaded) {
+                    $uploadedBy = $_SESSION['user_id'] ?? null;
+                    $filePath = $uploaded['path'];
+                    $originalFileName = $uploaded['original_name'];
+                    $insertImageStmt->bind_param('iissi', $orderId, $stepId, $filePath, $originalFileName, $uploadedBy);
+                    $insertImageStmt->execute();
+                }
+            }
+            $insertImageStmt->close();
+        }
     }
 
     // Store quality checklist status and notes for quality step
@@ -503,7 +569,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $packagingValues = $_POST['packaging_values'] ?? [];
         
         if (is_array($packagingValues)) {
+            $clearCheckboxStmt = $conn->prepare("
+                UPDATE manufacturing_packaging_checklist
+                SET item_value = ''
+                WHERE manufacturing_order_id = ? AND item_type = 'checkbox'
+            ");
+            $clearCheckboxStmt->bind_param("i", $orderId);
+            $clearCheckboxStmt->execute();
+            $clearCheckboxStmt->close();
+
             foreach ($packagingValues as $itemKey => $value) {
+                if ($itemKey === 'custom_material_name' && trim($value) === '') {
+                    $value = 'مطبوعات';
+                }
                 // In packaging step, we only update values. Notes are handled in Dispatch Prep.
                 $updatePackagingStmt = $conn->prepare("UPDATE manufacturing_packaging_checklist SET item_value = ? WHERE item_key = ? AND manufacturing_order_id = ?");
                 $updatePackagingStmt->bind_param("ssi", $value, $itemKey, $orderId);
@@ -663,6 +741,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $deductFetchStmt->close();
 
         foreach ($toDeduct as $dc) {
+            $stockBeforeStmt = $conn->prepare("
+                SELECT ip.inventory_id, ip.quantity
+                FROM inventory_products ip
+                JOIN inventories inv ON inv.id = ip.inventory_id
+                WHERE ip.product_id = ? AND inv.location_id = ?
+            ");
+            $stockBeforeStmt->bind_param("ii", $dc['product_id'], $order['location_id']);
+            $stockBeforeStmt->execute();
+            $stockBeforeRows = $stockBeforeStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+            $stockBeforeStmt->close();
+
             $pdo->prepare("
                 UPDATE inventory_products ip
                 JOIN inventories inv ON inv.id = ip.inventory_id
@@ -674,6 +763,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 foreach (explode(',', $dc['ids']) as $rowId) {
                     $pdo->prepare("UPDATE manufacturing_sourcing_components SET deducted_at = NOW() WHERE id = ?")->execute([(int)$rowId]);
                 }
+            }
+
+            foreach ($stockBeforeRows as $stockBeforeRow) {
+                logInventoryStockChange(
+                    (int)$stockBeforeRow['inventory_id'],
+                    (int)$dc['product_id'],
+                    -(float)$dc['required_quantity'],
+                    (float)$stockBeforeRow['quantity'],
+                    (float)$stockBeforeRow['quantity'] - (float)$dc['required_quantity'],
+                    'manufacturing_sourcing',
+                    $orderId,
+                    null,
+                    null,
+                    'Sourcing component deducted for manufacturing order'
+                );
             }
         }
     }
@@ -767,38 +871,66 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $startedAt = $stepRow['started_at'];
     $completedAt = $stepRow['completed_at'];
+    $currentUserId = $_SESSION['user_id'] ?? null;
+    $hasStepUserColumns = manufacturing_table_has_column($conn, 'manufacturing_order_steps', 'started_by');
+    $startedBy = $stepRow['started_by'] ?? null;
+    $completedBy = $stepRow['completed_by'] ?? null;
     if ($action !== 'regenerate') {
         if ($statusToSave === 'in_progress' && !$startedAt) {
             $startedAt = date('Y-m-d H:i:s');
+            $startedBy = $currentUserId;
         }
         if ($statusToSave === 'completed') {
             if (!$startedAt) {
                 $startedAt = date('Y-m-d H:i:s');
+                $startedBy = $currentUserId;
             }
             $completedAt = date('Y-m-d H:i:s');
+            $completedBy = $currentUserId;
         } elseif ($statusToSave === 'pending') {
             $startedAt = null;
             $completedAt = null;
+            $startedBy = null;
+            $completedBy = null;
         } else {
             $completedAt = null;
+            $completedBy = null;
         }
     }
 
     try {
         $pdo->beginTransaction();
 
-        $updateStep = $pdo->prepare("
-            UPDATE manufacturing_order_steps 
-            SET status = ?, notes = ?, started_at = ?, completed_at = ?, updated_at = NOW() 
-            WHERE id = ?
-        ");
-        $updateStep->execute([
-            $statusToSave,
-            $notesInput,
-            $startedAt,
-            $completedAt,
-            $stepRow['id']
-        ]);
+        if ($hasStepUserColumns) {
+            $updateStep = $pdo->prepare("
+                UPDATE manufacturing_order_steps 
+                SET status = ?, notes = ?, started_at = ?, completed_at = ?, started_by = ?, completed_by = ?, last_updated_by = ?, updated_at = NOW() 
+                WHERE id = ?
+            ");
+            $updateStep->execute([
+                $statusToSave,
+                $notesInput,
+                $startedAt,
+                $completedAt,
+                $startedBy,
+                $completedBy,
+                $currentUserId,
+                $stepRow['id']
+            ]);
+        } else {
+            $updateStep = $pdo->prepare("
+                UPDATE manufacturing_order_steps 
+                SET status = ?, notes = ?, started_at = ?, completed_at = ?, updated_at = NOW() 
+                WHERE id = ?
+            ");
+            $updateStep->execute([
+                $statusToSave,
+                $notesInput,
+                $startedAt,
+                $completedAt,
+                $stepRow['id']
+            ]);
+        }
 
         $orderStepsStmt = $conn->prepare("SELECT step_key, status FROM manufacturing_order_steps WHERE manufacturing_order_id = ?");
         $orderStepsStmt->bind_param('i', $orderId);
@@ -928,6 +1060,8 @@ $stepsByKey = [];
 foreach ($steps as $stepItem) {
     $stepsByKey[$stepItem['step_key']] = $stepItem;
 }
+$stepPeople = manufacturing_get_step_people($conn, array_column($steps, 'id'));
+$auditNotes = manufacturing_detect_order_audit_notes($conn, $order, $steps);
 
 $orderDocuments = [];
 $totalDocuments = 0;
@@ -948,6 +1082,7 @@ foreach ($steps as $stepRow) {
 $progressPercent = (int)(($completedSteps / $totalSteps) * 100);
 $nextStepLabel = manufacturing_get_next_step_label($steps);
 $orderBadge = manufacturing_order_status_badge($order['status']);
+$isCompletedOrder = $order['status'] === 'completed';
 ?>
 
 <style>
@@ -966,9 +1101,11 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
         <span class="badge <?= $orderBadge['class']; ?> text-uppercase">
             <?= $orderBadge['label']; ?>
         </span>
-        <a href="edit.php?id=<?= $orderId; ?>" class="btn btn-outline-primary">
-            <i class="fas fa-edit me-1"></i> Edit
-        </a>
+        <?php if (!$isCompletedOrder): ?>
+            <a href="edit.php?id=<?= $orderId; ?>" class="btn btn-outline-primary">
+                <i class="fas fa-edit me-1"></i> Edit
+            </a>
+        <?php endif; ?>
         <?php if (hasPermission('manufacturing.delete')): ?>
             <button type="button" class="btn btn-danger" 
                     onclick="confirmDelete(<?= $orderId; ?>, '<?= htmlspecialchars($order['order_number']); ?>')">
@@ -1108,6 +1245,19 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
             <div class="card-body">
                 <p class="mb-1"><strong>Total files:</strong> <?= $totalDocuments; ?> (Excel + PDF per step)</p>
                 <p class="mb-1"><strong>Formula description:</strong> <?= htmlspecialchars($order['formula_description'] ?? 'No description'); ?></p>
+                <?php if (!empty($formulaSampleImages)): ?>
+                    <div class="mt-3">
+                        <strong class="d-block mb-2">Formula samples:</strong>
+                        <div class="d-flex flex-wrap gap-2">
+                            <?php foreach ($formulaSampleImages as $sampleImage): ?>
+                                <?php if (empty($sampleImage['path'])) continue; ?>
+                                <a href="../../<?= htmlspecialchars($sampleImage['path']); ?>" target="_blank">
+                                    <img src="../../<?= htmlspecialchars($sampleImage['path']); ?>" class="rounded border" style="width:64px;height:64px;object-fit:cover;" alt="Formula sample">
+                                </a>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+                <?php endif; ?>
                 <p class="text-muted small mb-0">Every save regenerates the Excel and PDF that travel with the order to the next internal team.</p>
             </div>
         </div>
@@ -1149,8 +1299,37 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
     </div>
 </div>
 
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span>Manufacturing audit / points to check</span>
+        <span class="badge <?= empty($auditNotes) ? 'bg-success' : 'bg-warning text-dark'; ?>"><?= count($auditNotes); ?> points</span>
+    </div>
+    <div class="card-body">
+        <?php if (!empty($auditNotes)): ?>
+            <div class="list-group list-group-flush">
+                <?php foreach (array_slice($auditNotes, 0, 10) as $note): ?>
+                    <div class="list-group-item px-0 d-flex gap-3 align-items-start">
+                        <span class="badge <?= $note['severity'] === 'danger' ? 'bg-danger' : 'bg-warning text-dark'; ?> text-uppercase"><?= htmlspecialchars($note['severity']); ?></span>
+                        <div>
+                            <div class="fw-semibold"><?= htmlspecialchars($note['title']); ?></div>
+                            <div class="text-muted small"><?= htmlspecialchars($note['detail']); ?></div>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        <?php else: ?>
+            <p class="text-muted mb-0">No automatic audit warnings were detected.</p>
+        <?php endif; ?>
+    </div>
+</div>
+
 <div class="card">
-    <div class="card-header">Step-by-step manufacturing workflow</div>
+    <div class="card-header d-flex justify-content-between align-items-center gap-2">
+        <span>Step-by-step manufacturing workflow</span>
+        <button type="button" class="btn btn-sm btn-outline-primary" id="toggleManufacturingSteps">
+            <i class="fas fa-expand-alt me-1"></i> Expand all
+        </button>
+    </div>
     <div class="card-body">
         <div id="manufacturingSteps">
             <?php 
@@ -1175,6 +1354,7 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                     $documents = $orderDocuments[$stepRow['id']] ?? []; 
                     $isOpen = ($stepRow['step_key'] === $activeStepKey);
                     $isStepLocked = ($stepRow['status'] === 'completed');
+                    $people = $stepPeople[(int)$stepRow['id']] ?? [];
                 ?>
                 <details class="border rounded mb-2" <?= $isOpen ? 'open' : ''; ?>>
                     <summary class="p-3 fw-bold cursor-pointer bg-light d-flex justify-content-between align-items-center" style="list-style: none;">
@@ -1183,10 +1363,20 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                             <?= manufacturing_get_step_label($stepRow['step_key']); ?>
                             <span class="badge <?= manufacturing_status_badge_class($stepRow['status']); ?> ms-3 text-uppercase"><?= $stepRow['status']; ?></span>
                         </div>
+                        <div class="text-end small text-muted fw-normal">
+                            <div>Start: <?= $stepRow['started_at'] ? formatDateTime($stepRow['started_at']) : '-'; ?></div>
+                            <div>End: <?= $stepRow['completed_at'] ? formatDateTime($stepRow['completed_at']) : '-'; ?></div>
+                        </div>
                     </summary>
                     <div class="p-3 border-top">
                         <div class="step-content">
                             <p class="text-muted small mb-3"><?= manufacturing_get_step_instruction($stepRow['step_key']); ?></p>
+                            <div class="row g-2 mb-3 small">
+                                <div class="col-md-3"><strong>Started by:</strong> <?= htmlspecialchars($people['started_by_name'] ?? '-'); ?></div>
+                                <div class="col-md-3"><strong>Completed by:</strong> <?= htmlspecialchars($people['completed_by_name'] ?? '-'); ?></div>
+                                <div class="col-md-3"><strong>Last updated by:</strong> <?= htmlspecialchars($people['updated_by_name'] ?? '-'); ?></div>
+                                <div class="col-md-3"><strong>Duration:</strong> <?= htmlspecialchars(manufacturing_format_duration($stepRow['started_at'], $stepRow['completed_at'])); ?></div>
+                            </div>
                             
                             <form method="post" enctype="multipart/form-data">
                                 <input type="hidden" name="order_id" value="<?= $order['id']; ?>">
@@ -1392,6 +1582,16 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                     
                                     // Define standard fields
                                     $standardFields = ['pH', 'TDS', 'Temperature', 'Humidity'];
+
+                                    $prepImageStmt = $conn->prepare("SELECT file_path, original_name, uploaded_at FROM manufacturing_preparation_images WHERE manufacturing_order_id = ? ORDER BY uploaded_at DESC");
+                                    $prepImageStmt->bind_param('i', $orderId);
+                                    $prepImageStmt->execute();
+                                    $prepImagesResult = $prepImageStmt->get_result();
+                                    $prepImages = [];
+                                    while ($prepImage = $prepImagesResult->fetch_assoc()) {
+                                        $prepImages[] = $prepImage;
+                                    }
+                                    $prepImageStmt->close();
                                     ?>
                                     <div class="mb-3">
                                         <h6 class="mb-3">Mixing Process Measurements</h6>
@@ -1432,6 +1632,23 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                         <button type="button" class="btn btn-sm btn-outline-success mt-2" id="addPrepField">
                                             <i class="fas fa-plus me-1"></i> Add Custom Field
                                         </button>
+                                    </div>
+                                    <div class="mb-3">
+                                        <h6 class="mb-2">Preparation &amp; Mixing Images</h6>
+                                        <input type="file" class="form-control form-control-sm" name="preparation_images[]" accept="image/jpeg,image/png,image/gif,image/webp" multiple>
+                                        <div class="form-text">Allowed: JPG, PNG, GIF, WEBP. Max 5MB per image.</div>
+                                        <?php if (!empty($prepImages)): ?>
+                                            <div class="row g-2 mt-2">
+                                                <?php foreach ($prepImages as $prepImage): ?>
+                                                    <div class="col-6 col-md-3">
+                                                        <a href="../../<?= htmlspecialchars($prepImage['file_path']); ?>" target="_blank" class="d-block border rounded p-1 bg-light">
+                                                            <img src="../../<?= htmlspecialchars($prepImage['file_path']); ?>" class="img-fluid rounded" alt="Preparation image">
+                                                        </a>
+                                                        <small class="text-muted d-block text-truncate mt-1"><?= htmlspecialchars($prepImage['original_name'] ?: basename($prepImage['file_path'])); ?></small>
+                                                    </div>
+                                                <?php endforeach; ?>
+                                            </div>
+                                        <?php endif; ?>
                                     </div>
                                     <div class="alert alert-info small mb-3">
                                         <i class="fas fa-info-circle me-2"></i>
@@ -1655,6 +1872,7 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                                 <?php 
                                                 // Skip items that are handled in the Material Tracking table below
                                                 $skipKeys = [
+                                                    'custom_material_name',
                                                     'prints_issued', 'prints_used', 'prints_returned', 'prints_waste',
                                                     'boxes_issued', 'boxes_used', 'boxes_returned', 'boxes_waste',
                                                     'stickers_issued', 'stickers_used', 'stickers_returned', 'stickers_waste',
@@ -1712,6 +1930,13 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                                         'stickers' => 'الاستيكر',
                                                         'leaflets' => 'نشره'
                                                     ];
+                                                    $customMaterialName = 'مطبوعات';
+                                                    foreach ($packagingSections['after'] as $item) {
+                                                        if ($item['item_key'] === 'custom_material_name' && trim((string)($item['item_value'] ?? '')) !== '') {
+                                                            $customMaterialName = $item['item_value'];
+                                                        }
+                                                    }
+                                                    $materials['prints'] = $customMaterialName;
                                                     foreach ($materials as $matKey => $matLabel):
                                                         $issuedKey = $matKey . '_issued';
                                                         $usedKey = $matKey . '_used';
@@ -1731,7 +1956,16 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                                         }
                                                     ?>
                                                         <tr>
-                                                            <td style="text-align: right;"><strong><?= $matLabel; ?></strong></td>
+                                                            <td style="text-align: right;">
+                                                                <?php if ($matKey === 'prints'): ?>
+                                                                    <input type="text" class="form-control form-control-sm text-end fw-bold"
+                                                                           name="packaging_values[custom_material_name]"
+                                                                           value="<?= htmlspecialchars($matLabel); ?>"
+                                                                           placeholder="اسم المادة" required>
+                                                                <?php else: ?>
+                                                                    <strong><?= htmlspecialchars($matLabel); ?></strong>
+                                                                <?php endif; ?>
+                                                            </td>
                                                             <td><input type="number" class="form-control form-control-sm" name="packaging_values[<?= $issuedKey; ?>]" value="<?= htmlspecialchars($issuedVal); ?>" placeholder="0" required></td>
                                                             <td><input type="number" class="form-control form-control-sm" name="packaging_values[<?= $usedKey; ?>]" value="<?= htmlspecialchars($usedVal); ?>" placeholder="0" required></td>
                                                             <td><input type="number" class="form-control form-control-sm" name="packaging_values[<?= $returnedKey; ?>]" value="<?= htmlspecialchars($returnedVal); ?>" placeholder="0" required></td>
@@ -1878,6 +2112,13 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                                         'stickers' => 'الاستيكر',
                                                         'leaflets' => 'نشره'
                                                     ];
+                                                    $customMaterialName = 'مطبوعات';
+                                                    foreach ($pkgSections['after'] as $item) {
+                                                        if ($item['item_key'] === 'custom_material_name' && trim((string)($item['item_value'] ?? '')) !== '') {
+                                                            $customMaterialName = $item['item_value'];
+                                                        }
+                                                    }
+                                                    $materials['prints'] = $customMaterialName;
                                                     foreach ($materials as $matKey => $matLabel):
                                                         $issuedKey = $matKey . '_issued';
                                                         $usedKey = $matKey . '_used';
@@ -1896,7 +2137,7 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
                                                         }
                                                     ?>
                                                         <tr>
-                                                            <td style="text-align: right;"><strong><?= $matLabel; ?></strong></td>
+                                                            <td style="text-align: right;"><strong><?= htmlspecialchars($matLabel); ?></strong></td>
                                                             <td>
                                                                 <div class="small fw-bold mb-1"><?= htmlspecialchars($issuedVal ?: '0'); ?></div>
                                                                 <input type="text" class="form-control form-control-sm" name="packaging_notes[<?= $issuedKey; ?>]" value="<?= htmlspecialchars($issuedNote); ?>" placeholder="Note...">
@@ -2113,6 +2354,20 @@ $orderBadge = manufacturing_order_status_badge($order['status']);
 <?php require_once '../../includes/footer.php'; ?>
 
 <script>
+    const toggleManufacturingSteps = document.getElementById('toggleManufacturingSteps');
+    if (toggleManufacturingSteps) {
+        toggleManufacturingSteps.addEventListener('click', function () {
+            const stepDetails = document.querySelectorAll('#manufacturingSteps details');
+            const shouldOpen = Array.from(stepDetails).some((detail) => !detail.open);
+            stepDetails.forEach((detail) => {
+                detail.open = shouldOpen;
+            });
+            this.innerHTML = shouldOpen
+                ? '<i class="fas fa-compress-alt me-1"></i> Collapse all'
+                : '<i class="fas fa-expand-alt me-1"></i> Expand all';
+        });
+    }
+
     function confirmDelete(id, orderNumber) {
         if (confirm('Are you sure you want to delete manufacturing order #' + orderNumber + '? This will also delete all steps, and documents associated with this order. This action cannot be undone.')) {
             window.location.href = 'delete.php?id=' + id;

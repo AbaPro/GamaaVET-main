@@ -44,14 +44,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['po_id'])) {
         $stmt = $pdo->prepare("SELECT * FROM purchase_order_items WHERE purchase_order_id = ? AND received_quantity > 0");
         $stmt->execute([$po_id]);
         $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $stockLogs = [];
 
         foreach ($items as $item) {
             $received_qty = (float)$item['received_quantity'];
             $product_id = (int)$item['product_id'];
+            $beforeStmt = $pdo->prepare("SELECT quantity FROM inventory_products WHERE inventory_id = ? AND product_id = ? LIMIT 1");
+            $beforeStmt->execute([$inventory_id, $product_id]);
+            $quantityBefore = (float)($beforeStmt->fetchColumn() ?: 0);
 
             // Subtract from inventory
             $stmt = $pdo->prepare("UPDATE inventory_products SET quantity = quantity - ? WHERE inventory_id = ? AND product_id = ?");
             $stmt->execute([$received_qty, $inventory_id, $product_id]);
+            $stockLogs[] = [
+                'inventory_id' => $inventory_id,
+                'product_id' => $product_id,
+                'change_quantity' => -$received_qty,
+                'quantity_before' => $quantityBefore,
+                'quantity_after' => $quantityBefore - $received_qty,
+                'source_id' => (int)$item['id'],
+                'unit_price' => (float)$item['unit_price'],
+            ];
 
             // Reset item received quantity and total_price
             $stmt = $pdo->prepare("UPDATE purchase_order_items SET received_quantity = 0, total_price = 0 WHERE id = ?");
@@ -63,6 +76,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['po_id'])) {
         $stmt->execute([$po_id]);
 
         $pdo->commit();
+        foreach ($stockLogs as $stockLog) {
+            logInventoryStockChange(
+                $stockLog['inventory_id'],
+                $stockLog['product_id'],
+                $stockLog['change_quantity'],
+                $stockLog['quantity_before'],
+                $stockLog['quantity_after'],
+                'purchase_receipt_undo',
+                $stockLog['source_id'],
+                $stockLog['unit_price'],
+                null,
+                'Undo receipt for Purchase Order #' . $po_id
+            );
+        }
         
         logActivity("Undid receipt for Purchase Order #$po_id. Inventory stock reversed and PO status reset to 'ordered'.");
         setAlert('success', "Receipt reversed successfully. Inventory stock has been updated, and the PO is now back to 'Ordered' status.");

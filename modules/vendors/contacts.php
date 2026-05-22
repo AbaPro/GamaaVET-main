@@ -14,6 +14,7 @@ if (!isset($_GET['id']) || !is_numeric($_GET['id'])) {
 
 $vendor_id = sanitize($_GET['id']);
 $page_title = 'Vendor Contacts';
+$canViewPhoneNumbers = hasPermission('contacts.phone.view');
 require_once '../../includes/header.php';
 
 // Get vendor info for header
@@ -209,7 +210,9 @@ $contacts_result = $contacts_stmt->get_result();
                         <th>Name</th>
                         <th>Position</th>
                         <th>Email</th>
-                        <th>Phone</th>
+                        <?php if ($canViewPhoneNumbers): ?>
+                            <th>Phone</th>
+                        <?php endif; ?>
                         <th>Status</th>
                         <th>Actions</th>
                     </tr>
@@ -221,7 +224,9 @@ $contacts_result = $contacts_stmt->get_result();
                                 <td><?php echo htmlspecialchars($contact['name']); ?></td>
                                 <td><?php echo $contact['position'] ? htmlspecialchars($contact['position']) : '-'; ?></td>
                                 <td><?php echo $contact['email'] ? htmlspecialchars($contact['email']) : '-'; ?></td>
-                                <td><?php echo htmlspecialchars($contact['phone']); ?></td>
+                                <?php if ($canViewPhoneNumbers): ?>
+                                    <td><?php echo htmlspecialchars($contact['phone']); ?></td>
+                                <?php endif; ?>
                                 <td>
                                     <?php if ($contact['is_primary']): ?>
                                         <span class="badge bg-success">Primary</span>

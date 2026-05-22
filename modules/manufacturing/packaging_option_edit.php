@@ -10,6 +10,7 @@ if (!hasPermission('manufacturing.view')) {
 $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 $option = null;
 $currentItems = [];
+$hasPackagingProductColumn = $conn->query("SHOW COLUMNS FROM packaging_options LIKE 'product_id'")->num_rows > 0;
 
 if ($id > 0) {
     $stmt = $conn->prepare("SELECT * FROM packaging_options WHERE id = ?");
@@ -46,6 +47,14 @@ if ($customerResult) {
     }
 }
 
+$finalProducts = [];
+$finalProductResult = $conn->query("SELECT id, customer_id, name, sku FROM products WHERE type = 'final' ORDER BY name");
+if ($finalProductResult) {
+    while ($row = $finalProductResult->fetch_assoc()) {
+        $finalProducts[] = $row;
+    }
+}
+
 $materialProducts = [];
 $materialProductResult = $conn->query("SELECT id, name, sku FROM products WHERE type = 'material' ORDER BY name");
 if ($materialProductResult) {
@@ -56,6 +65,7 @@ if ($materialProductResult) {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $customerId  = isset($_POST['customer_id']) ? (int)$_POST['customer_id'] : 0;
+    $finalProductId = isset($_POST['product_id']) ? (int)$_POST['product_id'] : 0;
     $name        = sanitize($_POST['name'] ?? '');
     $description = sanitize($_POST['description'] ?? '');
     $isActive    = isset($_POST['is_active']) ? 1 : 0;
@@ -63,18 +73,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $rawItems = $_POST['items'] ?? [];
     $items = [];
     foreach ($rawItems as $item) {
-        $productId = isset($item['product_id']) ? (int)$item['product_id'] : 0;
-        if ($productId <= 0) continue;
+        $itemProductId = isset($item['product_id']) ? (int)$item['product_id'] : 0;
+        if ($itemProductId <= 0) continue;
         $items[] = [
-            'product_id' => $productId,
+            'product_id' => $itemProductId,
             'quantity'   => max(0.001, floatval($item['quantity'] ?? 1)),
             'unit'       => sanitize($item['unit'] ?? ''),
             'notes'      => sanitize($item['notes'] ?? ''),
         ];
     }
 
+    $productBelongsToCustomer = true;
+    if ($hasPackagingProductColumn && $finalProductId > 0) {
+        $productCheckStmt = $conn->prepare("SELECT COUNT(*) AS total FROM products WHERE id = ? AND customer_id = ? AND type = 'final'");
+        $productCheckStmt->bind_param("ii", $finalProductId, $customerId);
+        $productCheckStmt->execute();
+        $productCheckRow = $productCheckStmt->get_result()->fetch_assoc();
+        $productCheckStmt->close();
+        $productBelongsToCustomer = (int)($productCheckRow['total'] ?? 0) > 0;
+    }
+
     if ($customerId <= 0) {
         setAlert('danger', 'Please select a customer.');
+    } elseif ($hasPackagingProductColumn && $finalProductId <= 0) {
+        setAlert('danger', 'Please select a final product.');
+    } elseif (!$productBelongsToCustomer) {
+        setAlert('danger', 'Selected final product does not belong to this customer.');
     } elseif ($name === '') {
         setAlert('danger', 'Please enter a name.');
     } elseif (empty($items)) {
@@ -84,16 +108,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->beginTransaction();
 
             if ($id > 0) {
-                $stmt = $pdo->prepare("
-                    UPDATE packaging_options SET customer_id = ?, name = ?, description = ?, is_active = ? WHERE id = ?
-                ");
-                $stmt->execute([$customerId, $name, $description ?: null, $isActive, $id]);
+                if ($hasPackagingProductColumn) {
+                    $stmt = $pdo->prepare("
+                        UPDATE packaging_options SET customer_id = ?, product_id = ?, name = ?, description = ?, is_active = ? WHERE id = ?
+                    ");
+                    $stmt->execute([$customerId, $finalProductId, $name, $description ?: null, $isActive, $id]);
+                } else {
+                    $stmt = $pdo->prepare("
+                        UPDATE packaging_options SET customer_id = ?, name = ?, description = ?, is_active = ? WHERE id = ?
+                    ");
+                    $stmt->execute([$customerId, $name, $description ?: null, $isActive, $id]);
+                }
                 $pdo->prepare("DELETE FROM packaging_option_items WHERE packaging_option_id = ?")->execute([$id]);
             } else {
-                $stmt = $pdo->prepare("
-                    INSERT INTO packaging_options (customer_id, name, description, is_active) VALUES (?, ?, ?, ?)
-                ");
-                $stmt->execute([$customerId, $name, $description ?: null, $isActive]);
+                if ($hasPackagingProductColumn) {
+                    $stmt = $pdo->prepare("
+                        INSERT INTO packaging_options (customer_id, product_id, name, description, is_active) VALUES (?, ?, ?, ?, ?)
+                    ");
+                    $stmt->execute([$customerId, $finalProductId, $name, $description ?: null, $isActive]);
+                } else {
+                    $stmt = $pdo->prepare("
+                        INSERT INTO packaging_options (customer_id, name, description, is_active) VALUES (?, ?, ?, ?)
+                    ");
+                    $stmt->execute([$customerId, $name, $description ?: null, $isActive]);
+                }
                 $id = $pdo->lastInsertId();
             }
 
@@ -139,7 +177,7 @@ $canonicalUnits = ['kg', 'g', 'L', 'ml', 'pcs'];
                     <div class="row g-3">
                         <div class="col-md-6">
                             <label class="form-label">Customer <span class="text-danger">*</span></label>
-                            <select class="form-select select2" name="customer_id" required>
+                            <select class="form-select select2" name="customer_id" id="customer_id" required>
                                 <option value="">Select customer</option>
                                 <?php foreach ($customers as $customer): ?>
                                     <option value="<?= $customer['id']; ?>"
@@ -149,6 +187,24 @@ $canonicalUnits = ['kg', 'g', 'L', 'ml', 'pcs'];
                                 <?php endforeach; ?>
                             </select>
                         </div>
+                        <?php if ($hasPackagingProductColumn): ?>
+                        <div class="col-md-6">
+                            <label class="form-label">Final Product <span class="text-danger">*</span></label>
+                            <select class="form-select select2" name="product_id" id="product_id" required>
+                                <option value="">Select final product</option>
+                                <?php
+                                $selectedProductId = $option['product_id'] ?? $_POST['product_id'] ?? '';
+                                foreach ($finalProducts as $product):
+                                ?>
+                                    <option value="<?= $product['id']; ?>"
+                                            data-customer-id="<?= (int)$product['customer_id']; ?>"
+                                            <?= (string)$selectedProductId === (string)$product['id'] ? 'selected' : ''; ?>>
+                                        <?= htmlspecialchars($product['name']) . ($product['sku'] ? ' (' . htmlspecialchars($product['sku']) . ')' : ''); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <?php endif; ?>
                         <div class="col-md-6">
                             <label class="form-label">Name <span class="text-danger">*</span></label>
                             <input type="text" class="form-control" name="name"
@@ -226,6 +282,7 @@ $canonicalUnits = ['kg', 'g', 'L', 'ml', 'pcs'];
     const materialProducts = <?= json_encode($materialProducts); ?>;
     const savedItems = <?= json_encode($currentItems); ?>;
     const canonicalUnits = <?= json_encode($canonicalUnits); ?>;
+    const hasPackagingProductColumn = <?= $hasPackagingProductColumn ? 'true' : 'false'; ?>;
     const itemsBody = $('#itemsBody');
     let itemIndex = 0;
 
@@ -256,6 +313,16 @@ $canonicalUnits = ['kg', 'g', 'L', 'ml', 'pcs'];
             html += `<option value="${escapeForAttr(selectedUnit)}" selected>${escapeForAttr(selectedUnit)} (existing)</option>`;
         }
         return html;
+    }
+
+    function matchVisibleOption(params, data) {
+        if (data.element && $(data.element).prop('hidden')) {
+            return null;
+        }
+        if ($.trim(params.term || '') === '') {
+            return data;
+        }
+        return data.text && data.text.toLowerCase().indexOf(params.term.toLowerCase()) > -1 ? data : null;
     }
 
     function addItemRow(data) {
@@ -294,8 +361,37 @@ $canonicalUnits = ['kg', 'g', 'L', 'ml', 'pcs'];
 
     $(document).ready(function () {
         if ($.fn.select2) {
-            $('.select2').select2({ width: '100%' });
+            $('.select2').not('#product_id').select2({ width: '100%' });
+            $('#product_id').select2({ width: '100%', matcher: matchVisibleOption });
         }
+
+        function filterFinalProducts() {
+            if (!hasPackagingProductColumn) return;
+            const customerId = String($('#customer_id').val() || '');
+            const productSelect = $('#product_id');
+            const selectedValue = String(productSelect.val() || '');
+            let selectedStillVisible = !selectedValue;
+
+            productSelect.find('option').each(function () {
+                const optionCustomerId = String($(this).data('customer-id') || '');
+                if (!$(this).val() || !customerId || optionCustomerId === customerId) {
+                    $(this).prop('hidden', false);
+                    if ($(this).val() && String($(this).val()) === selectedValue) {
+                        selectedStillVisible = true;
+                    }
+                } else {
+                    $(this).prop('hidden', true);
+                }
+            });
+
+            if (!selectedStillVisible) {
+                productSelect.val('');
+            }
+            if ($.fn.select2) productSelect.trigger('change.select2');
+        }
+
+        $('#customer_id').on('change', filterFinalProducts);
+        filterFinalProducts();
 
         $('#addItem').on('click', function () { addItemRow(); });
 

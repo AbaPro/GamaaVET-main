@@ -33,14 +33,23 @@ if (isset($_GET['id']) && is_numeric($_GET['id'])) {
         $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         $from_inventory_id = $transfer['from_inventory_id'];
+        $stockLogs = [];
 
         foreach ($items as $item) {
             $product_id = $item['product_id'];
             $quantity = (float)$item['quantity'];
+            $beforeStmt = $pdo->prepare("SELECT quantity FROM inventory_products WHERE inventory_id = ? AND product_id = ? LIMIT 1");
+            $beforeStmt->execute([$from_inventory_id, $product_id]);
+            $quantityBefore = (float)($beforeStmt->fetchColumn() ?: 0);
 
             // Update source inventory
             $upd = $pdo->prepare("UPDATE inventory_products SET quantity = quantity + ? WHERE inventory_id = ? AND product_id = ?");
             $upd->execute([$quantity, $from_inventory_id, $product_id]);
+            $stockLogs[] = [
+                'product_id' => (int)$product_id,
+                'quantity' => $quantity,
+                'quantity_before' => $quantityBefore,
+            ];
             
             // If row didn't exist (unlikely if they transferred it, but safe), we won't create it here 
             // since we assume it came from there.
@@ -54,6 +63,20 @@ if (isset($_GET['id']) && is_numeric($_GET['id'])) {
         $stmt->execute([$transfer_id]);
 
         $pdo->commit();
+        foreach ($stockLogs as $stockLog) {
+            logInventoryStockChange(
+                $from_inventory_id,
+                $stockLog['product_id'],
+                $stockLog['quantity'],
+                $stockLog['quantity_before'],
+                $stockLog['quantity_before'] + $stockLog['quantity'],
+                'inventory_transfer_delete',
+                $transfer_id,
+                null,
+                null,
+                'Deleted pending transfer and returned stock'
+            );
+        }
         setAlert('success', "Transfer deleted and stock returned to source inventory.");
         logActivity("Deleted inventory transfer #$transfer_id (Ref: {$transfer['transfer_reference']}) and reversed stock.");
 

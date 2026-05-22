@@ -399,7 +399,7 @@
                 <ul class="navbar-nav ms-auto">
                     <?php if (isLoggedIn()): ?>
                         <?php $notifCount = function_exists('getUnreadNotificationsCount') ? getUnreadNotificationsCount() : 0; ?>
-                        <?php if (hasPermission('notifications.view') && $login_region === 'factory'): ?>
+                        <?php if (hasPermission('notifications.view')): ?>
                             <li class="nav-item me-2" id="notifBell">
                                 <a class="nav-link position-relative" href="<?= BASE_URL ?>modules/notifications/index.php">
                                     <i class="fas fa-bell"></i>
@@ -434,7 +434,7 @@
         </div>
     </nav>
     <!-- Notification toast + poller -->
-    <?php if (isLoggedIn() && hasPermission('notifications.view') && $login_region === 'factory'): ?>
+    <?php if (isLoggedIn() && hasPermission('notifications.view')): ?>
         <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 1080">
             <div id="notifToast" class="toast align-items-center text-bg-primary border-0" role="alert" aria-live="assertive" aria-atomic="true">
                 <div class="d-flex">

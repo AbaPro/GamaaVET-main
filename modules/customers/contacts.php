@@ -153,6 +153,8 @@ $contacts_stmt->bind_param("i", $customer_id);
 $contacts_stmt->execute();
 $contacts_result = $contacts_stmt->get_result();
 
+$canViewPhoneNumbers = hasPermission('contacts.phone.view');
+
 // Include header only after all possible redirects and processing
 require_once '../../includes/header.php';
 ?>
@@ -211,7 +213,9 @@ require_once '../../includes/header.php';
                         <th>Name</th>
                         <th>Position</th>
                         <th>Email</th>
-                        <th>Phone</th>
+                        <?php if ($canViewPhoneNumbers): ?>
+                            <th>Phone</th>
+                        <?php endif; ?>
                         <th>Status</th>
                         <th>Actions</th>
                     </tr>
@@ -223,7 +227,9 @@ require_once '../../includes/header.php';
                                 <td><?php echo e($contact['name']); ?></td>
                                 <td><?php echo $contact['position'] ? e($contact['position']) : '-'; ?></td>
                                 <td><?php echo $contact['email'] ? e($contact['email']) : '-'; ?></td>
-                                <td><?php echo e($contact['phone']); ?></td>
+                                <?php if ($canViewPhoneNumbers): ?>
+                                    <td><?php echo e($contact['phone']); ?></td>
+                                <?php endif; ?>
                                 <td>
                                     <?php if ($contact['is_primary']): ?>
                                         <span class="badge bg-success">Primary</span>
@@ -260,5 +266,4 @@ require_once '../../includes/header.php';
 </div>
 
 <?php require_once '../../includes/footer.php'; ?>
-
 
