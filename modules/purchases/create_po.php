@@ -10,15 +10,27 @@ if (!hasPermission('purchases.create')) {
 }
 
 // Block editing if the status is not 'new' (if the edit param is provided)
+$edit_po = null;
+$edit_po_items = [];
 if (isset($_GET['edit'])) {
     $e_id = (int)$_GET['edit'];
-    $stmt = $pdo->prepare("SELECT status FROM purchase_orders WHERE id = ?");
+    $stmt = $pdo->prepare("SELECT * FROM purchase_orders WHERE id = ?");
     $stmt->execute([$e_id]);
-    $st = $stmt->fetchColumn();
-    if ($st && $st !== 'new') {
+    $edit_po = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($edit_po && $edit_po['status'] !== 'new') {
         $_SESSION['error'] = "Only purchase orders in 'New' (draft) status can be edited.";
         header("Location: po_details.php?id=" . $e_id);
         exit();
+    }
+    if ($edit_po) {
+        $stmt2 = $pdo->prepare("
+            SELECT poi.*, p.name AS product_name, p.unit
+            FROM purchase_order_items poi
+            JOIN products p ON p.id = poi.product_id
+            WHERE poi.purchase_order_id = ?
+        ");
+        $stmt2->execute([$e_id]);
+        $edit_po_items = $stmt2->fetchAll(PDO::FETCH_ASSOC);
     }
 }
 
@@ -42,30 +54,49 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
         $pdo->beginTransaction();
 
-        // Insert purchase order
-        $stmt = $pdo->prepare("
-            INSERT INTO purchase_orders (
-                vendor_id, contact_id, order_date, status, 
-                total_amount, paid_amount, notes, warehouse_location, created_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ");
+        $editing_id = isset($_POST['edit_id']) ? (int)$_POST['edit_id'] : 0;
 
-        // Total amount is 0 initially because nothing is received yet
-        $total_amount = 0.00;
+        if ($editing_id) {
+            // Update existing draft PO
+            $stmt = $pdo->prepare("
+                UPDATE purchase_orders SET
+                    vendor_id = ?, contact_id = ?, order_date = ?,
+                    notes = ?, warehouse_location = ?
+                WHERE id = ? AND status = 'new'
+            ");
+            $stmt->execute([
+                $_POST['vendor_id'],
+                $_POST['contact_id'],
+                $_POST['order_date'],
+                $_POST['notes'],
+                $_POST['warehouse_location'] ?? null,
+                $editing_id,
+            ]);
+            $po_id = $editing_id;
 
-        $stmt->execute([
-            $_POST['vendor_id'],
-            $_POST['contact_id'],
-            $_POST['order_date'],
-            'new',
-            $total_amount,
-            0.00,
-            $_POST['notes'],
-            $_POST['warehouse_location'] ?? null,
-            $_SESSION['user_id']
-        ]);
-
-        $po_id = $pdo->lastInsertId();
+            // Replace all items
+            $pdo->prepare("DELETE FROM purchase_order_items WHERE purchase_order_id = ?")->execute([$po_id]);
+        } else {
+            // Insert new purchase order
+            $stmt = $pdo->prepare("
+                INSERT INTO purchase_orders (
+                    vendor_id, contact_id, order_date, status,
+                    total_amount, paid_amount, notes, warehouse_location, created_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ");
+            $stmt->execute([
+                $_POST['vendor_id'],
+                $_POST['contact_id'],
+                $_POST['order_date'],
+                'new',
+                0.00,
+                0.00,
+                $_POST['notes'],
+                $_POST['warehouse_location'] ?? null,
+                $_SESSION['user_id']
+            ]);
+            $po_id = $pdo->lastInsertId();
+        }
 
         // Insert PO items
         $stmt = $pdo->prepare("
@@ -76,14 +107,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
         foreach ($_POST['items'] as $item) {
             if ($item['product_id'] && $item['quantity'] > 0) {
-                // Total price is initially 0 since nothing has been received yet
-                $total_price = 0.00;
                 $stmt->execute([
                     $po_id,
                     $item['product_id'],
                     $item['quantity'],
                     $item['price'],
-                    $total_price,
+                    0.00,
                     $item['unit'] ?? null
                 ]);
             }
@@ -91,10 +120,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
         // Update status if submitted (not draft)
         if ($_POST['action'] == 'submit') {
-            $pdo->exec("UPDATE purchase_orders SET status = 'ordered' WHERE id = $po_id");
+            $pdo->prepare("UPDATE purchase_orders SET status = 'ordered' WHERE id = ?")->execute([$po_id]);
             $_SESSION['success'] = "Purchase order submitted successfully!";
         } else {
-            $_SESSION['success'] = "Purchase order saved as draft!";
+            $_SESSION['success'] = $editing_id ? "Purchase order updated successfully!" : "Purchase order saved as draft!";
         }
 
         $pdo->commit();
@@ -104,7 +133,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
         }
-        $_SESSION['error'] = "Error creating purchase order: " . $e->getMessage();
+        $_SESSION['error'] = "Error saving purchase order: " . $e->getMessage();
     }
 }
 
@@ -133,17 +162,20 @@ $subcategories = $pdo->query("SELECT id, name, parent_id FROM categories WHERE p
 $locations = $pdo->query("SELECT id, name FROM locations WHERE is_active = 1 ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 
 // Set default date
-$order_date = date('Y-m-d');
+$order_date = $edit_po ? $edit_po['order_date'] : date('Y-m-d');
 
 require_once '../../includes/header.php';
 ?>
 
 <div class="container mt-4">
-    <h2>Create Purchase Order</h2>
+    <h2><?= $edit_po ? 'Edit Purchase Order' : 'Create Purchase Order' ?></h2>
 
     <?php include '../../includes/messages.php'; ?>
 
     <form id="poForm" method="post">
+        <?php if ($edit_po): ?>
+            <input type="hidden" name="edit_id" value="<?= (int)$edit_po['id'] ?>">
+        <?php endif; ?>
         <div class="card mb-4">
             <div class="card-header">Purchase Order Information</div>
             <div class="card-body">
@@ -152,7 +184,7 @@ require_once '../../includes/header.php';
                         <div class="mb-3">
                             <label for="order_date" class="form-label">Order Date</label>
                             <input type="date" class="form-control" id="order_date" name="order_date"
-                                value="<?= $order_date ?>" required>
+                                value="<?= htmlspecialchars($order_date) ?>" required>
                         </div>
                     </div>
                     <div class="col-md-3">
@@ -161,7 +193,9 @@ require_once '../../includes/header.php';
                             <select class="form-select" id="vendor_id" name="vendor_id" required>
                                 <option value="">Select Vendor</option>
                                 <?php foreach ($vendors as $vendor) : ?>
-                                    <option value="<?= $vendor['id'] ?>"><?= htmlspecialchars($vendor['name']) ?></option>
+                                    <option value="<?= $vendor['id'] ?>" <?= ($edit_po && $edit_po['vendor_id'] == $vendor['id']) ? 'selected' : '' ?>>
+                                        <?= htmlspecialchars($vendor['name']) ?>
+                                    </option>
                                 <?php endforeach; ?>
                             </select>
                         </div>
@@ -169,8 +203,12 @@ require_once '../../includes/header.php';
                     <div class="col-md-3">
                         <div class="mb-3">
                             <label for="contact_id" class="form-label">Contact Person</label>
-                            <select class="form-select" id="contact_id" name="contact_id" required disabled>
-                                <option value="">Select Vendor First</option>
+                            <select class="form-select" id="contact_id" name="contact_id" required <?= $edit_po ? '' : 'disabled' ?>>
+                                <?php if ($edit_po): ?>
+                                    <option value="<?= (int)$edit_po['contact_id'] ?>" selected>Loading...</option>
+                                <?php else: ?>
+                                    <option value="">Select Vendor First</option>
+                                <?php endif; ?>
                             </select>
                         </div>
                     </div>
@@ -180,7 +218,9 @@ require_once '../../includes/header.php';
                             <select class="form-select" id="warehouse_location" name="warehouse_location" required>
                                 <option value="">Select Warehouse</option>
                                 <?php foreach ($locations as $loc) : ?>
-                                    <option value="<?= htmlspecialchars($loc['name']) ?>"><?= htmlspecialchars($loc['name']) ?></option>
+                                    <option value="<?= htmlspecialchars($loc['name']) ?>" <?= ($edit_po && $edit_po['warehouse_location'] == $loc['name']) ? 'selected' : '' ?>>
+                                        <?= htmlspecialchars($loc['name']) ?>
+                                    </option>
                                 <?php endforeach; ?>
                             </select>
                             <small class="text-muted">Where this PO should be delivered.</small>
@@ -192,7 +232,7 @@ require_once '../../includes/header.php';
                     <div class="col-md-12">
                         <div class="mb-3">
                             <label for="notes" class="form-label">Notes</label>
-                            <textarea class="form-control" id="notes" name="notes" rows="2"></textarea>
+                            <textarea class="form-control" id="notes" name="notes" rows="2"><?= $edit_po ? htmlspecialchars($edit_po['notes']) : '' ?></textarea>
                         </div>
                     </div>
                 </div>
@@ -549,6 +589,84 @@ require_once '../../includes/header.php';
             });
             $('#poTotal').text(total.toFixed(2));
         }
+
+        function addItemRow(productId, productName, productUnit, qty, price) {
+            const rowId = 'item_' + productId;
+            if ($('#' + rowId).length) {
+                const qtyInput = $('#' + rowId).find('.item-qty');
+                qtyInput.val(parseFloat(qtyInput.val()) + qty);
+                updateRowTotal($('#' + rowId));
+                return;
+            }
+            const total = (qty * price).toFixed(2);
+            const newRow = `
+            <tr id="${rowId}">
+                <td>
+                    ${productName}
+                    <input type="hidden" name="items[${productId}][product_id]" value="${productId}">
+                    <input type="hidden" name="items[${productId}][unit]" value="${productUnit}">
+                </td>
+                <td>${productUnit ? `<span class="badge bg-secondary">${productUnit}</span>` : '-'}</td>
+                <td>
+                    <input type="number" class="form-control form-control-sm item-qty"
+                           name="items[${productId}][quantity]" value="${qty}" min="0.01" step="0.01">
+                </td>
+                <td>
+                    <input type="number" class="form-control form-control-sm item-price"
+                           name="items[${productId}][price]" value="${price}" step="0.01" min="0">
+                </td>
+                <td class="item-total">${total}</td>
+                <td>
+                    <button type="button" class="btn btn-sm btn-danger remove-item">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </td>
+            </tr>`;
+            $('#itemsTable tbody').append(newRow);
+            updatePOTotal();
+        }
+
+        <?php if ($edit_po): ?>
+        // Pre-load vendor contacts
+        (function() {
+            const vendorId = <?= (int)$edit_po['vendor_id'] ?>;
+            const selectedContactId = <?= (int)$edit_po['contact_id'] ?>;
+            if (vendorId) {
+                $.getJSON('../../ajax/get_vendor_details.php?id=' + vendorId, function(response) {
+                    if (response.success && response.vendor) {
+                        let options = '<option value="">Select Contact</option>';
+                        options += `<option value="${response.vendor.id}" ${response.vendor.id == selectedContactId ? 'selected' : ''}>
+                            ${response.vendor.name} (${response.vendor.phone ?? '-'})
+                        </option>`;
+                        $('#contact_id').html(options).prop('disabled', false);
+                    }
+                });
+            }
+        })();
+
+        // Pre-populate existing items
+        <?php foreach ($edit_po_items as $item): ?>
+        (function() {
+            const productId   = <?= (int)$item['product_id'] ?>;
+            const productName = <?= json_encode($item['product_name'] ?? '') ?>;
+            const unit        = <?= json_encode($item['unit'] ?? '') ?>;
+            const qty         = <?= (float)$item['quantity'] ?>;
+            const price       = <?= (float)$item['unit_price'] ?>;
+            // Try to get the name from the products table in the modal if not stored on the item
+            const modalRow = $('#productsTable tbody tr').filter(function() {
+                return $(this).find('.select-product').data('id') == productId;
+            });
+            const resolvedName = (modalRow.length && modalRow.find('td').eq(1).text().trim())
+                ? modalRow.find('td').eq(1).text().trim()
+                : (productName || 'Product #' + productId);
+            const resolvedUnit = (modalRow.length && modalRow.find('.select-product').data('unit'))
+                ? modalRow.find('.select-product').data('unit')
+                : unit;
+            addItemRow(productId, resolvedName, resolvedUnit, qty, price);
+        })();
+        <?php endforeach; ?>
+        <?php endif; ?>
+
     });
 </script>
 
