@@ -47,6 +47,12 @@ $stmt = $pdo->prepare("
 ");
 $stmt->execute([$order_id]);
 $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Track which product_ids already have a manufacturing order for this sales order
+$mfgStmt = $pdo->prepare("SELECT product_id FROM manufacturing_orders WHERE sales_order_id = ?");
+$mfgStmt->execute([$order_id]);
+$manufacturedProductIds = array_flip($mfgStmt->fetchAll(PDO::FETCH_COLUMN));
+
 $canViewFinalPrices = canViewProductPrice('final');
 $canDeletePayments = hasPermission('finance.payments.delete');
 $canProcessPayments = hasPermission('finance.customer_payment.process');
@@ -375,13 +381,17 @@ require_once '../../includes/header.php';
                                     </td>
                                     <td>
                                         <?php if ($item['type'] === 'final' && hasPermission('manufacturing.orders.create')) : ?>
-                                            <button type="button" class="btn btn-sm btn-outline-primary btn-manufacture" 
-                                                    data-product-id="<?= $item['product_id'] ?>"
-                                                    data-product-name="<?= htmlspecialchars($item['product_name']) ?>"
-                                                    data-required-qty="<?= $item['quantity'] ?>"
-                                                    data-current-stock="<?= $item['current_stock'] ?>">
-                                                <i class="fas fa-hammer me-1"></i> Manufacture
-                                            </button>
+                                            <?php if (isset($manufacturedProductIds[$item['product_id']])): ?>
+                                                <span class="badge bg-success"><i class="fas fa-check me-1"></i> Manufactured</span>
+                                            <?php else: ?>
+                                                <button type="button" class="btn btn-sm btn-outline-primary btn-manufacture"
+                                                        data-product-id="<?= $item['product_id'] ?>"
+                                                        data-product-name="<?= htmlspecialchars($item['product_name']) ?>"
+                                                        data-required-qty="<?= $item['quantity'] ?>"
+                                                        data-current-stock="<?= $item['current_stock'] ?>">
+                                                    <i class="fas fa-hammer me-1"></i> Manufacture
+                                                </button>
+                                            <?php endif; ?>
                                         <?php endif; ?>
                                     </td>
                                 </tr>
