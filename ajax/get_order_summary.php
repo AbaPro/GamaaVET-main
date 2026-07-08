@@ -65,16 +65,21 @@ echo json_encode([
         'contact_name' => hasPermission('contacts.view') ? $order['contact_name'] : null,
         'contact_phone' => hasPermission('contacts.view') ? $order['contact_phone'] : null,
         'factory_name' => $order['factory_name'],
-        'total_amount' => $canViewPrices ? number_format((float)$order['total_amount'], 2) : 'Hidden',
-        'paid_amount' => $canViewPrices ? number_format((float)$order['paid_amount'], 2) : 'Hidden',
-        'balance' => $canViewPrices ? number_format($balance * -1, 2) : 'Hidden'
-    ],
+        'can_view_prices' => $canViewPrices
+    ] + ($canViewPrices ? [
+        'total_amount' => number_format((float)$order['total_amount'], 2),
+        'paid_amount' => number_format((float)$order['paid_amount'], 2),
+        'balance' => number_format($balance * -1, 2)
+    ] : []),
     'items' => array_map(function ($item) use ($canViewPrices) {
-        return [
+        $payload = [
             'product_name' => $item['product_name'],
-            'quantity' => (float)$item['quantity'],
-            'unit_price' => $canViewPrices ? number_format((float)$item['unit_price'], 2) : 'Hidden',
-            'total_price' => $canViewPrices ? number_format((float)$item['total_price'], 2) : 'Hidden'
+            'quantity' => (float)$item['quantity']
         ];
+        if ($canViewPrices) {
+            $payload['unit_price'] = number_format((float)$item['unit_price'], 2);
+            $payload['total_price'] = number_format((float)$item['total_price'], 2);
+        }
+        return $payload;
     }, $items)
 ]);

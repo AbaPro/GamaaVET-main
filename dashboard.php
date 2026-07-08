@@ -12,10 +12,11 @@ $canSalesDashboard = hasPermission('sales.dashboard.view')
     || hasPermission('sales.dashboard.recent_orders');
 $salesDashboardUrl = $canSalesDashboard ? BASE_URL . 'modules/sales/' : BASE_URL . 'modules/finance/bills.php';
 $accountsReceivableUrl = hasPermission('finance.customer_payment.process') ? BASE_URL . 'modules/finance/bills.php' : $salesDashboardUrl;
+$canViewSalesPrices = hasPermission('sales.orders.price.view');
 ?>
 
 <div class="row">
-    <?php if (hasPermission('sales.dashboard.view') || hasPermission('finance.customer_payment.process')): ?>
+    <?php if ((hasPermission('sales.dashboard.view') || hasPermission('finance.customer_payment.process')) && $canViewSalesPrices): ?>
     <div class="col-md-6 col-lg-3 mb-4">
         <a href="<?= $salesDashboardUrl ?>" class="text-decoration-none">
             <div class="card bg-primary text-white">
@@ -245,14 +246,16 @@ $accountsReceivableUrl = hasPermission('finance.customer_payment.process') ? BAS
                 <div class="table-responsive">
                     <table class="table table-hover">
                         <thead>
-                            <tr>
-                                <th>Order ID</th>
-                                <th>Customer</th>
-                                <th>Date</th>
-                                <th>Amount</th>
-                                <th>Status</th>
-                                <th>Action</th>
-                            </tr>
+	                            <tr>
+	                                <th>Order ID</th>
+	                                <th>Customer</th>
+	                                <th>Date</th>
+                                    <?php if ($canViewSalesPrices): ?>
+	                                <th>Amount</th>
+                                    <?php endif; ?>
+	                                <th>Status</th>
+	                                <th>Action</th>
+	                            </tr>
                         </thead>
                         <tbody>
                             <?php
@@ -262,19 +265,20 @@ $accountsReceivableUrl = hasPermission('finance.customer_payment.process') ? BAS
                                     ORDER BY o.order_date DESC LIMIT 5";
                             $result = $conn->query($sql);
                             if ($result && $result->num_rows > 0) {
-                                while ($row = $result->fetch_assoc()) {
-                                    echo '<tr>
-                                            <td>' . htmlspecialchars($row['internal_id']) . '</td>
-                                            <td>' . htmlspecialchars($row['customer_name']) . '</td>
-                                            <td>' . date('d M Y', strtotime($row['order_date'])) . '</td>
-                                            <td>' . number_format((float)$row['total_amount'], 2) . '</td>
-                                            <td><span class="badge bg-' . getStatusColor($row['status']) . '">' . ucfirst(str_replace('-', ' ', $row['status'])) . '</span></td>
-                                            <td>' . (hasPermission('sales.orders.view') ? '<a href="modules/sales/order_details.php?id=' . (int)$row['id'] . '" class="btn btn-sm btn-outline-primary">View</a>' : '<span class="text-muted">-</span>') . '</td>
-                                          </tr>';
-                                }
-                            } else {
-                                echo '<tr><td colspan="6" class="text-center">No recent orders found</td></tr>';
-                            }
+	                                while ($row = $result->fetch_assoc()) {
+	                                    echo '<tr>
+		                                            <td>' . htmlspecialchars($row['internal_id']) . '</td>
+		                                            <td>' . htmlspecialchars($row['customer_name']) . '</td>
+		                                            <td>' . date('d M Y', strtotime($row['order_date'])) . '</td>'
+                                                . ($canViewSalesPrices ? '<td>' . number_format((float)$row['total_amount'], 2) . '</td>' : '') .
+                                                '
+		                                            <td><span class="badge bg-' . getStatusColor($row['status']) . '">' . ucfirst(str_replace('-', ' ', $row['status'])) . '</span></td>
+		                                            <td>' . (hasPermission('sales.orders.view') ? '<a href="modules/sales/order_details.php?id=' . (int)$row['id'] . '" class="btn btn-sm btn-outline-primary">View</a>' : '<span class="text-muted">-</span>') . '</td>
+		                                          </tr>';
+	                                }
+	                            } else {
+	                                echo '<tr><td colspan="' . ($canViewSalesPrices ? '6' : '5') . '" class="text-center">No recent orders found</td></tr>';
+	                            }
                             ?>
                         </tbody>
                     </table>

@@ -12,6 +12,7 @@ $canCreateOrders = hasPermission('sales.orders.create');
 $canViewAllOrders = hasPermission('sales.orders.view_all');
 $canViewOrderDetails = hasPermission('sales.orders.view');
 $canProcessPayments = hasPermission('finance.customer_payment.process');
+$canViewPrices = hasPermission('sales.orders.price.view');
 
 // Permission check
 if (!$canAccessDashboard) {
@@ -87,7 +88,7 @@ $stmt->close();
     if (empty($all_currencies)) $all_currencies = ['EGP'];
     $cur_symbols = ['EGP' => 'ج.م', 'USD' => '$', 'EUR' => '€', 'SAR' => 'ر.س'];
     ?>
-    <?php if ($canViewThisMonth): ?>
+    <?php if ($canViewThisMonth && $canViewPrices): ?>
     <?php foreach ($all_currencies as $cur):
         $sym = $cur_symbols[$cur] ?? $cur;
         $today_val = $today_by_currency[$cur] ?? 0;
@@ -154,13 +155,15 @@ $stmt->close();
             <table class="table js-datatable table-striped table-hover">
                 <thead>
                     <tr>
-                        <th>Order ID</th>
-                        <th>Customer</th>
-                        <th>Date</th>
-                        <th>Amount</th>
-                        <th>Balance</th>
-                        <th>Status</th>
-                        <th>Actions</th>
+	                        <th>Order ID</th>
+	                        <th>Customer</th>
+	                        <th>Date</th>
+                            <?php if ($canViewPrices): ?>
+	                        <th>Amount</th>
+	                        <th>Balance</th>
+                            <?php endif; ?>
+	                        <th>Status</th>
+	                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -193,11 +196,13 @@ $stmt->close();
                             ];
                     ?>
                             <tr>
-                                <td><?= htmlspecialchars($order['internal_id']) ?></td>
-                                <td><?= htmlspecialchars($order['customer_name']) ?></td>
-                                <td><?= date('M d, Y', strtotime($order['order_date'])) ?></td>
-                                <td><?= number_format($order['total_amount'], 2) ?></td>
-                                <td><?= number_format($order['total_amount'] - $order['paid_amount'], 2) ?></td>
+	                                <td><?= htmlspecialchars($order['internal_id']) ?></td>
+	                                <td><?= htmlspecialchars($order['customer_name']) ?></td>
+	                                <td><?= date('M d, Y', strtotime($order['order_date'])) ?></td>
+                                    <?php if ($canViewPrices): ?>
+	                                <td><?= number_format($order['total_amount'], 2) ?></td>
+	                                <td><?= number_format($order['total_amount'] - $order['paid_amount'], 2) ?></td>
+                                    <?php endif; ?>
                                 <td>
                                     <span class="badge <?= $status_class[$order['status']] ?>">
                                         <?= ucwords(str_replace('-', ' ', $order['status'])) ?>
@@ -217,7 +222,7 @@ $stmt->close();
 
                         $stmt->close();
                     } else {
-                        echo "<tr><td colspan='6'>Error preparing statement: " . $conn->error . "</td></tr>";
+	                        echo "<tr><td colspan='" . ($canViewPrices ? "7" : "5") . "'>Error preparing statement: " . $conn->error . "</td></tr>";
                     }
                     ?>
                 </tbody>

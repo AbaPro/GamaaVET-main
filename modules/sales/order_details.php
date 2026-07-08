@@ -53,10 +53,11 @@ $mfgStmt = $pdo->prepare("SELECT product_id FROM manufacturing_orders WHERE sale
 $mfgStmt->execute([$order_id]);
 $manufacturedProductIds = array_flip($mfgStmt->fetchAll(PDO::FETCH_COLUMN));
 
-$canViewFinalPrices = canViewProductPrice('final');
+$canViewOrderPrices = hasPermission('sales.orders.price.view');
+$canViewFinalPrices = $canViewOrderPrices;
 $canDeletePayments = hasPermission('finance.payments.delete');
 $canProcessPayments = hasPermission('finance.customer_payment.process');
-$canViewPaymentHistory = hasPermission('sales.orders.payments.history') || $canProcessPayments || $canDeletePayments;
+$canViewPaymentHistory = $canViewOrderPrices && (hasPermission('sales.orders.payments.history') || $canProcessPayments || $canDeletePayments);
 $canViewPhoneNumbers = hasPermission('contacts.phone.view');
 
 // Fetch payments
@@ -275,10 +276,12 @@ require_once '../../includes/header.php';
                             <?php if ($order['discount_percentage'] > 0): ?>
                                 <p><strong>Discount %:</strong> <?= number_format($order['discount_percentage'], 2) ?>%</p>
                             <?php endif; ?>
-                            <?php if ($discountAmount > 0 || $order['discount_percentage'] > 0): ?>
-                                <p><strong>Discount Type:</strong> <?= htmlspecialchars($discountBasisLabel) ?></p>
-                                <p><strong>Discount Amount:</strong> <?= number_format($discountAmount, 2) ?></p>
-                            <?php endif; ?>
+	                            <?php if ($discountAmount > 0 || $order['discount_percentage'] > 0): ?>
+	                                <p><strong>Discount Type:</strong> <?= htmlspecialchars($discountBasisLabel) ?></p>
+                                    <?php if ($canViewOrderPrices): ?>
+	                                <p><strong>Discount Amount:</strong> <?= number_format($discountAmount, 2) ?></p>
+                                    <?php endif; ?>
+	                            <?php endif; ?>
                             <?php if ((int)$order['discount_product_count'] > 0): ?>
                                 <p><strong>Discounted Products:</strong> <?= (int)$order['discount_product_count'] ?></p>
                             <?php endif; ?>
@@ -287,10 +290,10 @@ require_once '../../includes/header.php';
                             <?php endif; ?>
                         <?php endif; ?>
                     <?php endif; ?>
-                    <?php if (hasPermission('sales.orders.shipping.view')): ?>
-                        <p><strong>Shipping:</strong> <?= $order['shipping_cost_type'] === 'manual' ? number_format($shippingAmount, 2) . ' (Manual)' : 'No Shipping' ?></p>
-                    <?php endif; ?>
-                    <?php if (hasPermission('sales.orders.shipping.edit')) : ?>
+	                    <?php if (hasPermission('sales.orders.shipping.view') && $canViewOrderPrices): ?>
+	                        <p><strong>Shipping:</strong> <?= $order['shipping_cost_type'] === 'manual' ? number_format($shippingAmount, 2) . ' (Manual)' : 'No Shipping' ?></p>
+	                    <?php endif; ?>
+	                    <?php if (hasPermission('sales.orders.shipping.edit') && $canViewOrderPrices) : ?>
                         <form method="post" class="mt-3 border-top pt-3">
                             <div class="row g-2 align-items-end">
                                 <div class="col-sm-6">
@@ -341,13 +344,15 @@ require_once '../../includes/header.php';
                         <thead>
                             <tr>
                                 <th>SKU</th>
-                                <th>Product</th>
-                                <th>Quantity</th>
-                                <th>Stock</th>
-                                <th>Selling Price</th>
-                                <th>Total</th>
-                                <th>Actions</th>
-                            </tr>
+	                                <th>Product</th>
+	                                <th>Quantity</th>
+	                                <th>Stock</th>
+                                    <?php if ($canViewOrderPrices): ?>
+	                                <th>Selling Price</th>
+	                                <th>Total</th>
+                                    <?php endif; ?>
+	                                <th>Actions</th>
+	                            </tr>
                         </thead>
                         <tbody>
                             <?php foreach ($items as $item) : ?>
@@ -365,20 +370,10 @@ require_once '../../includes/header.php';
                                             <?= number_format($item['current_stock']) ?>
                                         </span>
                                     </td>
-                                    <td>
-                                        <?php if (canViewProductPrice($item['type'])): ?>
-                                            <?= number_format($item['unit_price'], 2) ?>
-                                        <?php else: ?>
-                                            <span class="text-muted">Hidden</span>
+                                        <?php if ($canViewOrderPrices): ?>
+	                                    <td><?= number_format($item['unit_price'], 2) ?></td>
+	                                    <td><?= number_format($item['total_price'], 2) ?></td>
                                         <?php endif; ?>
-                                    </td>
-                                    <td>
-                                        <?php if (canViewProductPrice($item['type'])): ?>
-                                            <?= number_format($item['total_price'], 2) ?>
-                                        <?php else: ?>
-                                            <span class="text-muted">Hidden</span>
-                                        <?php endif; ?>
-                                    </td>
                                     <td>
                                         <?php if ($item['type'] === 'final' && hasPermission('manufacturing.orders.create')) : ?>
                                             <?php if (isset($manufacturedProductIds[$item['product_id']])): ?>
@@ -397,16 +392,17 @@ require_once '../../includes/header.php';
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>
-                        <tfoot>
+	                        <?php if ($canViewOrderPrices): ?>
+	                        <tfoot>
                             <tr>
                                 <td colspan="5" class="text-end"><strong>Items Subtotal:</strong></td>
-                                <td><?= $canViewFinalPrices ? number_format($itemsSubtotal, 2) : '<span class="text-muted">Hidden</span>' ?></td>
+	                                <td><?= number_format($itemsSubtotal, 2) ?></td>
                                 <td></td>
                             </tr>
                             <?php if ($discountAmount > 0 && hasPermission('sales.orders.discount.view')): ?>
                             <tr>
                                 <td colspan="5" class="text-end"><strong>Discount:</strong></td>
-                                <td class="text-danger"><?= $canViewFinalPrices ? '-' . number_format($discountAmount, 2) : '<span class="text-muted">Hidden</span>' ?></td>
+	                                <td class="text-danger">-<?= number_format($discountAmount, 2) ?></td>
                                 <td></td>
                             </tr>
                             <?php endif; ?>
@@ -414,11 +410,7 @@ require_once '../../includes/header.php';
                             <tr>
                                 <td colspan="5" class="text-end"><strong>Shipping:</strong></td>
                                 <td>
-                                    <?php if ($canViewFinalPrices): ?>
-                                        <?= number_format($shippingAmount, 2) . ' (Manual)' ?>
-                                    <?php else: ?>
-                                        <span class="text-muted">Hidden</span>
-                                    <?php endif; ?>
+	                                    <?= number_format($shippingAmount, 2) . ' (Manual)' ?>
                                 </td>
                                 <td></td>
                             </tr>
@@ -426,24 +418,25 @@ require_once '../../includes/header.php';
                             <tr>
                                 <td colspan="5" class="text-end"><strong>Total:</strong></td>
                                 <td>
-                                    <?= $canViewFinalPrices ? number_format($order['total_amount'], 2) : '<span class="text-muted">Hidden</span>' ?>
+	                                    <?= number_format($order['total_amount'], 2) ?>
                                     <span class="badge bg-secondary ms-1"><?= htmlspecialchars($order['currency'] ?? 'EGP') ?></span>
                                 </td>
                                 <td></td>
                             </tr>
                             <tr>
                                 <td colspan="5" class="text-end"><strong>Paid Amount:</strong></td>
-                                <td><?= $canViewFinalPrices ? number_format($order['paid_amount'], 2) : '<span class="text-muted">Hidden</span>' ?></td>
+	                                <td><?= number_format($order['paid_amount'], 2) ?></td>
                                 <td></td>
                             </tr>
                             <tr>
                                 <td colspan="5" class="text-end"><strong>Balance:</strong></td>
                                 <td class="<?= $balance > 0 ? 'text-danger' : 'text-success' ?>">
-                                    <?= $canViewFinalPrices ? number_format($balance * -1, 2) : '<span class="text-muted">Hidden</span>' ?>
+	                                    <?= number_format($balance * -1, 2) ?>
                                 </td>
                                 <td></td>
                             </tr>
-                        </tfoot>
+	                        </tfoot>
+	                        <?php endif; ?>
                     </table>
                 </div>
             </div>
@@ -581,7 +574,7 @@ require_once '../../includes/header.php';
                     <h5>Order Notes</h5>
                     <p><?= nl2br(htmlspecialchars($order['notes'] ?? 'No notes available')) ?></p>
                     
-                    <?php if ($canProcessPayments && ($order['total_amount'] - $order['paid_amount']) > 0) : ?>
+	                    <?php if ($canProcessPayments && $canViewOrderPrices && ($order['total_amount'] - $order['paid_amount']) > 0) : ?>
                         <hr>
                         <a href="process_payment.php?order_id=<?= $order_id ?>" class="btn btn-success">Record Payment</a>
                     <?php endif; ?>

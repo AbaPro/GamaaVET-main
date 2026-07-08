@@ -40,6 +40,8 @@ $stats['unpaid_pos'] = (int)($stmt->fetchColumn() ?? 0);
 $stmt = $pdo->prepare("SELECT COUNT(*) FROM purchase_orders WHERE status = 'partially-received'");
 $stmt->execute();
 $stats['partially_received'] = (int)($stmt->fetchColumn() ?? 0);
+
+$canViewPrices = hasPermission('purchases.po.price.view');
 ?>
 
 <div class="container mt-4">
@@ -48,6 +50,7 @@ $stats['partially_received'] = (int)($stmt->fetchColumn() ?? 0);
     <?php include '../../includes/messages.php'; ?>
     
     <div class="row mb-4">
+        <?php if ($canViewPrices): ?>
         <div class="col-md-3 mb-3">
             <div class="card text-white bg-primary">
                 <div class="card-body">
@@ -56,6 +59,7 @@ $stats['partially_received'] = (int)($stmt->fetchColumn() ?? 0);
                 </div>
             </div>
         </div>
+        <?php endif; ?>
         <div class="col-md-3 mb-3">
             <div class="card text-white bg-warning">
                 <div class="card-body">
@@ -95,12 +99,14 @@ $stats['partially_received'] = (int)($stmt->fetchColumn() ?? 0);
                 <table class="table js-datatable table-striped table-hover">
                     <thead>
                         <tr>
-                            <th>PO #</th>
-                            <th>Vendor</th>
-                            <th>Date</th>
-                            <th>Amount</th>
-                            <th>Status</th>
-                            <th>Actions</th>
+	                            <th>PO #</th>
+	                            <th>Vendor</th>
+	                            <th>Date</th>
+                                <?php if ($canViewPrices): ?>
+	                            <th>Amount</th>
+                                <?php endif; ?>
+	                            <th>Status</th>
+	                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -123,11 +129,13 @@ $stats['partially_received'] = (int)($stmt->fetchColumn() ?? 0);
                         ];
                         ?>
                         <tr>
-                            <td>PO-<?= $po['id'] ?></td>
-                            <td><?= htmlspecialchars($po['vendor_name']) ?></td>
-                            <td><?= date('M d, Y', strtotime($po['order_date'])) ?></td>
-                            <td><?= number_format($po['total_amount'], 2) ?></td>
-                            <td>
+	                            <td>PO-<?= $po['id'] ?></td>
+	                            <td><?= htmlspecialchars($po['vendor_name']) ?></td>
+	                            <td><?= date('M d, Y', strtotime($po['order_date'])) ?></td>
+                                <?php if ($canViewPrices): ?>
+	                            <td><?= number_format($po['total_amount'], 2) ?></td>
+                                <?php endif; ?>
+	                            <td>
                                 <span class="badge <?= $status_class[$po['status']] ?>">
                                     <?= ucwords(str_replace('-', ' ', $po['status'])) ?>
                                 </span>

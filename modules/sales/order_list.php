@@ -301,24 +301,33 @@ document.addEventListener('DOMContentLoaded', function () {
                     if (!data.success) {
                         showError(data.message || 'Unable to load order details.');
                         return;
-                    }
-                    const order = data.order;
-                    const items = data.items || [];
-                    let rows = '';
-                    items.forEach((item, idx) => {
-                        rows += `
-                            <tr>
-                                <td>${idx + 1}</td>
-                                <td>${escapeHtml(item.product_name)}</td>
-                                <td class="text-center">${item.quantity}</td>
-                                <td class="text-end">${item.unit_price}</td>
-                                <td class="text-end">${item.total_price}</td>
-                            </tr>`;
-                    });
-                    if (!rows) {
-                        rows = `<tr><td colspan="5" class="text-center text-muted">No items found</td></tr>`;
-                    }
-                    modalBody.innerHTML = `
+	                    }
+	                    const order = data.order;
+	                    const items = data.items || [];
+                        const canViewPrices = Boolean(order.can_view_prices);
+	                    let rows = '';
+	                    items.forEach((item, idx) => {
+	                        rows += `
+	                            <tr>
+	                                <td>${idx + 1}</td>
+	                                <td>${escapeHtml(item.product_name)}</td>
+	                                <td class="text-center">${item.quantity}</td>
+                                    ${canViewPrices ? `<td class="text-end">${item.unit_price}</td><td class="text-end">${item.total_price}</td>` : ''}
+	                            </tr>`;
+	                    });
+	                    if (!rows) {
+	                        rows = `<tr><td colspan="${canViewPrices ? 5 : 3}" class="text-center text-muted">No items found</td></tr>`;
+	                    }
+                        const priceHeadings = canViewPrices
+                            ? '<th class="text-end">Selling Price</th><th class="text-end">Line Total</th>'
+                            : '';
+                        const totalsBlock = canViewPrices
+                            ? `<div>
+                                <div>Total: <strong>${order.total_amount}</strong></div>
+                                <div class="small text-muted">Paid: ${order.paid_amount} | Balance: ${order.balance}</div>
+                            </div>`
+                            : '';
+	                    modalBody.innerHTML = `
                         <div class="mb-3">
                             <h5 class="mb-1">${escapeHtml(order.internal_id)} <span class="badge bg-secondary">${escapeHtml(order.status_label)}</span></h5>
                             <div class="small text-muted">Placed on ${escapeHtml(order.order_date)}</div>
@@ -339,24 +348,20 @@ document.addEventListener('DOMContentLoaded', function () {
                             <table class="table table-sm">
                                 <thead>
                                     <tr>
-                                        <th>#</th>
-                                        <th>Product</th>
-                                        <th class="text-center">Qty</th>
-                                        <th class="text-end">Selling Price</th>
-                                        <th class="text-end">Line Total</th>
-                                    </tr>
-                                </thead>
-                                <tbody>${rows}</tbody>
-                            </table>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center border-top pt-3">
-                            <div>
-                                <div>Total: <strong>${order.total_amount}</strong></div>
-                                <div class="small text-muted">Paid: ${order.paid_amount} | Balance: ${order.balance}</div>
-                            </div>
-                            <a href="order_details.php?id=${order.id}" class="btn btn-sm btn-primary">
-                                Open Full Order
-                            </a>
+	                                        <th>#</th>
+	                                        <th>Product</th>
+	                                        <th class="text-center">Qty</th>
+                                            ${priceHeadings}
+	                                    </tr>
+	                                </thead>
+	                                <tbody>${rows}</tbody>
+	                            </table>
+	                        </div>
+	                        <div class="d-flex justify-content-between align-items-center border-top pt-3">
+	                            ${totalsBlock}
+	                            <a href="order_details.php?id=${order.id}" class="btn btn-sm btn-primary">
+	                                Open Full Order
+	                            </a>
                         </div>
                     `;
                 })

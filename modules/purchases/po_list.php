@@ -230,21 +230,20 @@ document.addEventListener('DOMContentLoaded', function () {
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#039;');
 
-    const formatRow = (items) => {
-        if (!Array.isArray(items) || !items.length) {
-            return '<tr><td colspan="5" class="text-center text-muted">No items found</td></tr>';
-        }
-        return items.map(function (item, idx) {
-            return `
-                <tr>
-                    <td>${idx + 1}</td>
-                    <td>${escapeHtml(item.product_name)}</td>
-                    <td class="text-center">${item.quantity}</td>
-                    <td class="text-end">${item.unit_price}</td>
-                    <td class="text-end">${item.total_price}</td>
-                </tr>`;
-        }).join('');
-    };
+	    const formatRow = (items, canViewPrices) => {
+	        if (!Array.isArray(items) || !items.length) {
+	            return `<tr><td colspan="${canViewPrices ? 5 : 3}" class="text-center text-muted">No items found</td></tr>`;
+	        }
+	        return items.map(function (item, idx) {
+	            return `
+	                <tr>
+	                    <td>${idx + 1}</td>
+	                    <td>${escapeHtml(item.product_name)}</td>
+	                    <td class="text-center">${item.quantity}</td>
+                        ${canViewPrices ? `<td class="text-end">${item.unit_price}</td><td class="text-end">${item.total_price}</td>` : ''}
+	                </tr>`;
+	        }).join('');
+	    };
 
     document.querySelectorAll('.js-po-preview').forEach(button => {
         button.addEventListener('click', function () {
@@ -259,9 +258,20 @@ document.addEventListener('DOMContentLoaded', function () {
                     if (!data.success) {
                         modalBody.innerHTML = `<div class="alert alert-danger mb-0">${escapeHtml(data.message || 'Unable to load PO details.')}</div>`;
                         return;
-                    }
-                    const order = data.order;
-                    modalBody.innerHTML = `
+	                    }
+	                    const order = data.order;
+                        const canViewPrices = Boolean(order.can_view_prices);
+                        const totalsBlock = canViewPrices
+                            ? `<div class="col-md-6">
+                                <h6 class="text-uppercase text-muted small mb-1">Totals</h6>
+                                <p class="mb-0"><strong>Total:</strong> ${order.total_amount}</p>
+                                <small class="text-muted">Paid: ${order.paid_amount} | Balance: ${order.balance}</small>
+                            </div>`
+                            : '';
+                        const priceHeadings = canViewPrices
+                            ? '<th class="text-end">Unit Cost</th><th class="text-end">Line Total</th>'
+                            : '';
+	                    modalBody.innerHTML = `
                         <div class="mb-3">
                             <h5 class="mb-1">${escapeHtml(order.label)} <span class="badge bg-secondary">${escapeHtml(order.status_label)}</span></h5>
                             <div class="small text-muted">Created on ${escapeHtml(order.order_date)} by ${escapeHtml(order.created_by || 'System')}</div>
@@ -272,25 +282,20 @@ document.addEventListener('DOMContentLoaded', function () {
                                 <p class="mb-0">${escapeHtml(order.vendor_name)}</p>
                                 <small class="text-muted">${escapeHtml(order.contact_name || 'No contact')} (${escapeHtml(order.contact_phone || 'N/A')})</small>
                             </div>
-                            <div class="col-md-6">
-                                <h6 class="text-uppercase text-muted small mb-1">Totals</h6>
-                                <p class="mb-0"><strong>Total:</strong> ${order.total_amount}</p>
-                                <small class="text-muted">Paid: ${order.paid_amount} | Balance: ${order.balance}</small>
-                            </div>
-                        </div>
+	                            ${totalsBlock}
+	                        </div>
                         <div class="table-responsive mb-3">
                             <table class="table table-sm">
                                 <thead>
                                     <tr>
-                                        <th>#</th>
-                                        <th>Product</th>
-                                        <th class="text-center">Qty</th>
-                                        <th class="text-end">Unit Cost</th>
-                                        <th class="text-end">Line Total</th>
-                                    </tr>
-                                </thead>
-                                <tbody>${formatRow(data.items)}</tbody>
-                            </table>
+	                                        <th>#</th>
+	                                        <th>Product</th>
+	                                        <th class="text-center">Qty</th>
+                                            ${priceHeadings}
+	                                    </tr>
+	                                </thead>
+	                                <tbody>${formatRow(data.items, canViewPrices)}</tbody>
+	                            </table>
                         </div>
                         <div class="border-top pt-3">
                             <div class="mb-2"><strong>Notes:</strong> ${order.notes ? escapeHtml(order.notes) : '<span class="text-muted">No notes</span>'}</div>

@@ -43,7 +43,7 @@ $stmt = $pdo->prepare("
 ");
 $stmt->execute([$po_id]);
 $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
-$canViewMaterialCosts = canViewProductCost('material');
+$canViewPOPrices = hasPermission('purchases.po.price.view');
 $canViewPhoneNumbers = hasPermission('contacts.phone.view');
 
 // Fetch payments
@@ -170,40 +170,43 @@ require_once '../../includes/header.php';
                                 <th>SKU</th>
                                 <th>Product</th>
                                 <th>Unit</th>
-                                <th>Ordered Qty</th>
-                                <th>Received Qty</th>
-                                <th>Current Stock</th>
-                                <th>Unit Price</th>
-                                <th>Total</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($items as $item) : ?>
-                                <?php $canViewItemCost = canViewProductCost($item['type']); ?>
-                                <tr>
-                                    <td><?= htmlspecialchars($item['sku']) ?></td>
-                                    <td><?= htmlspecialchars($item['product_name']) ?></td>
-                                    <td><?= $item['unit'] ? '<span class="badge bg-secondary">' . htmlspecialchars($item['unit']) . '</span>' : '-' ?></td>
-                                    <td><?= $item['quantity'] ?></td>
-                                    <td><?= $item['received_quantity'] ?? 0 ?></td>
-                                    <td><?= number_format($item['current_stock'] ?? 0, 2) ?></td>
-                                    <td><?= $canViewItemCost ? number_format($item['unit_price'], 2) : '<span class="text-muted">Hidden</span>' ?></td>
-                                    <td><?= $canViewItemCost ? number_format($item['total_price'], 2) : '<span class="text-muted">Hidden</span>' ?></td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                        <?php if ($canViewMaterialCosts): ?>
+	                                <th>Ordered Qty</th>
+	                                <th>Received Qty</th>
+	                                <th>Current Stock</th>
+                                    <?php if ($canViewPOPrices): ?>
+	                                <th>Unit Price</th>
+	                                <th>Total</th>
+                                    <?php endif; ?>
+	                            </tr>
+	                        </thead>
+	                        <tbody>
+	                            <?php foreach ($items as $item) : ?>
+	                                <tr>
+	                                    <td><?= htmlspecialchars($item['sku']) ?></td>
+	                                    <td><?= htmlspecialchars($item['product_name']) ?></td>
+	                                    <td><?= $item['unit'] ? '<span class="badge bg-secondary">' . htmlspecialchars($item['unit']) . '</span>' : '-' ?></td>
+	                                    <td><?= $item['quantity'] ?></td>
+	                                    <td><?= $item['received_quantity'] ?? 0 ?></td>
+	                                    <td><?= number_format($item['current_stock'] ?? 0, 2) ?></td>
+                                        <?php if ($canViewPOPrices): ?>
+	                                    <td><?= number_format($item['unit_price'], 2) ?></td>
+	                                    <td><?= number_format($item['total_price'], 2) ?></td>
+                                        <?php endif; ?>
+	                                </tr>
+	                            <?php endforeach; ?>
+	                        </tbody>
+	                        <?php if ($canViewPOPrices): ?>
                         <tfoot>
                             <tr>
-                                <td colspan="6" class="text-end"><strong>Subtotal:</strong></td>
+	                                <td colspan="7" class="text-end"><strong>Subtotal:</strong></td>
                                 <td><?= number_format($po['total_amount'], 2) ?></td>
                             </tr>
                             <tr>
-                                <td colspan="6" class="text-end"><strong>Paid Amount:</strong></td>
+	                                <td colspan="7" class="text-end"><strong>Paid Amount:</strong></td>
                                 <td><?= number_format($po['paid_amount'], 2) ?></td>
                             </tr>
                             <tr>
-                                <td colspan="6" class="text-end"><strong>Balance:</strong></td>
+	                                <td colspan="7" class="text-end"><strong>Balance:</strong></td>
                                 <td class="<?= ($po['total_amount'] - $po['paid_amount']) > 0 ? 'text-danger' : 'text-success' ?>">
                                     <?= number_format($po['total_amount'] - $po['paid_amount'], 2) ?>
                                 </td>
@@ -215,7 +218,7 @@ require_once '../../includes/header.php';
             </div>
             
             <div class="row">
-                <?php if (hasPermission('finance.po_payment.process') || $canDeletePayments): ?>
+	                <?php if ($canViewPOPrices && (hasPermission('finance.po_payment.process') || $canDeletePayments)): ?>
                 <div class="col-md-6">
                     <h5>Payment History</h5>
                     <?php if (empty($payments)) : ?>
@@ -323,7 +326,7 @@ require_once '../../includes/header.php';
                         </form>
                     <?php endif; ?>
 
-                    <?php if (hasPermission('finance.po_payment.process') && $po['status'] != 'cancelled' && ($po['total_amount'] - $po['paid_amount']) > 0) : ?>
+	                    <?php if ($canViewPOPrices && hasPermission('finance.po_payment.process') && $po['status'] != 'cancelled' && ($po['total_amount'] - $po['paid_amount']) > 0) : ?>
                         <a href="process_payment.php?po_id=<?= $po_id ?>" class="btn btn-success">Record Payment</a>
                     <?php endif; ?>
                 </div>
