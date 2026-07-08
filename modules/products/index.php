@@ -647,6 +647,10 @@ $productsTableColspan += 1;
                             <label for="edit_image" class="form-label">Product Image</label>
                             <input type="file" class="form-control" id="edit_image" name="image" accept="image/*">
                             <div id="current_image" class="mt-2"></div>
+                            <div class="form-check mt-2 d-none" id="edit_delete_image_wrapper">
+                                <input class="form-check-input" type="checkbox" id="edit_delete_image" name="delete_image" value="1">
+                                <label class="form-check-label" for="edit_delete_image">Delete current image</label>
+                            </div>
                         </div>
                     </div>
                     <div class="mb-3">
@@ -750,7 +754,20 @@ $productsTableColspan += 1;
         preview.innerHTML = `<p class="text-muted mb-0">${emptyText}</p>`;
     };
 
-    const bindLocalImagePreview = (inputSelector, previewSelector) => {
+    const toggleEditImageDeleteOption = (show) => {
+        const wrapper = document.getElementById('edit_delete_image_wrapper');
+        const checkbox = document.getElementById('edit_delete_image');
+        if (!wrapper || !checkbox) {
+            return;
+        }
+
+        wrapper.classList.toggle('d-none', !show);
+        if (!show) {
+            checkbox.checked = false;
+        }
+    };
+
+    const bindLocalImagePreview = (inputSelector, previewSelector, deleteOptionSelector = null) => {
         const input = document.querySelector(inputSelector);
         if (!input) {
             return;
@@ -763,6 +780,13 @@ $productsTableColspan += 1;
                 return;
             }
 
+            if (deleteOptionSelector) {
+                const deleteCheckbox = document.querySelector(deleteOptionSelector);
+                if (deleteCheckbox) {
+                    deleteCheckbox.checked = false;
+                }
+                toggleEditImageDeleteOption(false);
+            }
             renderProductImagePreview(previewSelector, URL.createObjectURL(file));
         });
     };
@@ -779,7 +803,22 @@ $productsTableColspan += 1;
         initProductPricingControls();
         initSearchableSelects();
         bindLocalImagePreview('#image', '#image_preview');
-        bindLocalImagePreview('#edit_image', '#current_image');
+        bindLocalImagePreview('#edit_image', '#current_image', '#edit_delete_image');
+
+        const editDeleteImage = document.getElementById('edit_delete_image');
+        if (editDeleteImage) {
+            editDeleteImage.addEventListener('change', function () {
+                if (!this.checked) {
+                    return;
+                }
+
+                const editImageInput = document.getElementById('edit_image');
+                if (editImageInput) {
+                    editImageInput.value = '';
+                }
+                renderProductImagePreview('#current_image', null, 'Current image will be deleted');
+            });
+        }
 
         const addProductModal = document.getElementById('addProductModal');
         if (addProductModal) {
@@ -871,6 +910,7 @@ $productsTableColspan += 1;
             if (editImageInput) {
                 editImageInput.value = '';
             }
+            toggleEditImageDeleteOption(false);
 
             // Load product image via AJAX
             $.ajax({
@@ -883,12 +923,15 @@ $productsTableColspan += 1;
                 success: function(response) {
                     if (response.success && response.image_url) {
                         renderProductImagePreview('#current_image', response.image_url);
+                        toggleEditImageDeleteOption(true);
                     } else {
                         renderProductImagePreview('#current_image', null);
+                        toggleEditImageDeleteOption(false);
                     }
                 },
                 error: function() {
                     renderProductImagePreview('#current_image', null);
+                    toggleEditImageDeleteOption(false);
                 }
             });
 

@@ -130,22 +130,6 @@ if ($viewMode === 'statement') {
         $pdf->Cell(60, 7, '', 'B', 1, 'L');
     }
 
-    $pdf->Ln(4);
-
-    // Before Loading checkboxes
-    $pdf->SetFont('aealarabiya', 'B', 11);
-    $pdf->Cell(0, 7, 'قبل التحميل', 0, 1, 'R');
-    $pdf->SetFont('aealarabiya', '', 11);
-    $checkFields = [
-        'تم استلام إذن صرف/أمر تسليم',
-        'تم عدّ الكمية قبل التحميل',
-        'تم تصوير الحمولة (صور مرفقة)',
-    ];
-    foreach ($checkFields as $field) {
-        $pdf->Cell(10, 7, '', 1, 0, 'C');
-        $pdf->Cell(0, 7, '  ' . $field, 0, 1, 'R');
-    }
-
     $pdf->Ln(8);
     $pdf->SetFont('aealarabiya', 'B', 13);
     $pdf->setRTL(false);

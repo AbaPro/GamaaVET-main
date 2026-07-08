@@ -47,9 +47,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     $check_stmt->close();
 
-    $image_name = null;
+    $upload_dir = rtrim(__DIR__ . '/../../assets/uploads/products/', '/\\') . DIRECTORY_SEPARATOR;
+    $delete_image = !empty($_POST['delete_image']);
+    $old_image_sql = "SELECT image FROM products WHERE id = ?";
+    $old_image_stmt = $conn->prepare($old_image_sql);
+    $old_image_stmt->bind_param("i", $id);
+    $old_image_stmt->execute();
+    $old_image_result = $old_image_stmt->get_result();
+    $old_image = $old_image_result->fetch_assoc()['image'] ?? null;
+    $old_image_stmt->close();
+    $image_name = $old_image;
+
     if (isset($_FILES['image']) && $_FILES['image']['error'] === UPLOAD_ERR_OK) {
-        $upload_dir = rtrim(__DIR__ . '/../../assets/uploads/products/', '/\\') . DIRECTORY_SEPARATOR;
 
         if (!file_exists($upload_dir) && !mkdir($upload_dir, 0755, true)) {
             setAlert('danger', 'Could not create upload directory.');
@@ -81,25 +90,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             redirect('index.php');
         }
 
-        $old_image_sql = "SELECT image FROM products WHERE id = ?";
-        $old_image_stmt = $conn->prepare($old_image_sql);
-        $old_image_stmt->bind_param("i", $id);
-        $old_image_stmt->execute();
-        $old_image_result = $old_image_stmt->get_result();
-        $old_image = $old_image_result->fetch_assoc()['image'] ?? null;
-        $old_image_stmt->close();
-
         if ($old_image && file_exists($upload_dir . $old_image)) {
             unlink($upload_dir . $old_image);
         }
-    } else {
-        $image_sql = "SELECT image FROM products WHERE id = ?";
-        $image_stmt = $conn->prepare($image_sql);
-        $image_stmt->bind_param("i", $id);
-        $image_stmt->execute();
-        $image_result = $image_stmt->get_result();
-        $image_name = $image_result->fetch_assoc()['image'] ?? null;
-        $image_stmt->close();
+    } elseif ($delete_image && $old_image) {
+        if (file_exists($upload_dir . $old_image)) {
+            unlink($upload_dir . $old_image);
+        }
+        $image_name = null;
     }
 
     $update_sql = "UPDATE products SET 
@@ -267,6 +265,10 @@ require_once '../../includes/header.php';
                 <input type="file" class="form-control" name="image" accept="image/*">
                 <?php if (!empty($product['image'])): ?>
                     <small class="text-muted d-block mt-1">Current Image: <?= htmlspecialchars($product['image']) ?></small>
+                    <div class="form-check mt-2">
+                        <input class="form-check-input" type="checkbox" name="delete_image" value="1" id="delete_image">
+                        <label class="form-check-label" for="delete_image">Delete current image</label>
+                    </div>
                 <?php endif; ?>
             </div>
         </div>
