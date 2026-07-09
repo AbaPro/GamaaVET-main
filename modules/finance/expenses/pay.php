@@ -29,15 +29,44 @@ if ($balance <= 0) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $pay_amount = (float)$_POST['amount'];
     $payment_method = $_POST['payment_method'];
-    $safe_id = !empty($_POST['safe_id']) ? $_POST['safe_id'] : null;
-    $bank_account_id = !empty($_POST['bank_account_id']) ? $_POST['bank_account_id'] : null;
+    $safe_id = !empty($_POST['safe_id']) ? (int)$_POST['safe_id'] : null;
+    $bank_account_id = !empty($_POST['bank_account_id']) ? (int)$_POST['bank_account_id'] : null;
     $reference = $_POST['reference'] ?? '';
 
     if ($pay_amount <= 0 || $pay_amount > $balance) {
         setAlert('danger', 'Invalid payment amount.');
+    } elseif ($payment_method === 'cash' && !$safe_id) {
+        setAlert('danger', 'Please select a safe.');
+    } elseif ($payment_method === 'transfer' && !$bank_account_id) {
+        setAlert('danger', 'Please select a bank account.');
     } else {
         try {
             $pdo->beginTransaction();
+
+            // Update Safe/Bank Balance first with a non-negative guard.
+            if ($payment_method == 'cash' && $safe_id) {
+                $stmt = $pdo->prepare("UPDATE safes SET balance = balance - ? WHERE id = ? AND balance >= ?");
+                $stmt->execute([$pay_amount, $safe_id, $pay_amount]);
+                if ($stmt->rowCount() === 0) {
+                    $safeStmt = $pdo->prepare("SELECT name, balance FROM safes WHERE id = ?");
+                    $safeStmt->execute([$safe_id]);
+                    $safe = $safeStmt->fetch(PDO::FETCH_ASSOC);
+                    $available = $safe ? number_format((float)$safe['balance'], 2) : '0.00';
+                    $safeName = $safe ? $safe['name'] : 'selected safe';
+                    throw new Exception("Insufficient safe balance in {$safeName}. Available: {$available} EGP.");
+                }
+            } elseif ($payment_method == 'transfer' && $bank_account_id) {
+                $stmt = $pdo->prepare("UPDATE bank_accounts SET balance = balance - ? WHERE id = ? AND balance >= ?");
+                $stmt->execute([$pay_amount, $bank_account_id, $pay_amount]);
+                if ($stmt->rowCount() === 0) {
+                    $bankStmt = $pdo->prepare("SELECT bank_name, account_number, balance FROM bank_accounts WHERE id = ?");
+                    $bankStmt->execute([$bank_account_id]);
+                    $bank = $bankStmt->fetch(PDO::FETCH_ASSOC);
+                    $available = $bank ? number_format((float)$bank['balance'], 2) : '0.00';
+                    $bankName = $bank ? $bank['bank_name'] . ' #' . $bank['account_number'] : 'selected bank account';
+                    throw new Exception("Insufficient bank balance in {$bankName}. Available: {$available} EGP.");
+                }
+            }
 
             // Insert payment record
             $stmt = $pdo->prepare("INSERT INTO expense_payments (expense_id, amount, payment_method, safe_id, bank_account_id, reference, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)");
@@ -48,15 +77,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $new_status = ($new_paid_amount >= $expense['amount']) ? 'paid' : 'partially-paid';
             $stmt = $pdo->prepare("UPDATE expenses SET paid_amount = ?, status = ? WHERE id = ?");
             $stmt->execute([$new_paid_amount, $new_status, $expense_id]);
-
-            // Update Safe/Bank Balance
-            if ($payment_method == 'cash' && $safe_id) {
-                $stmt = $pdo->prepare("UPDATE safes SET balance = balance - ? WHERE id = ?");
-                $stmt->execute([$pay_amount, $safe_id]);
-            } elseif ($payment_method == 'transfer' && $bank_account_id) {
-                $stmt = $pdo->prepare("UPDATE bank_accounts SET balance = balance - ? WHERE id = ?");
-                $stmt->execute([$pay_amount, $bank_account_id]);
-            }
             
             // If PO is linked
             if ($expense['po_id']) {
@@ -93,8 +113,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$safes = $pdo->query("SELECT id, name FROM safes ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
-$banks = $pdo->query("SELECT id, bank_name, account_number FROM bank_accounts ORDER BY bank_name ASC")->fetchAll(PDO::FETCH_ASSOC);
+$safes = $pdo->query("SELECT id, name, balance FROM safes ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+$banks = $pdo->query("SELECT id, bank_name, account_number, balance FROM bank_accounts ORDER BY bank_name ASC")->fetchAll(PDO::FETCH_ASSOC);
 
 $page_title = 'Record Payment: ' . $expense['name'];
 require_once '../../../includes/header.php';
@@ -140,7 +160,7 @@ require_once '../../../includes/header.php';
                             <label class="form-label">Safe</label>
                             <select name="safe_id" class="form-select">
                                 <?php foreach ($safes as $s): ?>
-                                    <option value="<?= $s['id'] ?>"><?= htmlspecialchars($s['name']) ?></option>
+                                    <option value="<?= $s['id'] ?>"><?= htmlspecialchars($s['name']) ?> - Balance: <?= number_format((float)$s['balance'], 2) ?> EGP</option>
                                 <?php endforeach; ?>
                             </select>
                         </div>
@@ -149,7 +169,7 @@ require_once '../../../includes/header.php';
                             <label class="form-label">Bank Account</label>
                             <select name="bank_account_id" class="form-select">
                                 <?php foreach ($banks as $b): ?>
-                                    <option value="<?= $b['id'] ?>"><?= htmlspecialchars($b['bank_name']) ?> (<?= $b['account_number'] ?>)</option>
+                                    <option value="<?= $b['id'] ?>"><?= htmlspecialchars($b['bank_name']) ?> (<?= htmlspecialchars($b['account_number']) ?>) - Balance: <?= number_format((float)$b['balance'], 2) ?> EGP</option>
                                 <?php endforeach; ?>
                             </select>
                         </div>
