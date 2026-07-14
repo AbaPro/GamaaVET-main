@@ -21,8 +21,21 @@ $query = "SELECT q.id, q.quotation_date, q.expiry_date, q.total_amount,
                  q.status, c.name AS customer_name, q.order_id
           FROM quotations q
           JOIN customers c ON q.customer_id = c.id
+          LEFT JOIN factories f ON f.id = c.factory_id
           WHERE 1=1";
 $params = [];
+
+if (isSalesPersonUser()) {
+    $query .= " AND COALESCE(c.sales_person_id, f.sales_person_id) = ?";
+    $params[] = (int)$_SESSION['user_id'];
+    $loginRegion = $_SESSION['login_region'] ?? 'factory';
+    if ($loginRegion === 'factory') {
+        $query .= " AND c.direct_sale IS NULL";
+    } else {
+        $query .= " AND c.direct_sale = ?";
+        $params[] = $loginRegion;
+    }
+}
 
 if (!empty($status)) {
     $query .= " AND q.status = ?";
@@ -51,8 +64,24 @@ $stmt = $pdo->prepare($query);
 $stmt->execute($params);
 $quotations = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Get customers for filter dropdown
-$customers = $pdo->query("SELECT id, name FROM customers ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+// Get customers for filter dropdown within the same scope.
+$customerQuery = "SELECT c.id, c.name FROM customers c LEFT JOIN factories f ON f.id = c.factory_id WHERE 1=1";
+$customerParams = [];
+if (isSalesPersonUser()) {
+    $customerQuery .= " AND COALESCE(c.sales_person_id, f.sales_person_id) = ?";
+    $customerParams[] = (int)$_SESSION['user_id'];
+    $loginRegion = $_SESSION['login_region'] ?? 'factory';
+    if ($loginRegion === 'factory') {
+        $customerQuery .= " AND c.direct_sale IS NULL";
+    } else {
+        $customerQuery .= " AND c.direct_sale = ?";
+        $customerParams[] = $loginRegion;
+    }
+}
+$customerQuery .= " ORDER BY c.name";
+$customerStmt = $pdo->prepare($customerQuery);
+$customerStmt->execute($customerParams);
+$customers = $customerStmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 
 <div class="container mt-4">

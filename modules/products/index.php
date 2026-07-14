@@ -11,6 +11,9 @@ $filterType = null;
 if (isset($_GET['type']) && in_array($_GET['type'], ['material', 'final'], true)) {
     $filterType = $_GET['type'];
 }
+if (isSalesPersonUser()) {
+    $filterType = 'final';
+}
 
 $customerFilters = [];
 if (isset($_GET['customer_ids']) && is_array($_GET['customer_ids'])) {
@@ -39,7 +42,15 @@ if (isset($_GET['search']) && !empty(trim($_GET['search']))) {
 }
 
 $customers = [];
-$customerResult = $conn->query("SELECT id, name FROM customers ORDER BY name");
+$customerSql = "SELECT c.id, c.name FROM customers c LEFT JOIN factories f ON f.id = c.factory_id";
+if (isSalesPersonUser()) {
+    $loginRegion = $_SESSION['login_region'] ?? 'factory';
+    $customerSql .= " WHERE COALESCE(c.sales_person_id, f.sales_person_id) = " . (int)$_SESSION['user_id'];
+    $customerSql .= $loginRegion === 'factory'
+        ? " AND c.direct_sale IS NULL"
+        : " AND c.direct_sale = '" . $conn->real_escape_string($loginRegion) . "'";
+}
+$customerResult = $conn->query($customerSql . " ORDER BY c.name");
 if ($customerResult) {
     while ($customerRow = $customerResult->fetch_assoc()) {
         $customers[] = $customerRow;
@@ -74,6 +85,11 @@ require_once '../../includes/header.php';
 // Handle delete request
 if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
     $id = sanitize($_GET['delete']);
+
+    if (!canAccessProduct($id)) {
+        setAlert('danger', 'You do not have permission to delete this product.');
+        redirect('index.php?type=final');
+    }
 
     // Check if product exists in any inventory
     $check_sql = "SELECT COUNT(*) as count FROM inventory_products WHERE product_id = ?";
@@ -157,11 +173,26 @@ if ($searchFilter !== null) {
     $paramValues[] = $likeSearch;
 }
 
+if (isSalesPersonUser()) {
+    $whereClauses[] = 'COALESCE(cust.sales_person_id, customer_factory.sales_person_id) = ?';
+    $paramTypes .= 'i';
+    $paramValues[] = (int)$_SESSION['user_id'];
+    $loginRegion = $_SESSION['login_region'] ?? 'factory';
+    if ($loginRegion === 'factory') {
+        $whereClauses[] = 'cust.direct_sale IS NULL';
+    } else {
+        $whereClauses[] = 'cust.direct_sale = ?';
+        $paramTypes .= 's';
+        $paramValues[] = $loginRegion;
+    }
+}
+
 $sql = "SELECT p.*, c1.name as category_name, c2.name as subcategory_name, cust.name as customer_name
         FROM products p
         LEFT JOIN categories c1 ON p.category_id = c1.id
         LEFT JOIN categories c2 ON p.subcategory_id = c2.id
-        LEFT JOIN customers cust ON p.customer_id = cust.id";
+        LEFT JOIN customers cust ON p.customer_id = cust.id
+        LEFT JOIN factories customer_factory ON customer_factory.id = cust.factory_id";
 
 if (!empty($whereClauses)) {
     $sql .= ' WHERE ' . implode(' AND ', $whereClauses);

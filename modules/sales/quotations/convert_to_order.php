@@ -11,6 +11,11 @@ if (!hasPermission('quotations.manage')) {
 
 // Get quotation ID
 $quotation_id = $_GET['id'] ?? 0;
+if (!canAccessQuotation($quotation_id)) {
+    $_SESSION['error'] = 'You do not have permission to convert this quotation.';
+    header('Location: quotation_list.php');
+    exit();
+}
 
 // Handle conversion to order BEFORE any output
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
@@ -32,13 +37,22 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     
     // Fetch quotation items for conversion
     $stmt = $pdo->prepare("
-        SELECT qi.*, p.type
+        SELECT qi.*, p.type, p.customer_id AS product_customer_id
         FROM quotation_items qi
         JOIN products p ON qi.product_id = p.id
         WHERE qi.quotation_id = ?
     ");
     $stmt->execute([$quotation_id]);
     $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($items as $item) {
+        if ($item['type'] !== 'final'
+            || (int)$item['product_customer_id'] !== (int)$quotation['customer_id']
+            || !canAccessProduct($item['product_id'])) {
+            $_SESSION['error'] = 'Quotation contains a product that is not available for this customer.';
+            header('Location: quotation_details.php?id=' . (int)$quotation_id);
+            exit();
+        }
+    }
     
     try {
         $pdo->beginTransaction();

@@ -9,6 +9,9 @@ if (!hasPermission('sales.orders.print_invoice')) {
 
 // Get order ID
 $order_id = $_GET['id'] ?? 0;
+if (!canAccessOrder($order_id)) {
+    die('You do not have permission to print this order.');
+}
 
 // Fetch order details
 $stmt = $pdo->prepare("

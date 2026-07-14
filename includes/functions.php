@@ -473,6 +473,183 @@ function hasPermission($permissionKey) {
     return in_array($permissionKey, $_SESSION['permissions'], true);
 }
 
+function getCurrentUserRoleSlug() {
+    if (!isLoggedIn()) return null;
+
+    if (!isset($_SESSION['role_slug'])) {
+        loadUserAccessToSession($_SESSION['user_id']);
+    }
+
+    return $_SESSION['role_slug'] ?? ($_SESSION['user_role'] ?? null);
+}
+
+function isAdminUser() {
+    return getCurrentUserRoleSlug() === 'admin';
+}
+
+function isSalesPersonUser() {
+    return in_array(getCurrentUserRoleSlug(), ['salesman', 'factory_sales', 'representative_sales'], true);
+}
+
+/**
+ * Salespeople are restricted to customers explicitly assigned to them, or
+ * inherited from the customer's factory. Admins and non-sales operational
+ * roles retain their permission-based access.
+ */
+function canAccessCustomer($customerId) {
+    global $conn;
+
+    $customerId = (int)$customerId;
+    if ($customerId <= 0 || !isLoggedIn()) return false;
+    if (!isSalesPersonUser()) return true;
+
+    $userId = (int)$_SESSION['user_id'];
+    $loginRegion = $_SESSION['login_region'] ?? 'factory';
+    $sql = "SELECT c.id
+            FROM customers c
+            LEFT JOIN factories f ON f.id = c.factory_id
+            WHERE c.id = ?
+              AND COALESCE(c.sales_person_id, f.sales_person_id) = ?
+              AND ((? = 'factory' AND c.direct_sale IS NULL) OR c.direct_sale = ?)
+            LIMIT 1";
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param('iiss', $customerId, $userId, $loginRegion, $loginRegion);
+    $stmt->execute();
+    $allowed = $stmt->get_result()->num_rows === 1;
+    $stmt->close();
+
+    return $allowed;
+}
+
+function canAccessFactory($factoryId) {
+    global $conn;
+
+    $factoryId = (int)$factoryId;
+    if ($factoryId <= 0 || !isLoggedIn()) return false;
+    if (!isSalesPersonUser()) return true;
+
+    $userId = (int)$_SESSION['user_id'];
+    $stmt = $conn->prepare("SELECT id FROM factories WHERE id = ? AND sales_person_id = ? LIMIT 1");
+    $stmt->bind_param('ii', $factoryId, $userId);
+    $stmt->execute();
+    $allowed = $stmt->get_result()->num_rows === 1;
+    $stmt->close();
+
+    return $allowed;
+}
+
+function canAccessProduct($productId) {
+    global $conn;
+
+    $productId = (int)$productId;
+    if ($productId <= 0 || !isLoggedIn()) return false;
+    if (!isSalesPersonUser()) return true;
+
+    $userId = (int)$_SESSION['user_id'];
+    $loginRegion = $_SESSION['login_region'] ?? 'factory';
+    $sql = "SELECT p.id
+            FROM products p
+            JOIN customers c ON c.id = p.customer_id
+            LEFT JOIN factories f ON f.id = c.factory_id
+            WHERE p.id = ?
+              AND p.type = 'final'
+              AND COALESCE(c.sales_person_id, f.sales_person_id) = ?
+              AND ((? = 'factory' AND c.direct_sale IS NULL) OR c.direct_sale = ?)
+            LIMIT 1";
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param('iiss', $productId, $userId, $loginRegion, $loginRegion);
+    $stmt->execute();
+    $allowed = $stmt->get_result()->num_rows === 1;
+    $stmt->close();
+
+    return $allowed;
+}
+
+function canAccessOrder($orderId) {
+    global $conn;
+
+    $orderId = (int)$orderId;
+    if ($orderId <= 0 || !isLoggedIn()) return false;
+    if (!isSalesPersonUser()) return true;
+
+    $userId = (int)$_SESSION['user_id'];
+    $loginRegion = $_SESSION['login_region'] ?? 'factory';
+    $sql = "SELECT o.id
+            FROM orders o
+            JOIN customers c ON c.id = o.customer_id
+            LEFT JOIN factories f ON f.id = c.factory_id
+            WHERE o.id = ?
+              AND COALESCE(c.sales_person_id, f.sales_person_id) = ?
+              AND ((? = 'factory' AND c.direct_sale IS NULL) OR c.direct_sale = ?)
+            LIMIT 1";
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param('iiss', $orderId, $userId, $loginRegion, $loginRegion);
+    $stmt->execute();
+    $allowed = $stmt->get_result()->num_rows === 1;
+    $stmt->close();
+
+    return $allowed;
+}
+
+function canAccessQuotation($quotationId) {
+    global $conn;
+
+    $quotationId = (int)$quotationId;
+    if ($quotationId <= 0 || !isLoggedIn()) return false;
+    if (!isSalesPersonUser()) return true;
+
+    $userId = (int)$_SESSION['user_id'];
+    $loginRegion = $_SESSION['login_region'] ?? 'factory';
+    $sql = "SELECT q.id
+            FROM quotations q
+            JOIN customers c ON c.id = q.customer_id
+            LEFT JOIN factories f ON f.id = c.factory_id
+            WHERE q.id = ?
+              AND COALESCE(c.sales_person_id, f.sales_person_id) = ?
+              AND ((? = 'factory' AND c.direct_sale IS NULL) OR c.direct_sale = ?)
+            LIMIT 1";
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param('iiss', $quotationId, $userId, $loginRegion, $loginRegion);
+    $stmt->execute();
+    $allowed = $stmt->get_result()->num_rows === 1;
+    $stmt->close();
+
+    return $allowed;
+}
+
+function getActiveSalesPersons() {
+    global $conn;
+
+    $sql = "SELECT u.id, u.name, u.region, COALESCE(r.slug, u.role) AS role_slug
+            FROM users u
+            LEFT JOIN roles r ON r.id = u.role_id
+            WHERE u.is_active = 1
+              AND COALESCE(r.slug, u.role) IN ('salesman', 'factory_sales', 'representative_sales')
+            ORDER BY u.name";
+    $result = $conn->query($sql);
+    return $result ? $result->fetch_all(MYSQLI_ASSOC) : [];
+}
+
+function isValidSalesPersonId($userId) {
+    global $conn;
+
+    $userId = (int)$userId;
+    if ($userId <= 0) return false;
+
+    $stmt = $conn->prepare("SELECT u.id
+                            FROM users u
+                            LEFT JOIN roles r ON r.id = u.role_id
+                            WHERE u.id = ? AND u.is_active = 1
+                              AND COALESCE(r.slug, u.role) IN ('salesman', 'factory_sales', 'representative_sales')
+                            LIMIT 1");
+    $stmt->bind_param('i', $userId);
+    $stmt->execute();
+    $valid = $stmt->get_result()->num_rows === 1;
+    $stmt->close();
+
+    return $valid;
+}
+
 function hasExplicitPermission($permissionKey) {
     if (!isLoggedIn()) return false;
 

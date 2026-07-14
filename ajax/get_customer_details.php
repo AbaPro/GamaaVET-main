@@ -24,6 +24,12 @@ if ($customer_id <= 0) {
     echo json_encode(['success' => false, 'message' => 'Invalid customer ID', 'currentId' => $customer_id]); exit;
 }
 
+if (!canAccessCustomer($customer_id)) {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'message' => 'You do not have access to this customer']);
+    exit;
+}
+
 // (optional) verify exists
 $chk = $conn->prepare("SELECT id FROM customers WHERE id=?");
 $chk->bind_param("i", $customer_id);
@@ -66,6 +72,5 @@ echo json_encode([
     'contacts' => $contacts
 ], JSON_UNESCAPED_UNICODE);
 exit;
-
 
 

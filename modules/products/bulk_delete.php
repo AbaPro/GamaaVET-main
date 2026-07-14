@@ -19,6 +19,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['product_ids'])) {
     foreach ($product_ids as $id) {
         $id = (int)$id;
 
+        if (!canAccessProduct($id)) {
+            $errors[] = "You do not have access to product ID $id.";
+            $skipped_count++;
+            continue;
+        }
+
         try {
             // Fetch product info to show SKU/Name in errors
             $info_stmt = $conn->prepare("SELECT name, sku FROM products WHERE id = ?");

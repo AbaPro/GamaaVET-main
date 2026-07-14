@@ -18,6 +18,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['order_ids'])) {
     
     foreach ($order_ids as $id) {
         $id = (int)$id;
+
+        if (!canAccessOrder($id)) {
+            $errors[] = "You do not have access to order ID $id.";
+            $skipped_count++;
+            continue;
+        }
         
         try {
             // Check for payments

@@ -12,6 +12,10 @@ if ($customerId <= 0) {
     setAlert('danger', 'Invalid customer ID.');
     redirect('index.php');
 }
+if (!canAccessCustomer($customerId)) {
+    setAlert('danger', 'You do not have permission to access this customer.');
+    redirect('index.php');
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? 'update';

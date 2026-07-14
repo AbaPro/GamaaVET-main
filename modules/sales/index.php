@@ -27,6 +27,16 @@ require_once '../../includes/header.php';
 // Get statistics for dashboard
 $today = date('Y-m-d');
 $month_start = date('Y-m-01');
+$salesScopeJoins = '';
+$salesScopeCondition = '';
+if (isSalesPersonUser()) {
+    $loginRegion = $_SESSION['login_region'] ?? 'factory';
+    $salesScopeJoins = ' JOIN customers scope_customer ON scope_customer.id = o.customer_id LEFT JOIN factories scope_factory ON scope_factory.id = scope_customer.factory_id ';
+    $salesScopeCondition = ' AND COALESCE(scope_customer.sales_person_id, scope_factory.sales_person_id) = ' . (int)$_SESSION['user_id'];
+    $salesScopeCondition .= $loginRegion === 'factory'
+        ? ' AND scope_customer.direct_sale IS NULL'
+        : " AND scope_customer.direct_sale = '" . $conn->real_escape_string($loginRegion) . "'";
+}
 
 $stats = [
     'today_sales' => 0,
@@ -38,7 +48,7 @@ $stats = [
 /* Use $conn (MySQLi) instead of $pdo (PDO) */
 
 // Today's sales grouped by currency
-$stmt = $conn->prepare("SELECT currency, SUM(total_amount) as total FROM orders WHERE DATE(order_date) = ? GROUP BY currency");
+$stmt = $conn->prepare("SELECT o.currency, SUM(o.total_amount) as total FROM orders o $salesScopeJoins WHERE DATE(o.order_date) = ? $salesScopeCondition GROUP BY o.currency");
 $stmt->bind_param("s", $today);
 $stmt->execute();
 $result = $stmt->get_result();
@@ -49,7 +59,7 @@ while ($row = $result->fetch_assoc()) {
 $stmt->close();
 
 // Month's sales grouped by currency
-$stmt = $conn->prepare("SELECT currency, SUM(total_amount) as total FROM orders WHERE DATE(order_date) BETWEEN ? AND ? GROUP BY currency");
+$stmt = $conn->prepare("SELECT o.currency, SUM(o.total_amount) as total FROM orders o $salesScopeJoins WHERE DATE(o.order_date) BETWEEN ? AND ? $salesScopeCondition GROUP BY o.currency");
 $stmt->bind_param("ss", $month_start, $today);
 $stmt->execute();
 $result = $stmt->get_result();
@@ -60,7 +70,7 @@ while ($row = $result->fetch_assoc()) {
 $stmt->close();
 
 // Pending orders
-$stmt = $conn->prepare("SELECT COUNT(*) FROM orders WHERE status IN ('new', 'in-production', 'in-packing', 'delivering')");
+$stmt = $conn->prepare("SELECT COUNT(*) FROM orders o $salesScopeJoins WHERE o.status IN ('new', 'in-production', 'in-packing', 'delivering') $salesScopeCondition");
 $stmt->execute();
 $stmt->bind_result($pending_orders);
 $stmt->fetch();
@@ -68,7 +78,7 @@ $stats['pending_orders'] = $pending_orders ?: 0;
 $stmt->close();
 
 // Overall orders
-$stmt = $conn->prepare("SELECT COUNT(*) FROM orders");
+$stmt = $conn->prepare("SELECT COUNT(*) FROM orders o $salesScopeJoins WHERE 1=1 $salesScopeCondition");
 $stmt->execute();
 $stmt->bind_result($overall_orders);
 $stmt->fetch();
@@ -173,6 +183,8 @@ $stmt->close();
     SELECT o.id, o.internal_id, o.order_date, o.total_amount, o.paid_amount, o.status, c.name AS customer_name 
     FROM orders o
     JOIN customers c ON o.customer_id = c.id
+    $salesScopeJoins
+    WHERE 1=1 $salesScopeCondition
     ORDER BY o.order_date DESC 
     LIMIT 5
 ";

@@ -42,6 +42,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $category_id = (int)$_POST['category_id'];
         $subcategory_id = !empty($_POST['subcategory_id']) ? (int)$_POST['subcategory_id'] : NULL;
         $customer_id = isset($_POST['customer_id']) && $_POST['customer_id'] !== '' ? (int)$_POST['customer_id'] : NULL;
+        if (isSalesPersonUser()) {
+            $type = 'final';
+            if ($customer_id === NULL || !canAccessCustomer($customer_id)) {
+                throw new Exception('A final product must be linked to one of your assigned customers.');
+            }
+        }
         $unit_price = isset($_POST['unit_price']) && $_POST['unit_price'] !== '' ? (float)$_POST['unit_price'] : NULL;
         $cost_price = !empty($_POST['cost_price']) ? (float)$_POST['cost_price'] : NULL;
         $min_stock_level = !empty($_POST['min_stock_level']) ? (int)$_POST['min_stock_level'] : 0;

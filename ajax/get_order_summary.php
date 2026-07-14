@@ -17,6 +17,11 @@ if ($orderId <= 0) {
     echo json_encode(['success' => false, 'message' => 'Invalid order reference.']);
     exit;
 }
+if (!canAccessOrder($orderId)) {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'message' => 'You do not have access to this order.']);
+    exit;
+}
 
 $orderStmt = $pdo->prepare("
     SELECT o.id, o.internal_id, o.order_date, o.status,

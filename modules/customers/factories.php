@@ -7,6 +7,10 @@ if (!hasPermission('customers.factories.manage')) {
     redirect('../../dashboard.php');
 }
 
+$isAdmin = isAdminUser();
+$isSalesPerson = isSalesPersonUser();
+$salesPersons = $isAdmin ? getActiveSalesPersons() : [];
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? 'create';
     $name = sanitize($_POST['name']);
@@ -14,21 +18,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $contact_phone = !empty($_POST['contact_phone']) ? sanitize($_POST['contact_phone']) : null;
     $whatsapp_number = !empty($_POST['whatsapp_number']) ? sanitize($_POST['whatsapp_number']) : null;
     $notes = !empty($_POST['notes']) ? sanitize($_POST['notes']) : null;
+    $salesPersonId = null;
+    if ($isAdmin) {
+        $salesPersonId = !empty($_POST['sales_person_id']) ? (int)$_POST['sales_person_id'] : null;
+        if ($salesPersonId !== null && !isValidSalesPersonId($salesPersonId)) {
+            setAlert('danger', 'Please select a valid active sales person.');
+            redirect('factories.php');
+        }
+    } elseif ($isSalesPerson) {
+        $salesPersonId = (int)$_SESSION['user_id'];
+    }
 
     if ($action === 'update') {
         $id = (int)$_POST['id'];
-        $stmt = $conn->prepare("UPDATE factories SET name=?, contact_person=?, contact_phone=?, whatsapp_number=?, notes=? WHERE id=?");
-        $stmt->bind_param("sssssi", $name, $contact_person, $contact_phone, $whatsapp_number, $notes, $id);
-        if ($stmt->execute()) {
-            setAlert('success', 'Factory updated.');
-            logActivity('Updated factory', ['id' => $id]);
-        } else {
-            setAlert('danger', 'Failed to update factory: ' . $conn->error);
+        if (!canAccessFactory($id)) {
+            setAlert('danger', 'You do not have permission to edit this factory.');
+            redirect('factories.php');
         }
-        $stmt->close();
+
+        $conn->begin_transaction();
+        try {
+            if ($isAdmin || $isSalesPerson) {
+                $stmt = $conn->prepare("UPDATE factories SET name=?, sales_person_id=?, contact_person=?, contact_phone=?, whatsapp_number=?, notes=? WHERE id=?");
+                $stmt->bind_param("sissssi", $name, $salesPersonId, $contact_person, $contact_phone, $whatsapp_number, $notes, $id);
+            } else {
+                $stmt = $conn->prepare("UPDATE factories SET name=?, contact_person=?, contact_phone=?, whatsapp_number=?, notes=? WHERE id=?");
+                $stmt->bind_param("sssssi", $name, $contact_person, $contact_phone, $whatsapp_number, $notes, $id);
+            }
+            if (!$stmt->execute()) {
+                throw new Exception($stmt->error);
+            }
+            $stmt->close();
+
+            if ($isAdmin && !empty($_POST['reassign_customers'])) {
+                $customerStmt = $conn->prepare("UPDATE customers SET sales_person_id = ? WHERE factory_id = ?");
+                $customerStmt->bind_param('ii', $salesPersonId, $id);
+                if (!$customerStmt->execute()) {
+                    throw new Exception($customerStmt->error);
+                }
+                $customerStmt->close();
+            }
+
+            $conn->commit();
+            setAlert('success', 'Factory updated.');
+            logActivity('Updated factory assignment', ['id' => $id, 'sales_person_id' => $salesPersonId]);
+        } catch (Exception $e) {
+            $conn->rollback();
+            setAlert('danger', 'Failed to update factory: ' . $e->getMessage());
+        }
     } else {
-        $stmt = $conn->prepare("INSERT INTO factories (name, contact_person, contact_phone, whatsapp_number, notes) VALUES (?,?,?,?,?)");
-        $stmt->bind_param("sssss", $name, $contact_person, $contact_phone, $whatsapp_number, $notes);
+        $stmt = $conn->prepare("INSERT INTO factories (name, sales_person_id, contact_person, contact_phone, whatsapp_number, notes) VALUES (?,?,?,?,?,?)");
+        $stmt->bind_param("sissss", $name, $salesPersonId, $contact_person, $contact_phone, $whatsapp_number, $notes);
         if ($stmt->execute()) {
             setAlert('success', 'Factory added.');
             logActivity('Created factory', ['id' => $stmt->insert_id]);
@@ -43,6 +83,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 if (isset($_GET['delete'])) {
     $id = (int)$_GET['delete'];
+    if (!canAccessFactory($id)) {
+        setAlert('danger', 'You do not have permission to delete this factory.');
+        redirect('factories.php');
+    }
     $stmt = $conn->prepare("DELETE FROM factories WHERE id=?");
     $stmt->bind_param("i", $id);
     if ($stmt->execute()) {
@@ -55,7 +99,13 @@ if (isset($_GET['delete'])) {
     redirect('factories.php');
 }
 
-$factories = $conn->query("SELECT * FROM factories ORDER BY name");
+$factoriesSql = "SELECT f.*, u.name AS sales_person_name
+                 FROM factories f
+                 LEFT JOIN users u ON u.id = f.sales_person_id";
+if ($isSalesPerson) {
+    $factoriesSql .= " WHERE f.sales_person_id = " . (int)$_SESSION['user_id'];
+}
+$factories = $conn->query($factoriesSql . " ORDER BY f.name");
 $page_title = 'Factories';
 require_once '../../includes/header.php';
 ?>
@@ -73,6 +123,7 @@ require_once '../../includes/header.php';
             <thead>
             <tr>
                 <th>Name</th>
+                <th>Sales Person</th>
                 <th>Contact</th>
                 <th>Phone</th>
                 <th>WhatsApp</th>
@@ -85,6 +136,7 @@ require_once '../../includes/header.php';
                 <?php while ($factory = $factories->fetch_assoc()): ?>
                     <tr>
                         <td><?= e($factory['name']); ?></td>
+                        <td><?= !empty($factory['sales_person_name']) ? e($factory['sales_person_name']) : '<span class="text-muted">Unassigned</span>'; ?></td>
                         <td><?= e($factory['contact_person']); ?></td>
                         <td><?= e($factory['contact_phone']); ?></td>
                         <td><?= e($factory['whatsapp_number']); ?></td>
@@ -93,6 +145,7 @@ require_once '../../includes/header.php';
                             <button class="btn btn-sm btn-outline-primary edit-factory"
                                     data-id="<?= $factory['id']; ?>"
                                     data-name="<?= e($factory['name']); ?>"
+                                    data-sales-person-id="<?= (int)($factory['sales_person_id'] ?? 0); ?>"
                                     data-contact="<?= e($factory['contact_person']); ?>"
                                     data-phone="<?= e($factory['contact_phone']); ?>"
                                     data-whatsapp="<?= e($factory['whatsapp_number']); ?>"
@@ -108,7 +161,7 @@ require_once '../../includes/header.php';
                 <?php endwhile; ?>
             <?php else: ?>
                 <tr>
-                    <td colspan="6" class="text-center text-muted">No factories recorded.</td>
+                    <td colspan="7" class="text-center text-muted">No factories recorded.</td>
                 </tr>
             <?php endif; ?>
             </tbody>
@@ -132,6 +185,21 @@ require_once '../../includes/header.php';
                         <label class="form-label">Name*</label>
                         <input type="text" class="form-control" name="name" id="factory_name" required>
                     </div>
+                    <?php if ($isAdmin): ?>
+                    <div class="mb-3">
+                        <label class="form-label">Assigned Sales Person</label>
+                        <select class="form-select" name="sales_person_id" id="factory_sales_person_id">
+                            <option value="">-- Unassigned --</option>
+                            <?php foreach ($salesPersons as $salesPerson): ?>
+                                <option value="<?= (int)$salesPerson['id']; ?>"><?= e($salesPerson['name']); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="form-check mb-3" id="factory_reassign_customers_wrap" style="display:none;">
+                        <input class="form-check-input" type="checkbox" name="reassign_customers" value="1" id="factory_reassign_customers" checked>
+                        <label class="form-check-label" for="factory_reassign_customers">Move all customers linked to this factory to the selected sales person</label>
+                    </div>
+                    <?php endif; ?>
                     <div class="mb-3">
                         <label class="form-label">Contact Person</label>
                         <input type="text" class="form-control" name="contact_person" id="factory_contact_person">
@@ -165,6 +233,10 @@ document.addEventListener('DOMContentLoaded', function () {
             document.getElementById('factory_action').value = 'update';
             document.getElementById('factory_id').value = this.dataset.id;
             document.getElementById('factory_name').value = this.dataset.name;
+            var salesPersonSelect = document.getElementById('factory_sales_person_id');
+            if (salesPersonSelect) salesPersonSelect.value = this.dataset.salesPersonId || '';
+            var reassignWrap = document.getElementById('factory_reassign_customers_wrap');
+            if (reassignWrap) reassignWrap.style.display = '';
             document.getElementById('factory_contact_person').value = this.dataset.contact || '';
             document.getElementById('factory_contact_phone').value = this.dataset.phone || '';
             document.getElementById('factory_whatsapp_number').value = this.dataset.whatsapp || '';
@@ -177,6 +249,8 @@ document.addEventListener('DOMContentLoaded', function () {
     document.getElementById('factoryModal').addEventListener('hidden.bs.modal', function () {
         document.getElementById('factory_action').value = 'create';
         document.getElementById('factoryForm').reset();
+        var reassignWrap = document.getElementById('factory_reassign_customers_wrap');
+        if (reassignWrap) reassignWrap.style.display = 'none';
     });
 });
 </script>

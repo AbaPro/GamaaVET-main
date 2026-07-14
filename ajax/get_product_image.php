@@ -15,6 +15,11 @@ if (!isset($_GET['product_id']) || !is_numeric($_GET['product_id'])) {
 }
 
 $product_id = sanitize($_GET['product_id']);
+if (!canAccessProduct($product_id)) {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'message' => 'You do not have access to this product']);
+    exit;
+}
 
 // Get product image
 $sql = "SELECT image FROM products WHERE id = ?";

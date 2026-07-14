@@ -19,6 +19,11 @@ if ($customer_id <= 0) {
     echo json_encode(['success' => false, 'message' => 'Customer id is required']);
     exit;
 }
+if (!canAccessCustomer($customer_id)) {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'message' => 'You do not have access to this customer']);
+    exit;
+}
 
 $stmt = $conn->prepare("SELECT id, name, phone, whatsapp_phone, portal_token, portal_token_expires, 
                                portal_password_hint, portal_password_hash

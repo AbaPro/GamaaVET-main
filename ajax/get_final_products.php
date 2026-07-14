@@ -15,6 +15,16 @@ if ($providerId <= 0) {
     exit;
 }
 
+if (!canAccessCustomer($providerId)) {
+    http_response_code(403);
+    echo json_encode([
+        'success' => false,
+        'message' => 'You do not have access to this customer',
+        'products' => [],
+    ]);
+    exit;
+}
+
 // Fetch products of type 'final' that belong to this customer
 $stmt = $conn->prepare("
     SELECT id, name, sku 

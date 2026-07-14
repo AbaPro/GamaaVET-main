@@ -16,6 +16,10 @@ if (!isset($_GET['id']) || !is_numeric($_GET['id'])) {
 }
 
 $customer_id = sanitize($_GET['id']);
+if (!canAccessCustomer($customer_id)) {
+    setAlert('danger', 'You do not have permission to access this customer.');
+    redirect('index.php');
+}
 $page_title = 'Customer Wallet';
 
 // Get customer info for header

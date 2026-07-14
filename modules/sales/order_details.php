@@ -11,6 +11,11 @@ if (!hasPermission('sales.orders.view')) {
 
 // Get order ID
 $order_id = $_GET['id'] ?? 0;
+if (!canAccessOrder($order_id)) {
+    $_SESSION['error'] = 'You do not have permission to view this order.';
+    header('Location: order_list.php');
+    exit();
+}
 
 // Fetch order details
 $stmt = $pdo->prepare("

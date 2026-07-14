@@ -1,7 +1,13 @@
 <?php
 // modules/products/view.php
 // require_once __DIR__ . '/../../includes/config.php';
+require_once __DIR__ . '/../../includes/auth.php';
 require_once __DIR__ . '/../../includes/functions.php';
+
+if (!hasPermission('products.view')) {
+    setAlert('danger', 'You do not have permission to access this page.');
+    redirect('../../dashboard.php');
+}
 
 // Check if product ID is provided
 if (!isset($_GET['id'])) {
@@ -10,6 +16,10 @@ if (!isset($_GET['id'])) {
 }
 
 $product_id = intval($_GET['id']);
+if (!canAccessProduct($product_id)) {
+    setAlert('danger', 'You do not have permission to view this product.');
+    redirect('index.php?type=final');
+}
 
 // Fetch product details
 $product = getProductById($product_id);
@@ -38,7 +48,7 @@ $inventoryQuantities = getInventoryQuantitiesForProduct($product_id);
 
 // Fetch product components if this is a final product
 $components = [];
-if ($product['type'] == 'final') {
+if ($product['type'] == 'final' && !isSalesPersonUser()) {
     $components = getProductComponents($product_id);
 }
 

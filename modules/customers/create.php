@@ -21,6 +21,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $wallet_balance = !empty($_POST['wallet_balance']) ? sanitize($_POST['wallet_balance']) : 0;
     $region = !empty($_POST['region']) ? sanitize($_POST['region']) : NULL;
     $direct_sale = !empty($_POST['direct_sale']) ? sanitize($_POST['direct_sale']) : NULL;
+
+    if (isSalesPersonUser()) {
+        $direct_sale = ($_SESSION['login_region'] ?? 'factory') === 'factory'
+            ? NULL
+            : sanitize($_SESSION['login_region']);
+        if ($factory_id !== NULL && !canAccessFactory($factory_id)) {
+            setAlert('danger', 'You can only link customers to a factory assigned to you.');
+            redirect('index.php');
+        }
+        $sales_person_id = (int)$_SESSION['user_id'];
+    } elseif (isAdminUser()) {
+        $sales_person_id = !empty($_POST['sales_person_id']) ? (int)$_POST['sales_person_id'] : NULL;
+        if ($sales_person_id !== NULL && !isValidSalesPersonId($sales_person_id)) {
+            setAlert('danger', 'Please select a valid active sales person.');
+            redirect('index.php');
+        }
+    } else {
+        $sales_person_id = NULL;
+    }
     
     // Primary contact info
     $contact_name = sanitize($_POST['contact_name']);
@@ -43,14 +62,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         // Insert customer
         $customer_sql = "INSERT INTO customers 
-                         (name, type, factory_id, email, phone, whatsapp_phone, tax_number, wallet_balance, region, direct_sale) 
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                         (name, type, factory_id, sales_person_id, email, phone, whatsapp_phone, tax_number, wallet_balance, region, direct_sale)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         $customer_stmt = $conn->prepare($customer_sql);
         $customer_stmt->bind_param(
-            "siisssssss",
+            "siiissssdss",
             $name,
             $type,
             $factory_id,
+            $sales_person_id,
             $email,
             $phone,
             $whatsapp_phone,

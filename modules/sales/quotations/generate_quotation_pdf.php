@@ -9,6 +9,9 @@ if (!hasPermission('quotations.manage')) {
 
 // Get quotation ID
 $quotation_id = $_GET['id'] ?? 0;
+if (!canAccessQuotation($quotation_id)) {
+    die('You do not have permission to print this quotation.');
+}
 
 // Fetch quotation details
 $stmt = $pdo->prepare("

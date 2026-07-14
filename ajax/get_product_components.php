@@ -8,6 +8,11 @@ if (!hasPermission('products.view')) {
     echo json_encode(['success' => false, 'message' => 'Unauthorized']);
     exit;
 }
+if (isSalesPersonUser()) {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'message' => 'Component details are not available to sales users']);
+    exit;
+}
 
 if (!isset($_GET['product_id']) || !is_numeric($_GET['product_id'])) {
     echo json_encode(['success' => false, 'message' => 'Invalid product ID']);
@@ -15,6 +20,11 @@ if (!isset($_GET['product_id']) || !is_numeric($_GET['product_id'])) {
 }
 
 $product_id = sanitize($_GET['product_id']);
+if (!canAccessProduct($product_id)) {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'message' => 'You do not have access to this product']);
+    exit;
+}
 $inventory_id = isset($_GET['inventory_id']) && is_numeric($_GET['inventory_id']) ? sanitize($_GET['inventory_id']) : null;
 
 // Get product components

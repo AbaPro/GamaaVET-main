@@ -37,8 +37,21 @@ $query = "SELECT o.id, o.internal_id, o.order_date, o.total_amount, o.paid_amoun
                  o.status, o.currency, c.name AS customer_name
           FROM orders o
           JOIN customers c ON o.customer_id = c.id
+          LEFT JOIN factories f ON f.id = c.factory_id
           WHERE 1=1";
 $params = [];
+
+if (isSalesPersonUser()) {
+    $query .= " AND COALESCE(c.sales_person_id, f.sales_person_id) = ?";
+    $params[] = (int)$_SESSION['user_id'];
+    $loginRegion = $_SESSION['login_region'] ?? 'factory';
+    if ($loginRegion === 'factory') {
+        $query .= " AND c.direct_sale IS NULL";
+    } else {
+        $query .= " AND c.direct_sale = ?";
+        $params[] = $loginRegion;
+    }
+}
 
 if (!empty($status)) {
     $query .= " AND o.status = ?";
@@ -75,8 +88,24 @@ $stmt = $pdo->prepare($query);
 $stmt->execute($params);
 $orders = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Get customers for filter dropdown
-$customers = $pdo->query("SELECT id, name FROM customers ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+// Get only customers visible in the current assignment scope.
+$customerQuery = "SELECT c.id, c.name FROM customers c LEFT JOIN factories f ON f.id = c.factory_id WHERE 1=1";
+$customerParams = [];
+if (isSalesPersonUser()) {
+    $customerQuery .= " AND COALESCE(c.sales_person_id, f.sales_person_id) = ?";
+    $customerParams[] = (int)$_SESSION['user_id'];
+    $loginRegion = $_SESSION['login_region'] ?? 'factory';
+    if ($loginRegion === 'factory') {
+        $customerQuery .= " AND c.direct_sale IS NULL";
+    } else {
+        $customerQuery .= " AND c.direct_sale = ?";
+        $customerParams[] = $loginRegion;
+    }
+}
+$customerQuery .= " ORDER BY c.name";
+$customerStmt = $pdo->prepare($customerQuery);
+$customerStmt->execute($customerParams);
+$customers = $customerStmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Check if user has permission to view prices
 $canViewPrices = hasPermission('sales.orders.price.view');

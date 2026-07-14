@@ -13,6 +13,10 @@ if (!isset($_GET['id']) || !is_numeric($_GET['id'])) {
 }
 
 $customer_id = sanitize($_GET['id']);
+if (!canAccessCustomer($customer_id)) {
+    setAlert('danger', 'You do not have permission to view this customer.');
+    redirect('index.php');
+}
 $page_title = 'Customer Details';
 $canViewPhoneNumbers = hasPermission('contacts.phone.view');
 $canViewCustomerWallet = hasPermission('customers.wallet.view') || hasPermission('customers.wallet') || hasPermission('finance.customer_wallet.view');
@@ -77,7 +81,7 @@ $customer_products_sql = "SELECT p.id, p.name, p.sku, p.type,
                           LEFT JOIN inventory_products ip ON p.id = ip.product_id
                           LEFT JOIN inventories i ON ip.inventory_id = i.id
                           LEFT JOIN locations l ON i.location_id = l.id
-                          WHERE p.customer_id = ?
+                          WHERE p.customer_id = ?" . (isSalesPersonUser() ? " AND p.type = 'final'" : "") . "
                           ORDER BY p.name ASC, i.name ASC";
 $cp_stmt = $conn->prepare($customer_products_sql);
 $cp_stmt->bind_param("i", $customer_id);
@@ -85,7 +89,11 @@ $cp_stmt->execute();
 $customer_products_result = $cp_stmt->get_result();
 
 $factories_data = [];
-$factories_result = $conn->query("SELECT id, name FROM factories ORDER BY name");
+$factoriesSql = "SELECT id, name FROM factories";
+if (isSalesPersonUser()) {
+    $factoriesSql .= " WHERE sales_person_id = " . (int)$_SESSION['user_id'];
+}
+$factories_result = $conn->query($factoriesSql . " ORDER BY name");
 if ($factories_result) {
     while ($factory = $factories_result->fetch_assoc()) {
         $factories_data[] = $factory;

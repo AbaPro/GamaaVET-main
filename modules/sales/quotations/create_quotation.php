@@ -13,6 +13,37 @@ if (!hasPermission('quotations.manage')) {
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     try {
         $pdo->beginTransaction();
+
+        $customerId = !empty($_POST['customer_id']) ? (int)$_POST['customer_id'] : 0;
+        $contactId = !empty($_POST['contact_id']) ? (int)$_POST['contact_id'] : 0;
+        $rawItems = $_POST['items'] ?? [];
+        if ($customerId <= 0 || !canAccessCustomer($customerId)) {
+            throw new Exception('Please select a customer assigned to you.');
+        }
+        $contactStmt = $pdo->prepare("SELECT id FROM customer_contacts WHERE id = ? AND customer_id = ?");
+        $contactStmt->execute([$contactId, $customerId]);
+        if (!$contactStmt->fetchColumn()) {
+            throw new Exception('Please select a valid contact for this customer.');
+        }
+
+        $validItems = [];
+        $total_amount = 0;
+        $productStmt = $pdo->prepare("SELECT id FROM products WHERE id = ? AND customer_id = ? AND type = 'final'");
+        foreach ($rawItems as $item) {
+            $productId = !empty($item['product_id']) ? (int)$item['product_id'] : 0;
+            $quantity = !empty($item['quantity']) ? (int)$item['quantity'] : 0;
+            $price = isset($item['price']) ? max(0, (float)$item['price']) : 0;
+            if ($productId <= 0 || $quantity <= 0) continue;
+            $productStmt->execute([$productId, $customerId]);
+            if (!$productStmt->fetchColumn() || !canAccessProduct($productId)) {
+                throw new Exception('One or more selected products do not belong to this customer or are not available to you.');
+            }
+            $validItems[] = ['product_id' => $productId, 'quantity' => $quantity, 'price' => $price];
+            $total_amount += $quantity * $price;
+        }
+        if (empty($validItems)) {
+            throw new Exception('Please select at least one valid final product.');
+        }
         
         // Insert quotation
         $stmt = $pdo->prepare("
@@ -22,13 +53,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ");
         
-        $total_amount = array_sum(array_map(function($item) {
-            return $item['quantity'] * $item['price'];
-        }, $_POST['items']));
-        
         $stmt->execute([
-            $_POST['customer_id'],
-            $_POST['contact_id'],
+            $customerId,
+            $contactId,
             $_POST['quotation_date'],
             $_POST['expiry_date'],
             'draft',
@@ -46,17 +73,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             ) VALUES (?, ?, ?, ?, ?)
         ");
         
-        foreach ($_POST['items'] as $item) {
-            if ($item['product_id'] && $item['quantity'] > 0) {
-                $total_price = $item['quantity'] * $item['price'];
-                $stmt->execute([
-                    $quotation_id,
-                    $item['product_id'],
-                    $item['quantity'],
-                    $item['price'],
-                    $total_price
-                ]);
-            }
+        foreach ($validItems as $item) {
+            $total_price = $item['quantity'] * $item['price'];
+            $stmt->execute([
+                $quotation_id,
+                $item['product_id'],
+                $item['quantity'],
+                $item['price'],
+                $total_price
+            ]);
         }
         
         // Update status if submitted (not draft)
@@ -70,23 +95,46 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $pdo->commit();
         header("Location: quotation_details.php?id=" . $quotation_id);
         exit();
-    } catch (PDOException $e) {
-        $pdo->rollBack();
+    } catch (Exception $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
         $_SESSION['error'] = "Error creating quotation: " . $e->getMessage();
     }
 }
 
-// Get customers for dropdown
-$customers = $pdo->query("SELECT id, name FROM customers ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+// Get customers for the selected channel and individual assignment.
+$loginRegion = $_SESSION['login_region'] ?? 'factory';
+$customerSql = "SELECT c.id, c.name FROM customers c LEFT JOIN factories f ON f.id = c.factory_id WHERE "
+    . ($loginRegion === 'factory' ? "c.direct_sale IS NULL" : "c.direct_sale = ?");
+$customerParams = $loginRegion === 'factory' ? [] : [$loginRegion];
+if (isSalesPersonUser()) {
+    $customerSql .= " AND COALESCE(c.sales_person_id, f.sales_person_id) = ?";
+    $customerParams[] = (int)$_SESSION['user_id'];
+}
+$customerSql .= " ORDER BY c.name";
+$customerStmt = $pdo->prepare($customerSql);
+$customerStmt->execute($customerParams);
+$customers = $customerStmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Get products for dropdown
-$products = $pdo->query("
-    SELECT p.id, p.name, p.sku, p.unit_price, c.name as category 
+$productSql = "
+    SELECT p.id, p.name, p.sku, p.unit_price, p.customer_id, c.name as category
     FROM products p
     JOIN categories c ON p.category_id = c.id
+    LEFT JOIN customers customer ON customer.id = p.customer_id
+    LEFT JOIN factories customer_factory ON customer_factory.id = customer.factory_id
     WHERE p.type = 'final'
-    ORDER BY p.name
-")->fetchAll(PDO::FETCH_ASSOC);
+";
+$productParams = [];
+if (isSalesPersonUser()) {
+    $productSql .= " AND COALESCE(customer.sales_person_id, customer_factory.sales_person_id) = ?";
+    $productParams[] = (int)$_SESSION['user_id'];
+    $productSql .= $loginRegion === 'factory' ? " AND customer.direct_sale IS NULL" : " AND customer.direct_sale = ?";
+    if ($loginRegion !== 'factory') $productParams[] = $loginRegion;
+}
+$productSql .= " ORDER BY p.name";
+$productStmt = $pdo->prepare($productSql);
+$productStmt->execute($productParams);
+$products = $productStmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Set default dates
 $quotation_date = date('Y-m-d');
@@ -212,7 +260,7 @@ $expiry_date = date('Y-m-d', strtotime('+30 days'));
                     </thead>
                     <tbody>
                         <?php foreach ($products as $product) : ?>
-                            <tr>
+                            <tr data-customer-id="<?= (int)$product['customer_id']; ?>">
                                 <td><?= htmlspecialchars($product['sku']) ?></td>
                                 <td><?= htmlspecialchars($product['name']) ?></td>
                                 <td><?= htmlspecialchars($product['category']) ?></td>
@@ -241,6 +289,12 @@ $(document).ready(function() {
             // Load contacts when customer changes
     $("#customer_id").on('change', function() {
         const customerId = $(this).val();
+        $('#itemsTable tbody').empty();
+        updateQuotationTotal();
+        $('#productsTable tbody tr').each(function() {
+            $(this).toggle(!customerId || String($(this).data('customerId')) === String(customerId));
+        });
+        if (productsTable) productsTable.rows().invalidate().draw();
         if (customerId) {
             $("#contact_id").prop('disabled', false).html('<option>Loading...</option>');
             $.getJSON('../../../ajax/get_customer_details.php', { customer_id: customerId })
@@ -372,7 +426,6 @@ $(document).ready(function() {
 </script>
 
 <?php require_once '../../../includes/footer.php'; ?>
-
 
 
 

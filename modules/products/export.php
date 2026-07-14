@@ -11,6 +11,9 @@ $filterType = null;
 if (isset($_GET['type']) && in_array($_GET['type'], ['material', 'final'], true)) {
     $filterType = $_GET['type'];
 }
+if (isSalesPersonUser()) {
+    $filterType = 'final';
+}
 
 $customerFilter = null;
 if (isset($_GET['customer_id']) && is_numeric($_GET['customer_id']) && (int)$_GET['customer_id'] > 0) {
@@ -70,12 +73,27 @@ if ($searchFilter !== null) {
     $paramValues[] = $likeSearch;
 }
 
+if (isSalesPersonUser()) {
+    $whereClauses[] = 'COALESCE(cust.sales_person_id, customer_factory.sales_person_id) = ?';
+    $paramTypes .= 'i';
+    $paramValues[] = (int)$_SESSION['user_id'];
+    $loginRegion = $_SESSION['login_region'] ?? 'factory';
+    if ($loginRegion === 'factory') {
+        $whereClauses[] = 'cust.direct_sale IS NULL';
+    } else {
+        $whereClauses[] = 'cust.direct_sale = ?';
+        $paramTypes .= 's';
+        $paramValues[] = $loginRegion;
+    }
+}
+
 $sql = "SELECT p.*, c1.name as category_name, c2.name as subcategory_name, cust.name as customer_name,
                COALESCE((SELECT SUM(ip.quantity) FROM inventory_products ip JOIN inventories inv ON ip.inventory_id = inv.id WHERE ip.product_id = p.id AND inv.is_active = 1), 0) AS total_quantity
         FROM products p
         LEFT JOIN categories c1 ON p.category_id = c1.id
         LEFT JOIN categories c2 ON p.subcategory_id = c2.id
-        LEFT JOIN customers cust ON p.customer_id = cust.id";
+        LEFT JOIN customers cust ON p.customer_id = cust.id
+        LEFT JOIN factories customer_factory ON customer_factory.id = cust.factory_id";
 
 if (!empty($whereClauses)) {
     $sql .= ' WHERE ' . implode(' AND ', $whereClauses);

@@ -14,6 +14,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         setAlert('danger', 'Invalid product reference.');
         redirect('index.php');
     }
+    if (!canAccessProduct($id)) {
+        setAlert('danger', 'You do not have permission to edit this product.');
+        redirect('index.php?type=final');
+    }
     
     $name = sanitize($_POST['name']);
     $sku = sanitize($_POST['sku']);
@@ -27,6 +31,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $category_id = sanitize($_POST['category_id']);
     $subcategory_id = !empty($_POST['subcategory_id']) ? sanitize($_POST['subcategory_id']) : null;
     $customer_id = isset($_POST['customer_id']) && $_POST['customer_id'] !== '' ? (int)$_POST['customer_id'] : null;
+    if (isSalesPersonUser()) {
+        $type = 'final';
+        if ($customer_id === null || !canAccessCustomer($customer_id)) {
+            setAlert('danger', 'A final product must remain linked to one of your assigned customers.');
+            redirect('index.php?type=final');
+        }
+    }
     $unit_price = sanitize($_POST['unit_price']);
     $cost_price = isset($_POST['cost_price']) && $_POST['cost_price'] !== '' ? sanitize($_POST['cost_price']) : null;
     $min_stock_level = !empty($_POST['min_stock_level']) ? sanitize($_POST['min_stock_level']) : 0;
@@ -137,6 +148,10 @@ $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 if ($id <= 0) {
     setAlert('danger', 'Invalid product reference.');
     redirect('index.php');
+}
+if (!canAccessProduct($id)) {
+    setAlert('danger', 'You do not have permission to edit this product.');
+    redirect('index.php?type=final');
 }
 
 $product = getProductById($id);

@@ -8,7 +8,11 @@ if (!hasPermission('customers.edit')) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $id = sanitize($_POST['id']);
+    $id = (int)$_POST['id'];
+    if (!canAccessCustomer($id)) {
+        setAlert('danger', 'You do not have permission to edit this customer.');
+        redirect('index.php');
+    }
     $name = sanitize($_POST['name']);
     $type = sanitize($_POST['type']);
     $factory_id = !empty($_POST['factory_id']) ? intval($_POST['factory_id']) : NULL;
@@ -18,16 +22,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $tax_number = !empty($_POST['tax_number']) ? sanitize($_POST['tax_number']) : NULL;
     $region = !empty($_POST['region']) ? sanitize($_POST['region']) : NULL;
     $direct_sale = !empty($_POST['direct_sale']) ? sanitize($_POST['direct_sale']) : NULL;
+
+    $currentStmt = $conn->prepare("SELECT sales_person_id FROM customers WHERE id = ?");
+    $currentStmt->bind_param('i', $id);
+    $currentStmt->execute();
+    $currentCustomer = $currentStmt->get_result()->fetch_assoc();
+    $currentStmt->close();
+    if (!$currentCustomer) {
+        setAlert('danger', 'Customer not found.');
+        redirect('index.php');
+    }
+
+    if (isSalesPersonUser()) {
+        $direct_sale = ($_SESSION['login_region'] ?? 'factory') === 'factory'
+            ? NULL
+            : sanitize($_SESSION['login_region']);
+        if ($factory_id !== NULL && !canAccessFactory($factory_id)) {
+            setAlert('danger', 'You can only link customers to a factory assigned to you.');
+            redirect('index.php');
+        }
+        $sales_person_id = $currentCustomer['sales_person_id'] !== null
+            ? (int)$currentCustomer['sales_person_id']
+            : NULL;
+    } elseif (isAdminUser()) {
+        $sales_person_id = array_key_exists('sales_person_id', $_POST)
+            ? (!empty($_POST['sales_person_id']) ? (int)$_POST['sales_person_id'] : NULL)
+            : ($currentCustomer['sales_person_id'] !== null ? (int)$currentCustomer['sales_person_id'] : NULL);
+        if ($sales_person_id !== NULL && !isValidSalesPersonId($sales_person_id)) {
+            setAlert('danger', 'Please select a valid active sales person.');
+            redirect('index.php');
+        }
+    } else {
+        $sales_person_id = $currentCustomer['sales_person_id'] !== null
+            ? (int)$currentCustomer['sales_person_id']
+            : NULL;
+    }
     
     $update_sql = "UPDATE customers SET 
-                   name = ?, type = ?, factory_id = ?, email = ?, phone = ?, whatsapp_phone = ?, tax_number = ?, region = ?, direct_sale = ? 
+                   name = ?, type = ?, factory_id = ?, sales_person_id = ?, email = ?, phone = ?, whatsapp_phone = ?, tax_number = ?, region = ?, direct_sale = ?
                    WHERE id = ?";
     $update_stmt = $conn->prepare($update_sql);
     $update_stmt->bind_param(
-        "siissssssi",
+        "siiissssssi",
         $name,
         $type,
         $factory_id,
+        $sales_person_id,
         $email,
         $phone,
         $whatsapp_phone,

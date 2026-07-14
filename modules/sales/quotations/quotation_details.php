@@ -11,6 +11,11 @@ if (!hasPermission('quotations.manage')) {
 
 // Get quotation ID
 $quotation_id = $_GET['id'] ?? 0;
+if (!canAccessQuotation($quotation_id)) {
+    $_SESSION['error'] = 'You do not have permission to view this quotation.';
+    header('Location: quotation_list.php');
+    exit();
+}
 
 // Handle status update BEFORE any output
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_status'])) {

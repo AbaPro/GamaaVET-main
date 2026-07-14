@@ -11,12 +11,19 @@ $page_title = 'Customers Management';
 require_once '../../includes/header.php';
 
 $login_region = $_SESSION['login_region'] ?? 'factory';
+$isAdmin = isAdminUser();
+$isSalesPerson = isSalesPersonUser();
 $canViewPhoneNumbers = hasPermission('contacts.phone.view');
 $canViewCustomerWallet = hasPermission('customers.wallet.view') || hasPermission('customers.wallet') || hasPermission('finance.customer_wallet.view');
 
 // Handle delete request
 if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
     $id = sanitize($_GET['delete']);
+
+    if (!hasPermission('customers.delete') || !canAccessCustomer($id)) {
+        setAlert('danger', 'You do not have permission to delete this customer.');
+        redirect('index.php');
+    }
     
     // Check if customer has orders
     $check_sql = "SELECT COUNT(*) as count FROM orders WHERE customer_id = ?";
@@ -85,41 +92,44 @@ if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
     redirect('index.php');
 }
 
-// Fetch all customers with their types and factories
-if ($login_region === 'factory') {
-    $sql = "SELECT c.*, ct.name AS type_name, f.name AS factory_name,
-            (SELECT COUNT(*) FROM products p WHERE p.customer_id = c.id AND p.type = 'material') as material_count,
-            (SELECT COUNT(*) FROM products p WHERE p.customer_id = c.id AND p.type = 'final') as final_count
-            FROM customers c 
-            JOIN customer_types ct ON c.type = ct.id 
-            LEFT JOIN factories f ON c.factory_id = f.id
-            WHERE c.direct_sale IS NULL
-            ORDER BY c.name";
-} else {
-    $sql = "SELECT c.*, ct.name AS type_name, f.name AS factory_name,
-            (SELECT COUNT(*) FROM products p WHERE p.customer_id = c.id AND p.type = 'material') as material_count,
-            (SELECT COUNT(*) FROM products p WHERE p.customer_id = c.id AND p.type = 'final') as final_count
-            FROM customers c 
-            JOIN customer_types ct ON c.type = ct.id 
-            LEFT JOIN factories f ON c.factory_id = f.id
-            WHERE c.direct_sale = ?
-            ORDER BY c.name";
+// Keep the selected direct-sales channel, then scope salespeople to their assignments.
+$sql = "SELECT c.*, ct.name AS type_name, f.name AS factory_name,
+        sp.name AS sales_person_name,
+        (SELECT COUNT(*) FROM products p WHERE p.customer_id = c.id AND p.type = 'material') as material_count,
+        (SELECT COUNT(*) FROM products p WHERE p.customer_id = c.id AND p.type = 'final') as final_count
+        FROM customers c
+        JOIN customer_types ct ON c.type = ct.id
+        LEFT JOIN factories f ON c.factory_id = f.id
+        LEFT JOIN users sp ON sp.id = COALESCE(c.sales_person_id, f.sales_person_id)
+        WHERE " . ($login_region === 'factory' ? "c.direct_sale IS NULL" : "c.direct_sale = ?");
+$bindTypes = $login_region === 'factory' ? '' : 's';
+$bindValues = $login_region === 'factory' ? [] : [$login_region];
+if ($isSalesPerson) {
+    $sql .= " AND COALESCE(c.sales_person_id, f.sales_person_id) = ?";
+    $bindTypes .= 'i';
+    $bindValues[] = (int)$_SESSION['user_id'];
 }
+$sql .= " ORDER BY c.name";
 
 $stmt = $conn->prepare($sql);
-if ($login_region !== 'factory') {
-    $stmt->bind_param("s", $login_region);
+if ($bindTypes !== '') {
+    $stmt->bind_param($bindTypes, ...$bindValues);
 }
 $stmt->execute();
 $result = $stmt->get_result();
 
 $factories_data = [];
-$factories_result = $conn->query("SELECT id, name FROM factories ORDER BY name");
+$factoriesSql = "SELECT id, name FROM factories";
+if ($isSalesPerson) {
+    $factoriesSql .= " WHERE sales_person_id = " . (int)$_SESSION['user_id'];
+}
+$factories_result = $conn->query($factoriesSql . " ORDER BY name");
 if ($factories_result) {
     while ($factory = $factories_result->fetch_assoc()) {
         $factories_data[] = $factory;
     }
 }
+$salesPersons = $isAdmin ? getActiveSalesPersons() : [];
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -152,7 +162,8 @@ if ($factories_result) {
                         <th>Name</th>
                         <th>Type</th>
                         <th>Factory</th>
-                        <th>Material Products</th>
+                        <?php if ($isAdmin): ?><th>Sales Person</th><?php endif; ?>
+                        <?php if (!$isSalesPerson): ?><th>Material Products</th><?php endif; ?>
                         <th>Final Products</th>
                         <th>Email</th>
                         <?php if ($canViewPhoneNumbers): ?>
@@ -179,7 +190,10 @@ if ($factories_result) {
                                     </span>
                                 </td>
                                 <td><?php echo !empty($row['factory_name']) ? e($row['factory_name']) : '<span class="text-muted">N/A</span>'; ?></td>
-                                <td><?php echo (int) $row['material_count']; ?></td>
+                                <?php if ($isAdmin): ?>
+                                    <td><?= !empty($row['sales_person_name']) ? e($row['sales_person_name']) : '<span class="text-muted">Unassigned</span>'; ?></td>
+                                <?php endif; ?>
+                                <?php if (!$isSalesPerson): ?><td><?php echo (int) $row['material_count']; ?></td><?php endif; ?>
                                 <td><?php echo (int) $row['final_count']; ?></td>
                                 <td><?php echo e($row['email']); ?></td>
                                 <?php if ($canViewPhoneNumbers): ?>
@@ -209,7 +223,9 @@ if ($factories_result) {
                                         </button>
                                         <ul class="dropdown-menu">
                                             <li><a class="dropdown-item" href="view.php?id=<?php echo $row['id']; ?>"><i class="fas fa-eye"></i> View</a></li>
-                                            <li><a class="dropdown-item edit-customer" href="#" data-id="<?php echo $row['id']; ?>"><i class="fas fa-edit"></i> Edit</a></li>
+                                            <?php if (hasPermission('customers.edit')): ?>
+                                                <li><a class="dropdown-item edit-customer" href="#" data-id="<?php echo $row['id']; ?>"><i class="fas fa-edit"></i> Edit</a></li>
+                                            <?php endif; ?>
                                             <li><a class="dropdown-item" href="contacts.php?id=<?php echo $row['id']; ?>"><i class="fas fa-address-book"></i> Contacts</a></li>
                                             <?php if ($canViewCustomerWallet): ?>
                                                 <li><a class="dropdown-item" href="wallet.php?id=<?php echo $row['id']; ?>"><i class="fas fa-wallet"></i> Wallet</a></li>
@@ -227,7 +243,9 @@ if ($factories_result) {
                                             </li>
                                             <?php endif; ?>
                                             <li><hr class="dropdown-divider"></li>
-                                            <li><a class="dropdown-item text-danger" href="index.php?delete=<?php echo $row['id']; ?>" onclick="return confirm('Are you sure you want to delete this customer?')"><i class="fas fa-trash"></i> Delete</a></li>
+                                            <?php if (hasPermission('customers.delete')): ?>
+                                                <li><a class="dropdown-item text-danger" href="index.php?delete=<?php echo $row['id']; ?>" onclick="return confirm('Are you sure you want to delete this customer?')"><i class="fas fa-trash"></i> Delete</a></li>
+                                            <?php endif; ?>
                                         </ul>
                                     </div>
                                 </td>
@@ -303,6 +321,19 @@ if ($factories_result) {
                                     <input type="text" class="form-control" id="whatsapp_phone" name="whatsapp_phone" placeholder="+201234567890">
                                 </div>
                             </div>
+                            <?php if ($isAdmin): ?>
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label for="sales_person_id" class="form-label">Assigned Sales Person</label>
+                                    <select class="form-select" id="sales_person_id" name="sales_person_id">
+                                        <option value="">-- Inherit Factory / Unassigned --</option>
+                                        <?php foreach ($salesPersons as $salesPerson): ?>
+                                            <option value="<?= (int)$salesPerson['id']; ?>"><?= e($salesPerson['name']); ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                            </div>
+                            <?php endif; ?>
                             <div class="row">
                                 <div class="col-md-6 mb-3">
                                     <label for="email" class="form-label">Email</label>
@@ -477,6 +508,20 @@ if ($factories_result) {
                                     <input type="text" class="form-control" id="edit_whatsapp_phone" name="whatsapp_phone">
                                 </div>
                             </div>
+                            <?php if ($isAdmin): ?>
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label for="edit_sales_person_id" class="form-label">Assigned Sales Person</label>
+                                    <select class="form-select" id="edit_sales_person_id" name="sales_person_id">
+                                        <option value="">-- Inherit Factory / Unassigned --</option>
+                                        <?php foreach ($salesPersons as $salesPerson): ?>
+                                            <option value="<?= (int)$salesPerson['id']; ?>"><?= e($salesPerson['name']); ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                    <small class="text-muted">Leave empty to inherit the factory assignment.</small>
+                                </div>
+                            </div>
+                            <?php endif; ?>
                             <div class="row">
                                 <div class="col-md-6 mb-3">
                                     <label for="edit_email" class="form-label">Email</label>
@@ -542,7 +587,7 @@ $(document).ready(function() {
             lengthMenu: [10, 25, 50, 100],
             order: [],
             columnDefs: [
-                { orderable: false, targets: [9] } // Disable sorting on actions column
+                { orderable: false, targets: [-1] } // Disable sorting on actions column
             ]
         });
     }
@@ -565,6 +610,7 @@ $(document).ready(function() {
                     $('#edit_email').val(response.customer.email);
                     $('#edit_phone').val(response.customer.phone);
                     $('#edit_factory_id').val(response.customer.factory_id);
+                    $('#edit_sales_person_id').val(response.customer.sales_person_id);
                     $('#edit_whatsapp_phone').val(response.customer.whatsapp_phone);
                     $('#edit_tax_number').val(response.customer.tax_number);
                     $('#edit_wallet_balance').val(response.customer.wallet_balance);

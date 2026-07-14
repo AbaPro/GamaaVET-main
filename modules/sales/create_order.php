@@ -18,7 +18,24 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $pdo->beginTransaction();
 
         $rawItems = $_POST['items'] ?? [];
-        $factoryId = !empty($_POST['factory_id']) ? (int)$_POST['factory_id'] : null;
+        $customerId = !empty($_POST['customer_id']) ? (int)$_POST['customer_id'] : 0;
+        $contactId = !empty($_POST['contact_id']) ? (int)$_POST['contact_id'] : 0;
+        if ($customerId <= 0 || !canAccessCustomer($customerId)) {
+            throw new Exception('Please select a customer assigned to you.');
+        }
+
+        $customerStmt = $pdo->prepare("SELECT factory_id FROM customers WHERE id = ?");
+        $customerStmt->execute([$customerId]);
+        $factoryId = $customerStmt->fetchColumn();
+        $factoryId = $factoryId !== false && $factoryId !== null ? (int)$factoryId : null;
+
+        $contactStmt = $pdo->prepare("SELECT id FROM customer_contacts WHERE id = ? AND customer_id = ?");
+        $contactStmt->execute([$contactId, $customerId]);
+        if (!$contactStmt->fetchColumn()) {
+            throw new Exception('Please select a valid contact for this customer.');
+        }
+
+        $productAccessStmt = $pdo->prepare("SELECT id FROM products WHERE id = ? AND customer_id = ? AND type = 'final'");
         $orderItems = [];
         $itemsSubtotal = 0;
         $freeSampleCount = 0;
@@ -31,6 +48,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
             if ($productId <= 0 || $quantity <= 0) {
                 continue;
+            }
+
+            $productAccessStmt->execute([$productId, $customerId]);
+            if (!$productAccessStmt->fetchColumn() || !canAccessProduct($productId)) {
+                throw new Exception('One or more selected products do not belong to this customer or are not available to you.');
             }
 
             $lineTotal = $quantity * $unitPrice;
@@ -93,9 +115,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
         $stmt->execute([
             $_POST['internal_id'],
-            $_POST['customer_id'],
+            $customerId,
             $factoryId,
-            $_POST['contact_id'],
+            $contactId,
             $_POST['order_date'],
             'new',
             $total_amount,
@@ -221,17 +243,46 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 // Get currencies for dropdown
 $currencies = $pdo->query("SELECT * FROM currencies ORDER BY is_default DESC, code ASC")->fetchAll(PDO::FETCH_ASSOC);
 
-// Get customers for dropdown
-$customers = $pdo->query("SELECT id, name FROM customers ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+// Get customers for the selected direct-sales channel and current salesperson.
+$loginRegion = $_SESSION['login_region'] ?? 'factory';
+$customerSql = "SELECT c.id, c.name
+                FROM customers c
+                LEFT JOIN factories f ON f.id = c.factory_id
+                WHERE " . ($loginRegion === 'factory' ? "c.direct_sale IS NULL" : "c.direct_sale = ?");
+$customerParams = $loginRegion === 'factory' ? [] : [$loginRegion];
+if (isSalesPersonUser()) {
+    $customerSql .= " AND COALESCE(c.sales_person_id, f.sales_person_id) = ?";
+    $customerParams[] = (int)$_SESSION['user_id'];
+}
+$customerSql .= " ORDER BY c.name";
+$customerListStmt = $pdo->prepare($customerSql);
+$customerListStmt->execute($customerParams);
+$customers = $customerListStmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Get products for dropdown
-$products = $pdo->query("
+$productSql = "
     SELECT p.id, p.name, p.sku, p.unit_price, p.category_id, p.subcategory_id, p.type, p.customer_id, c.name as category 
     FROM products p
     JOIN categories c ON p.category_id = c.id
+    LEFT JOIN customers customer ON customer.id = p.customer_id
+    LEFT JOIN factories customer_factory ON customer_factory.id = customer.factory_id
     WHERE p.type = 'final'
-    ORDER BY p.name
-")->fetchAll(PDO::FETCH_ASSOC);
+";
+$productParams = [];
+if (isSalesPersonUser()) {
+    $productSql .= " AND COALESCE(customer.sales_person_id, customer_factory.sales_person_id) = ?";
+    $productParams[] = (int)$_SESSION['user_id'];
+    if ($loginRegion === 'factory') {
+        $productSql .= " AND customer.direct_sale IS NULL";
+    } else {
+        $productSql .= " AND customer.direct_sale = ?";
+        $productParams[] = $loginRegion;
+    }
+}
+$productSql .= " ORDER BY p.name";
+$productListStmt = $pdo->prepare($productSql);
+$productListStmt->execute($productParams);
+$products = $productListStmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Get main categories for product filter
 $categories = $pdo->query("SELECT id, name FROM categories WHERE parent_id IS NULL ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
@@ -240,7 +291,7 @@ $categories = $pdo->query("SELECT id, name FROM categories WHERE parent_id IS NU
 $subcategories = $pdo->query("SELECT id, name, parent_id FROM categories WHERE parent_id IS NOT NULL ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 
 // Get customers for product filter (final products are linked to customers/factories)
-$all_customers = $pdo->query("SELECT id, name FROM customers ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+$all_customers = $customers;
 
 require_once '../../includes/header.php';
 ?>
