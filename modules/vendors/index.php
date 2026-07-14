@@ -368,9 +368,10 @@ $(document).ready(function() {
         });
     }
     
-    // Handle edit button click
-    $('.edit-vendor').on('click', function(e) {
+    // Delegate this event because DataTables redraws rows when paging, filtering, and sorting.
+    $('#vendorsTable tbody').on('click', '.edit-vendor', function(e) {
         e.preventDefault();
+        e.stopPropagation();
         var vendor_id = $(this).data('id');
         
         $.ajax({
