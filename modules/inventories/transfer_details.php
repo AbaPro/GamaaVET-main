@@ -45,6 +45,13 @@ if (!$transfer) {
     redirect('transfers_list.php');
 }
 
+$transferImages = [];
+$tiStmt = $conn->prepare("SELECT file_path, original_name FROM inventory_transfer_images WHERE inventory_transfer_id = ? ORDER BY created_at ASC");
+$tiStmt->bind_param("i", $transfer_id);
+$tiStmt->execute();
+$transferImages = $tiStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+$tiStmt->close();
+
 $items_sql = "SELECT ti.*, p.name as product_name, p.sku, p.barcode, p.type, p.unit,
                      c.name as category_name, sc.name as subcategory_name,
                      source_stock.quantity as source_quantity,
@@ -153,13 +160,17 @@ require_once '../../includes/header.php';
     <div class="col-lg-4">
         <div class="card h-100">
             <div class="card-header">
-                <h5 class="card-title mb-0">Transfer Image</h5>
+                <h5 class="card-title mb-0">Transfer Image<?= count($transferImages) > 1 ? 's' : '' ?></h5>
             </div>
             <div class="card-body">
-                <?php if (!empty($transfer['image_path'])): ?>
-                    <a href="../../<?= htmlspecialchars($transfer['image_path']) ?>" target="_blank" rel="noopener">
-                        <img src="../../<?= htmlspecialchars($transfer['image_path']) ?>" alt="Transfer image" class="img-fluid rounded border" style="max-height:320px;object-fit:contain;">
-                    </a>
+                <?php if (!empty($transferImages)): ?>
+                    <div class="d-flex flex-wrap gap-2">
+                        <?php foreach ($transferImages as $img): ?>
+                            <a href="../../<?= htmlspecialchars($img['file_path']) ?>" target="_blank" rel="noopener">
+                                <img src="../../<?= htmlspecialchars($img['file_path']) ?>" alt="Transfer image" class="img-fluid rounded border" style="max-height:200px;max-width:200px;object-fit:contain;">
+                            </a>
+                        <?php endforeach; ?>
+                    </div>
                 <?php else: ?>
                     <span class="text-muted">No image attached</span>
                 <?php endif; ?>

@@ -32,6 +32,14 @@ $sql = "SELECT it.*,
         ) items ON items.transfer_id = it.id
         ORDER BY it.created_at DESC";
 $result = $conn->query($sql);
+
+$transferImagesByTransfer = [];
+$tiRes = $conn->query("SELECT inventory_transfer_id, file_path, original_name FROM inventory_transfer_images ORDER BY created_at ASC");
+if ($tiRes) {
+    while ($tiRow = $tiRes->fetch_assoc()) {
+        $transferImagesByTransfer[$tiRow['inventory_transfer_id']][] = $tiRow;
+    }
+}
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -87,13 +95,7 @@ $result = $conn->query($sql);
                             <td><?= htmlspecialchars($row['transferred_by_name'] ?? $row['requested_by_name'] ?? 'System') ?></td>
                             <td><?= !empty($row['transferred_at']) ? date('M d, Y H:i', strtotime($row['transferred_at'])) : date('M d, Y H:i', strtotime($row['created_at'])) ?></td>
                             <td>
-                                <?php if (!empty($row['image_path'])): ?>
-                                    <a href="../../<?= htmlspecialchars($row['image_path']) ?>" target="_blank" rel="noopener">
-                                        <img src="../../<?= htmlspecialchars($row['image_path']) ?>" alt="Transfer image" style="height:40px;width:auto;object-fit:cover;border-radius:4px;cursor:pointer;">
-                                    </a>
-                                <?php else: ?>
-                                    <span class="text-muted">-</span>
-                                <?php endif; ?>
+                                <?php echo renderAttachmentThumbnails($transferImagesByTransfer[$row['id']] ?? []); ?>
                             </td>
                             <td>
                                 <a href="transfer_details.php?id=<?= $row['id'] ?>" class="btn btn-sm btn-outline-info">

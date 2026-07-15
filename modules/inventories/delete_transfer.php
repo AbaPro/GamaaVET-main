@@ -55,7 +55,14 @@ if (isset($_GET['id']) && is_numeric($_GET['id'])) {
             // since we assume it came from there.
         }
 
-        // 3. Delete items and the transfer
+        // 3. Delete transfer images (fetch paths first for post-commit file cleanup)
+        $imgStmt = $pdo->prepare("SELECT file_path FROM inventory_transfer_images WHERE inventory_transfer_id = ?");
+        $imgStmt->execute([$transfer_id]);
+        $filesToDelete = $imgStmt->fetchAll(PDO::FETCH_COLUMN);
+
+        $pdo->prepare("DELETE FROM inventory_transfer_images WHERE inventory_transfer_id = ?")->execute([$transfer_id]);
+
+        // 4. Delete items and the transfer
         $stmt = $pdo->prepare("DELETE FROM transfer_items WHERE transfer_id = ?");
         $stmt->execute([$transfer_id]);
 
@@ -63,6 +70,14 @@ if (isset($_GET['id']) && is_numeric($_GET['id'])) {
         $stmt->execute([$transfer_id]);
 
         $pdo->commit();
+
+        foreach ($filesToDelete as $path) {
+            $full = ROOT_PATH . '/' . $path;
+            if (is_file($full)) {
+                unlink($full);
+            }
+        }
+
         foreach ($stockLogs as $stockLog) {
             logInventoryStockChange(
                 $from_inventory_id,

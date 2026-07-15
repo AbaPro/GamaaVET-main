@@ -17,7 +17,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $notes = sanitize($_POST['notes']);
     $user_id = $_SESSION['user_id'];
     $transferred_at = date('Y-m-d H:i:s');
-    $transferImagePath = null;
+    $uploadedTransferImages = [];
 
     if ($from_inventory_id === $to_inventory_id) {
         setAlert('danger', 'Source and destination inventories must be different.');
@@ -37,11 +37,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
     try {
         $transferImageError = null;
-        $transferImagePath = uploadImageAttachment(
+        $uploadedTransferImages = uploadImageAttachments(
             'transfer_image',
             'assets/uploads/inventory_transfers',
             'inventory_transfer_' . $transfer_reference,
-            true,
+            1, // required
             $transferImageError
         );
 
@@ -51,14 +51,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // Create transfer record
         $transfer_sql = "INSERT INTO inventory_transfers
-                         (transfer_reference, from_inventory_id, to_inventory_id, status, requested_by, accepted_by, transferred_by, transferred_at, image_path, notes)
-                         VALUES (?, ?, ?, 'accepted', ?, ?, ?, ?, ?, ?)";
+                         (transfer_reference, from_inventory_id, to_inventory_id, status, requested_by, accepted_by, transferred_by, transferred_at, notes)
+                         VALUES (?, ?, ?, 'accepted', ?, ?, ?, ?, ?)";
         $transfer_stmt = $conn->prepare($transfer_sql);
-        $transfer_stmt->bind_param("siiiiisss", $transfer_reference, $from_inventory_id, $to_inventory_id, $user_id, $user_id, $user_id, $transferred_at, $transferImagePath, $notes);
+        $transfer_stmt->bind_param("siiiiiss", $transfer_reference, $from_inventory_id, $to_inventory_id, $user_id, $user_id, $user_id, $transferred_at, $notes);
         $transfer_stmt->execute();
         $transfer_id = $transfer_stmt->insert_id;
         $transfer_stmt->close();
-        
+
+        if (!empty($uploadedTransferImages)) {
+            $imgStmt = $conn->prepare("INSERT INTO inventory_transfer_images (inventory_transfer_id, file_path, original_name, created_by) VALUES (?, ?, ?, ?)");
+            foreach ($uploadedTransferImages as $file) {
+                $imgStmt->bind_param("issi", $transfer_id, $file['path'], $file['original_name'], $user_id);
+                $imgStmt->execute();
+            }
+            $imgStmt->close();
+        }
+
         // Process transfer items
         foreach ($_POST['product_id'] as $key => $product_id) {
             $product_id = (int)sanitize($product_id);
@@ -130,8 +139,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (Exception $e) {
         // Rollback transaction on error
         $conn->rollback();
-        if ($transferImagePath && is_file(ROOT_PATH . '/' . $transferImagePath)) {
-            unlink(ROOT_PATH . '/' . $transferImagePath);
+        foreach ($uploadedTransferImages as $file) {
+            $full = ROOT_PATH . '/' . $file['path'];
+            if (is_file($full)) {
+                unlink($full);
+            }
         }
         setAlert('danger', 'Error creating transfer: ' . $e->getMessage());
         redirect('transfer.php');
@@ -189,7 +201,7 @@ $products_result = $conn->query($products_sql);
 
             <div class="mb-3">
                 <label for="transfer_image" class="form-label">Transfer Image <span class="text-danger">*</span></label>
-                <input type="file" class="form-control" id="transfer_image" name="transfer_image" accept="image/jpeg,image/png,image/gif,image/webp" required>
+                <input type="file" class="form-control" id="transfer_image" name="transfer_image[]" accept="image/jpeg,image/png,image/gif,image/webp" multiple required>
                 <small class="text-muted">Attach the transfer image or receipt. JPG, PNG, GIF, WEBP, max 5MB.</small>
             </div>
             

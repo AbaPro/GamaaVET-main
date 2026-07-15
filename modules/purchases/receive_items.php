@@ -43,24 +43,24 @@ $inventories = $pdo->query("SELECT id, name FROM inventories WHERE is_active = 1
 
 // Handle item receipt
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $receiptImagePath = null;
+    $uploadedReceiptImages = [];
 
     try {
         $pdo->beginTransaction();
 
         $receiptImageError = null;
-        $receiptImagePath = uploadImageAttachment(
+        $uploadedReceiptImages = uploadImageAttachments(
             'receipt_image',
             'assets/uploads/po_receipts',
             'po_receipt_' . (int)$po_id,
-            true,
+            1, // required: at least 1
             $receiptImageError
         );
 
         if ($receiptImageError !== null) {
             throw new Exception($receiptImageError);
         }
-        
+
         $all_received = true;
         $some_received = false;
         $stockLogs = [];
@@ -141,16 +141,21 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $notes = trim($_POST['notes'] ?? '');
         $stmt = $pdo->prepare("
             INSERT INTO purchase_order_receipts
-            (purchase_order_id, image_path, notes, created_by)
-            VALUES (?, ?, ?, ?)
+            (purchase_order_id, notes, created_by)
+            VALUES (?, ?, ?)
         ");
         $stmt->execute([
             $po_id,
-            $receiptImagePath,
             $notes !== '' ? $notes : null,
             $_SESSION['user_id']
         ]);
-        
+        $receipt_id = $pdo->lastInsertId();
+
+        $imgStmt = $pdo->prepare("INSERT INTO purchase_order_receipt_images (purchase_order_receipt_id, file_path, original_name, created_by) VALUES (?, ?, ?, ?)");
+        foreach ($uploadedReceiptImages as $file) {
+            $imgStmt->execute([$receipt_id, $file['path'], $file['original_name'], $_SESSION['user_id']]);
+        }
+
         $pdo->commit();
         foreach ($stockLogs as $stockLog) {
             logInventoryStockChange(
@@ -175,8 +180,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         exit();
     } catch (Exception $e) {
         $pdo->rollBack();
-        if ($receiptImagePath && is_file(ROOT_PATH . '/' . $receiptImagePath)) {
-            unlink(ROOT_PATH . '/' . $receiptImagePath);
+        foreach ($uploadedReceiptImages as $file) {
+            $full = ROOT_PATH . '/' . $file['path'];
+            if (is_file($full)) {
+                unlink($full);
+            }
         }
         $_SESSION['error'] = "Error receiving items: " . $e->getMessage();
     }
@@ -261,7 +269,7 @@ require_once '../../includes/header.php';
 
                     <div class="form-group mt-3">
                         <label for="receipt_image" class="form-label">Receipt Image <span class="text-danger">*</span></label>
-                        <input type="file" class="form-control" id="receipt_image" name="receipt_image" accept="image/jpeg,image/png,image/gif,image/webp" required>
+                        <input type="file" class="form-control" id="receipt_image" name="receipt_image[]" accept="image/jpeg,image/png,image/gif,image/webp" multiple required>
                         <small class="text-muted">Attach the received items image or receipt. JPG, PNG, GIF, WEBP, max 5MB.</small>
                     </div>
                     

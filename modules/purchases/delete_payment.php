@@ -45,12 +45,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['payment_id'])) {
             $stmt->execute([$vendor_id, $amount, $po_id]);
         }
 
-        // 4. Delete the payment record itself
+        // 4. Delete attachment rows and remember their file paths for post-commit cleanup
+        $attStmt = $pdo->prepare("SELECT file_path FROM purchase_order_payment_attachments WHERE purchase_order_payment_id = ?");
+        $attStmt->execute([$payment_id]);
+        $filesToDelete = $attStmt->fetchAll(PDO::FETCH_COLUMN);
+
+        $pdo->prepare("DELETE FROM purchase_order_payment_attachments WHERE purchase_order_payment_id = ?")->execute([$payment_id]);
+
+        // 5. Delete the payment record itself
         $stmt = $pdo->prepare("DELETE FROM purchase_order_payments WHERE id = ?");
         $stmt->execute([$payment_id]);
 
         $pdo->commit();
-        
+
+        foreach ($filesToDelete as $path) {
+            $full = ROOT_PATH . '/' . $path;
+            if (is_file($full)) {
+                unlink($full);
+            }
+        }
+
         logActivity("Deleted PO payment ID $payment_id for PO #$po_id. Amount: $amount reversed.");
         setAlert('success', "Payment deleted and financial impact reversed successfully.");
 

@@ -12,6 +12,29 @@ function e($value) {
     return htmlspecialchars((string)($value ?? ''), ENT_QUOTES, 'UTF-8');
 }
 
+// Renders a row of thumbnail links for a set of file attachment rows (each with a
+// file path + original name key). Used to display multi-file uploads consistently
+// across modules instead of each file re-implementing its own markup/prefix.
+function renderAttachmentThumbnails($rows, $filePathKey = 'file_path', $originalNameKey = 'original_name', $basePrefix = '../../') {
+    if (empty($rows)) {
+        return '<span class="text-muted">-</span>';
+    }
+    $html = '<div class="d-flex flex-wrap gap-1">';
+    foreach ($rows as $row) {
+        $path = $row[$filePathKey] ?? '';
+        if ($path === '') {
+            continue;
+        }
+        $url = $basePrefix . $path;
+        $label = $row[$originalNameKey] ?? 'Attachment';
+        $html .= '<a href="' . htmlspecialchars($url) . '" target="_blank" rel="noopener" title="' . htmlspecialchars($label) . '">';
+        $html .= '<img src="' . htmlspecialchars($url) . '" alt="' . htmlspecialchars($label) . '" style="height:40px;width:auto;object-fit:cover;border-radius:4px;cursor:pointer;">';
+        $html .= '</a>';
+    }
+    $html .= '</div>';
+    return $html;
+}
+
 function normalizeEgyptWhatsappNumber($phone) {
     $digits = preg_replace('/\D+/', '', (string)$phone);
     if ($digits === '') {
@@ -91,6 +114,81 @@ function uploadImageAttachment($fieldName, $relativeDir, $filenamePrefix, $requi
     }
 
     return $relativeDir . '/' . $newFile;
+}
+
+// Multi-file version of uploadImageAttachment(). Validates and saves every file in
+// $_FILES[$fieldName] (expects the field to be a `name[]`-style array input).
+// $minRequired = 0 means optional (zero or more files); 1+ enforces "at least N".
+// Fails the whole batch (no partial saves) on the first invalid file, matching the
+// single-file helper's all-or-nothing behavior.
+function uploadImageAttachments($fieldName, $relativeDir, $filenamePrefix, $minRequired = 0, &$error = null) {
+    $error = null;
+    $results = [];
+
+    if (empty($_FILES[$fieldName]) || empty($_FILES[$fieldName]['name']) || !is_array($_FILES[$fieldName]['name'])) {
+        if ($minRequired > 0) {
+            $error = 'At least ' . $minRequired . ' image(s) required.';
+        }
+        return $results;
+    }
+
+    $allowedExt = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+    $relativeDir = trim($relativeDir, '/');
+    $uploadDir = ROOT_PATH . '/' . $relativeDir;
+    $safePrefix = preg_replace('/[^a-zA-Z0-9_-]/', '_', $filenamePrefix);
+
+    foreach ($_FILES[$fieldName]['name'] as $idx => $originalName) {
+        if ($originalName === '' || $originalName === null) {
+            continue; // empty slot in the multi-file input, skip silently
+        }
+
+        $fileError = $_FILES[$fieldName]['error'][$idx] ?? UPLOAD_ERR_NO_FILE;
+        if ($fileError !== UPLOAD_ERR_OK) {
+            $error = 'Failed to upload one or more images.';
+            return [];
+        }
+
+        $ext = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
+        if (!in_array($ext, $allowedExt, true)) {
+            $error = 'Unsupported image type. Allowed: JPG, PNG, GIF, WEBP.';
+            return [];
+        }
+
+        $size = $_FILES[$fieldName]['size'][$idx] ?? 0;
+        if ($size > 5 * 1024 * 1024) {
+            $error = 'One or more images exceed the 5MB limit.';
+            return [];
+        }
+
+        if (!is_dir($uploadDir) && !mkdir($uploadDir, 0775, true)) {
+            $error = 'Failed to prepare upload folder.';
+            return [];
+        }
+
+        $newFile = $safePrefix . '_' . uniqid('', true) . '.' . $ext;
+        if (!move_uploaded_file($_FILES[$fieldName]['tmp_name'][$idx], $uploadDir . '/' . $newFile)) {
+            $error = 'Failed to save uploaded image.';
+            return [];
+        }
+
+        $results[] = [
+            'path' => $relativeDir . '/' . $newFile,
+            'original_name' => $originalName,
+        ];
+    }
+
+    if ($minRequired > 0 && count($results) < $minRequired) {
+        foreach ($results as $saved) {
+            $fullPath = ROOT_PATH . '/' . $saved['path'];
+            if (is_file($fullPath)) {
+                unlink($fullPath);
+            }
+        }
+        $error = 'At least ' . $minRequired . ' image(s) required.';
+        return [];
+    }
+
+    return $results;
 }
 
 // Function to generate unique SKU

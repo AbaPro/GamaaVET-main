@@ -1,6 +1,7 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../config/database.php';
+require_once '../../includes/functions.php';
 
 // Permission check
 if (!hasPermission('purchases.view')) {
@@ -57,6 +58,17 @@ $stmt = $pdo->prepare("
 $stmt->execute([$po_id]);
 $payments = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+$paymentAttachmentsByPayment = [];
+if (!empty($payments)) {
+    $paymentIds = array_column($payments, 'id');
+    $placeholders = implode(',', array_fill(0, count($paymentIds), '?'));
+    $stmt = $pdo->prepare("SELECT purchase_order_payment_id, file_path, original_name FROM purchase_order_payment_attachments WHERE purchase_order_payment_id IN ($placeholders) ORDER BY created_at ASC");
+    $stmt->execute($paymentIds);
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $paymentAttachmentsByPayment[$row['purchase_order_payment_id']][] = $row;
+    }
+}
+
 $stmt = $pdo->prepare("
     SELECT por.*, u.name AS created_by_name
     FROM purchase_order_receipts por
@@ -66,6 +78,17 @@ $stmt = $pdo->prepare("
 ");
 $stmt->execute([$po_id]);
 $receipts = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+$receiptImagesByReceipt = [];
+if (!empty($receipts)) {
+    $receiptIds = array_column($receipts, 'id');
+    $placeholders = implode(',', array_fill(0, count($receiptIds), '?'));
+    $stmt = $pdo->prepare("SELECT purchase_order_receipt_id, file_path, original_name FROM purchase_order_receipt_images WHERE purchase_order_receipt_id IN ($placeholders) ORDER BY created_at ASC");
+    $stmt->execute($receiptIds);
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $receiptImagesByReceipt[$row['purchase_order_receipt_id']][] = $row;
+    }
+}
 
 $canDeletePayments = hasPermission('finance.purchase_payments.delete');
 
@@ -245,13 +268,7 @@ require_once '../../includes/header.php';
                                         <td><?= ucfirst($payment['payment_method']) ?></td>
                                         <td><?= htmlspecialchars($payment['created_by_name']) ?></td>
                                         <td>
-                                            <?php if (!empty($payment['screenshot_path'])): ?>
-                                                <a href="/<?= htmlspecialchars($payment['screenshot_path']) ?>" target="_blank">
-                                                    <img src="/<?= htmlspecialchars($payment['screenshot_path']) ?>" alt="Payment screenshot" style="height:40px;width:auto;object-fit:cover;border-radius:4px;cursor:pointer;">
-                                                </a>
-                                            <?php else: ?>
-                                                <span class="text-muted">—</span>
-                                            <?php endif; ?>
+                                            <?php echo renderAttachmentThumbnails($paymentAttachmentsByPayment[$payment['id']] ?? []); ?>
                                         </td>
                                         <?php if ($canDeletePayments): ?>
                                             <td class="text-end">
@@ -290,9 +307,7 @@ require_once '../../includes/header.php';
                                         <td><?= date('M d, Y H:i', strtotime($receipt['created_at'])) ?></td>
                                         <td><?= htmlspecialchars($receipt['created_by_name']) ?></td>
                                         <td>
-                                            <a href="/<?= htmlspecialchars($receipt['image_path']) ?>" target="_blank">
-                                                <img src="/<?= htmlspecialchars($receipt['image_path']) ?>" alt="Receiving image" style="height:40px;width:auto;object-fit:cover;border-radius:4px;cursor:pointer;">
-                                            </a>
+                                            <?php echo renderAttachmentThumbnails($receiptImagesByReceipt[$receipt['id']] ?? []); ?>
                                         </td>
                                         <td><?= htmlspecialchars($receipt['notes'] ?? '') ?></td>
                                     </tr>

@@ -31,8 +31,6 @@ if ($vendor_result->num_rows === 0) {
 $vendor = $vendor_result->fetch_assoc();
 $vendor_stmt->close();
 
-$walletUploadDir = __DIR__ . '/../../assets/uploads/vendor_wallet';
-
 // Handle wallet transactions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $amount = sanitize($_POST['amount']);
@@ -40,48 +38,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $notes = sanitize($_POST['notes']);
     $user_id = $_SESSION['user_id'];
 
-    $attachmentPath = null;
-    $attachmentOriginal = null;
-
-    if (!empty($_FILES['attachment']['name'])) {
-        if (!is_dir($walletUploadDir)) {
-            mkdir($walletUploadDir, 0775, true);
-        }
-        $allowedExt = ['jpg','jpeg','png','gif','webp'];
-        $originalName = $_FILES['attachment']['name'];
-        $ext = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
-        if (!in_array($ext, $allowedExt, true)) {
-            setAlert('danger', 'Unsupported attachment type. Allowed: JPG, PNG, GIF, WEBP.');
-            redirect("wallet.php?id=$vendor_id");
-        }
-        if ($_FILES['attachment']['size'] > 5 * 1024 * 1024) {
-            setAlert('danger', 'Attachment exceeds the 5MB limit.');
-            redirect("wallet.php?id=$vendor_id");
-        }
-        $newFile = 'wallet_' . $vendor_id . '_' . uniqid('', true) . '.' . $ext;
-        $destination = $walletUploadDir . '/' . $newFile;
-        if (!move_uploaded_file($_FILES['attachment']['tmp_name'], $destination)) {
-            setAlert('danger', 'Failed to upload attachment.');
-            redirect("wallet.php?id=$vendor_id");
-        }
-        $attachmentPath = 'assets/uploads/vendor_wallet/' . $newFile;
-        $attachmentOriginal = $originalName;
+    $attachmentError = null;
+    $uploadedAttachments = uploadImageAttachments(
+        'attachment',
+        'assets/uploads/vendor_wallet',
+        'wallet_' . $vendor_id,
+        0, // optional
+        $attachmentError
+    );
+    if ($attachmentError !== null) {
+        setAlert('danger', $attachmentError);
+        redirect("wallet.php?id=$vendor_id");
     }
-    
+
     // Start transaction
     $conn->begin_transaction();
-    
+
     try {
         // Insert wallet transaction
-        $transaction_sql = "INSERT INTO vendor_wallet_transactions 
-                           (vendor_id, amount, type, notes, attachment_path, attachment_original_name, created_by) 
-                           VALUES (?, ?, ?, ?, ?, ?, ?)";
+        $transaction_sql = "INSERT INTO vendor_wallet_transactions
+                           (vendor_id, amount, type, notes, created_by)
+                           VALUES (?, ?, ?, ?, ?)";
         $transaction_stmt = $conn->prepare($transaction_sql);
-        $transaction_stmt->bind_param("idssssi", $vendor_id, $amount, $type, $notes, $attachmentPath, $attachmentOriginal, $user_id);
+        $transaction_stmt->bind_param("idssi", $vendor_id, $amount, $type, $notes, $user_id);
         $transaction_stmt->execute();
         $transaction_id = $transaction_stmt->insert_id;
         $transaction_stmt->close();
-        
+
+        if (!empty($uploadedAttachments)) {
+            $attStmt = $conn->prepare("INSERT INTO vendor_wallet_transaction_attachments (vendor_wallet_transaction_id, file_path, original_name, created_by) VALUES (?, ?, ?, ?)");
+            foreach ($uploadedAttachments as $file) {
+                $attStmt->bind_param("issi", $transaction_id, $file['path'], $file['original_name'], $user_id);
+                $attStmt->execute();
+            }
+            $attStmt->close();
+        }
+
         // Update vendor wallet balance
         $update_sql = "UPDATE vendors SET wallet_balance = wallet_balance ";
         $update_sql .= $type === 'deposit' ? '+' : '-';
@@ -90,17 +82,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $update_stmt->bind_param("di", $amount, $vendor_id);
         $update_stmt->execute();
         $update_stmt->close();
-        
+
         // Commit transaction
         $conn->commit();
-        
+
         setAlert('success', 'Wallet transaction completed successfully.');
         logActivity("Processed wallet transaction ID: $transaction_id for vendor ID: $vendor_id ($type: $amount)");
     } catch (Exception $e) {
         $conn->rollback();
+        foreach ($uploadedAttachments as $file) {
+            $full = ROOT_PATH . '/' . $file['path'];
+            if (is_file($full)) {
+                unlink($full);
+            }
+        }
         setAlert('danger', 'Error processing wallet transaction: ' . $e->getMessage());
     }
-    
+
     redirect("wallet.php?id=$vendor_id");
 }
 
@@ -114,6 +112,16 @@ $transactions_stmt = $conn->prepare($transactions_sql);
 $transactions_stmt->bind_param("i", $vendor_id);
 $transactions_stmt->execute();
 $transactions_result = $transactions_stmt->get_result();
+
+$walletAttachmentsByTxn = [];
+$waStmt = $conn->prepare("SELECT vendor_wallet_transaction_id, file_path, original_name FROM vendor_wallet_transaction_attachments WHERE vendor_wallet_transaction_id IN (SELECT id FROM vendor_wallet_transactions WHERE vendor_id = ?) ORDER BY created_at ASC");
+$waStmt->bind_param("i", $vendor_id);
+$waStmt->execute();
+$waResult = $waStmt->get_result();
+while ($waRow = $waResult->fetch_assoc()) {
+    $walletAttachmentsByTxn[$waRow['vendor_wallet_transaction_id']][] = $waRow;
+}
+$waStmt->close();
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -154,7 +162,7 @@ $transactions_result = $transactions_stmt->get_result();
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Attachment (Optional)</label>
-                        <input type="file" class="form-control" name="attachment" accept="image/*">
+                        <input type="file" class="form-control" name="attachment[]" accept="image/jpeg,image/png,image/gif,image/webp" multiple>
                         <small class="text-muted">Attach payment receipt / screenshot (JPG, PNG, GIF, WEBP, max 5MB).</small>
                     </div>
                     <button type="submit" class="btn btn-primary">Process Transaction</button>
@@ -194,13 +202,7 @@ $transactions_result = $transactions_stmt->get_result();
                                 <td><?php echo number_format($transaction['amount'], 2); ?></td>
                                 <td><?php echo $transaction['notes'] ? htmlspecialchars($transaction['notes']) : '-'; ?></td>
                                 <td>
-                                    <?php if (!empty($transaction['attachment_path'])): ?>
-                                        <a class="btn btn-sm btn-outline-secondary" href="../../<?php echo htmlspecialchars($transaction['attachment_path']); ?>" target="_blank">
-                                            <i class="fas fa-paperclip"></i> View
-                                        </a>
-                                    <?php else: ?>
-                                        -
-                                    <?php endif; ?>
+                                    <?php echo renderAttachmentThumbnails($walletAttachmentsByTxn[$transaction['id']] ?? []); ?>
                                 </td>
                                 <td><?php echo $transaction['created_by_name'] ? htmlspecialchars($transaction['created_by_name']) : 'System'; ?></td>
                             </tr>

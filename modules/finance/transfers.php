@@ -77,14 +77,13 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
     $amount = floatval($_POST['amount']);
     $notes = sanitize($_POST['notes']);
     $uid = $_SESSION['user_id'];
-    $transferImagePath = null;
 
     $transferImageError = null;
-    $transferImagePath = uploadImageAttachment(
+    $uploadedTransferImages = uploadImageAttachments(
         'transfer_image',
         'assets/uploads/finance_transfers',
         'finance_transfer_' . date('Ymd_His'),
-        false,
+        0, // optional
         $transferImageError
     );
 
@@ -93,24 +92,42 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
         redirect('transfers.php');
     }
 
-    $stmt = $conn->prepare("INSERT INTO finance_transfers (from_type, from_id, to_type, to_id, amount, notes, image_path, created_by) VALUES (?,?,?,?,?,?,?,?)");
-    if (!$stmt) {
-        if ($transferImagePath && is_file(ROOT_PATH . '/' . $transferImagePath)) {
-            unlink(ROOT_PATH . '/' . $transferImagePath);
+    $conn->begin_transaction();
+    try {
+        $stmt = $conn->prepare("INSERT INTO finance_transfers (from_type, from_id, to_type, to_id, amount, notes, created_by) VALUES (?,?,?,?,?,?,?)");
+        if (!$stmt) {
+            throw new Exception('Error preparing transfer: ' . $conn->error);
         }
-        setAlert('danger', 'Error preparing transfer: ' . $conn->error);
+        $stmt->bind_param("sisidsi", $from_type, $from_id, $to_type, $to_id, $amount, $notes, $uid);
+        if (!$stmt->execute()) {
+            throw new Exception('Error recording transfer: ' . $stmt->error);
+        }
+        $transfer_id = $stmt->insert_id;
+        $stmt->close();
+
+        if (!empty($uploadedTransferImages)) {
+            $imgStmt = $conn->prepare("INSERT INTO finance_transfer_images (finance_transfer_id, file_path, original_name, created_by) VALUES (?, ?, ?, ?)");
+            foreach ($uploadedTransferImages as $file) {
+                $imgStmt->bind_param("issi", $transfer_id, $file['path'], $file['original_name'], $uid);
+                $imgStmt->execute();
+            }
+            $imgStmt->close();
+        }
+
+        $conn->commit();
+        setAlert('success', 'Transfer recorded.');
+        redirect('transfers.php');
+    } catch (Exception $e) {
+        $conn->rollback();
+        foreach ($uploadedTransferImages as $file) {
+            $full = ROOT_PATH . '/' . $file['path'];
+            if (is_file($full)) {
+                unlink($full);
+            }
+        }
+        setAlert('danger', $e->getMessage());
         redirect('transfers.php');
     }
-    $stmt->bind_param("sisidssi",$from_type,$from_id,$to_type,$to_id,$amount,$notes,$transferImagePath,$uid);
-    if (!$stmt->execute()) {
-        if ($transferImagePath && is_file(ROOT_PATH . '/' . $transferImagePath)) {
-            unlink(ROOT_PATH . '/' . $transferImagePath);
-        }
-        setAlert('danger', 'Error recording transfer: ' . $stmt->error);
-        redirect('transfers.php');
-    }
-    setAlert('success','Transfer recorded.');
-    redirect('transfers.php');
 }
 
 $result = $conn->query("
@@ -136,6 +153,14 @@ $result = $conn->query("
     LEFT JOIN users to_personal ON f.to_type = 'personal' AND f.to_id = to_personal.id
     ORDER BY f.created_at DESC
 ");
+
+$financeTransferImagesByTransfer = [];
+$ftiRes = $conn->query("SELECT finance_transfer_id, file_path, original_name FROM finance_transfer_images ORDER BY created_at ASC");
+if ($ftiRes) {
+    while ($ftiRow = $ftiRes->fetch_assoc()) {
+        $financeTransferImagesByTransfer[$ftiRow['finance_transfer_id']][] = $ftiRow;
+    }
+}
 
 $bankAccounts = [];
 $bankRes = $conn->query("SELECT id, bank_name, account_number, balance FROM bank_accounts ORDER BY bank_name");
@@ -202,13 +227,7 @@ $accountOptions = [
                         </td>
                         <td><?= number_format($row['amount'],2); ?></td>
                         <td>
-                            <?php if (!empty($row['image_path'])): ?>
-                                <a href="../../<?= financeTransferEscape($row['image_path']); ?>" target="_blank" rel="noopener">
-                                    <img src="../../<?= financeTransferEscape($row['image_path']); ?>" alt="Transfer image" style="height:44px;width:auto;max-width:72px;object-fit:cover;border-radius:4px;">
-                                </a>
-                            <?php else: ?>
-                                <span class="text-muted">No image</span>
-                            <?php endif; ?>
+                            <?php echo renderAttachmentThumbnails($financeTransferImagesByTransfer[$row['id']] ?? []); ?>
                         </td>
                         <td>
                             <?php if (!empty($row['notes'])): ?>
@@ -257,7 +276,7 @@ $accountOptions = [
           </div>
           <div class="mb-3">
             <label for="transfer_image" class="form-label">Transfer Image</label>
-            <input type="file" class="form-control" id="transfer_image" name="transfer_image" accept="image/jpeg,image/png,image/gif,image/webp">
+            <input type="file" class="form-control" id="transfer_image" name="transfer_image[]" accept="image/jpeg,image/png,image/gif,image/webp" multiple>
             <small class="text-muted">Optional receipt or transfer screenshot. JPG, PNG, GIF, WEBP, max 5MB.</small>
           </div>
           <div class="mb-3"><label>Notes</label>

@@ -1,6 +1,7 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../config/database.php';
+require_once '../../includes/functions.php';
 
 // Permission check
 if (!hasPermission('finance.po_payment.process')) {
@@ -45,37 +46,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     } elseif (empty($reference) || empty($notes)) {
         $_SESSION['error'] = "Reference and Notes are required fields.";
     } else {
-        // Handle screenshot upload
-        $screenshotPath = null;
-        if (!empty($_FILES['screenshot']['name'])) {
-            $uploadDir = __DIR__ . '/../../assets/uploads/po_payments';
-            if (!is_dir($uploadDir)) {
-                mkdir($uploadDir, 0775, true);
-            }
-            $allowedExt = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
-            $ext = strtolower(pathinfo($_FILES['screenshot']['name'], PATHINFO_EXTENSION));
-            if ($_FILES['screenshot']['error'] !== UPLOAD_ERR_OK) {
-                $_SESSION['error'] = "Failed to upload screenshot.";
-                header("Location: process_payment.php?po_id=" . $po_id);
-                exit();
-            }
-            if (!in_array($ext, $allowedExt, true)) {
-                $_SESSION['error'] = "Unsupported file type. Allowed: JPG, PNG, GIF, WEBP.";
-                header("Location: process_payment.php?po_id=" . $po_id);
-                exit();
-            }
-            if ($_FILES['screenshot']['size'] > 5 * 1024 * 1024) {
-                $_SESSION['error'] = "Screenshot exceeds the 5MB limit.";
-                header("Location: process_payment.php?po_id=" . $po_id);
-                exit();
-            }
-            $newFile = 'payment_' . $po_id . '_' . uniqid('', true) . '.' . $ext;
-            if (!move_uploaded_file($_FILES['screenshot']['tmp_name'], $uploadDir . '/' . $newFile)) {
-                $_SESSION['error'] = "Failed to upload screenshot.";
-                header("Location: process_payment.php?po_id=" . $po_id);
-                exit();
-            }
-            $screenshotPath = 'assets/uploads/po_payments/' . $newFile;
+        // Handle screenshot upload(s)
+        $screenshotError = null;
+        $uploadedScreenshots = uploadImageAttachments(
+            'screenshot',
+            'assets/uploads/po_payments',
+            'payment_' . $po_id,
+            0, // optional
+            $screenshotError
+        );
+        if ($screenshotError !== null) {
+            $_SESSION['error'] = $screenshotError;
+            header("Location: process_payment.php?po_id=" . $po_id);
+            exit();
         }
 
         try {
@@ -84,8 +67,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             // Insert payment record
             $stmt = $pdo->prepare("
                 INSERT INTO purchase_order_payments
-                (purchase_order_id, amount, payment_method, reference, notes, screenshot_path, created_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (purchase_order_id, amount, payment_method, reference, notes, created_by)
+                VALUES (?, ?, ?, ?, ?, ?)
             ");
             $stmt->execute([
                 $po_id,
@@ -93,10 +76,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $payment_method,
                 $reference,
                 $notes,
-                $screenshotPath,
                 $_SESSION['user_id']
             ]);
-            
+            $payment_id = $pdo->lastInsertId();
+
+            if (!empty($uploadedScreenshots)) {
+                $attStmt = $pdo->prepare("INSERT INTO purchase_order_payment_attachments (purchase_order_payment_id, file_path, original_name, created_by) VALUES (?, ?, ?, ?)");
+                foreach ($uploadedScreenshots as $file) {
+                    $attStmt->execute([$payment_id, $file['path'], $file['original_name'], $_SESSION['user_id']]);
+                }
+            }
+
             // Update PO paid amount
             $stmt = $pdo->prepare("
                 UPDATE purchase_orders SET paid_amount = paid_amount + ? 
@@ -134,6 +124,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             exit();
         } catch (PDOException $e) {
             $pdo->rollBack();
+            foreach ($uploadedScreenshots as $file) {
+                $full = ROOT_PATH . '/' . $file['path'];
+                if (is_file($full)) {
+                    unlink($full);
+                }
+            }
             $_SESSION['error'] = "Error recording payment: " . $e->getMessage();
         }
     }
@@ -193,10 +189,8 @@ require_once '../../includes/header.php';
                     </div>
                     <div class="col-md-12">
                         <label for="screenshot" class="form-label">Payment Screenshot <span class="text-muted">(optional - JPG, PNG, GIF, WEBP, max 5MB)</span></label>
-                        <input type="file" class="form-control" id="screenshot" name="screenshot" accept="image/jpeg,image/png,image/gif,image/webp">
-                        <div id="screenshot-preview" class="mt-2 d-none">
-                            <img id="preview-img" src="#" alt="Preview" class="img-thumbnail" style="max-height:200px;">
-                        </div>
+                        <input type="file" class="form-control" id="screenshot" name="screenshot[]" accept="image/jpeg,image/png,image/gif,image/webp" multiple>
+                        <div id="screenshot-preview" class="mt-2 d-flex flex-wrap gap-2"></div>
                     </div>
                     <div class="col-md-12">
                         <button type="submit" class="btn btn-primary">Record Payment</button>
@@ -228,19 +222,25 @@ $(document).ready(function() {
         }
     });
 
-    // Screenshot preview
+    // Screenshot preview (multi-file)
     $('#screenshot').change(function() {
-        const file = this.files[0];
-        if (file) {
+        const container = $('#screenshot-preview');
+        container.empty();
+        const files = this.files;
+        if (!files || files.length === 0) {
+            return;
+        }
+        Array.from(files).forEach(function(file) {
             const reader = new FileReader();
             reader.onload = function(e) {
-                $('#preview-img').attr('src', e.target.result);
-                $('#screenshot-preview').removeClass('d-none');
+                container.append($('<img>', {
+                    src: e.target.result,
+                    class: 'img-thumbnail',
+                    css: { maxHeight: '150px' }
+                }));
             };
             reader.readAsDataURL(file);
-        } else {
-            $('#screenshot-preview').addClass('d-none');
-        }
+        });
     });
 });
 </script>
