@@ -13,6 +13,10 @@ $canSalesDashboard = hasPermission('sales.dashboard.view')
 $salesDashboardUrl = $canSalesDashboard ? BASE_URL . 'modules/sales/' : BASE_URL . 'modules/finance/bills.php';
 $accountsReceivableUrl = hasPermission('finance.customer_payment.process') ? BASE_URL . 'modules/finance/bills.php' : $salesDashboardUrl;
 $canViewSalesPrices = hasPermission('sales.orders.price.view');
+$dashboardOrderJoins = " JOIN customers dashboard_customer ON dashboard_customer.id = o.customer_id
+                         LEFT JOIN factories dashboard_factory ON dashboard_factory.id = dashboard_customer.factory_id ";
+$dashboardOrderScope = getCustomerChannelScopeSql('dashboard_customer', 'dashboard_factory');
+$dashboardInventoryScope = getInventoryChannelScopeSql('i');
 ?>
 
 <div class="row">
@@ -26,7 +30,9 @@ $canViewSalesPrices = hasPermission('sales.orders.price.view');
                             <h6 class="card-title">Total Sales</h6>
                             <h6 class="card-subtitle mb-2">Total / Paid</h6>
                             <?php
-                            $sql = "SELECT SUM(total_amount) as total ,SUM(paid_amount) as paid FROM orders";
+                            $sql = "SELECT SUM(o.total_amount) AS total, SUM(o.paid_amount) AS paid
+                                    FROM orders o $dashboardOrderJoins
+                                    WHERE $dashboardOrderScope";
                             $result = $conn->query($sql);
                             $row = $result->fetch_assoc();
                             $total_amount = number_format((float)($row['total'] ?? 0), 2);
@@ -54,8 +60,10 @@ $canViewSalesPrices = hasPermission('sales.orders.price.view');
                             <h6 class="card-title">Total Orders</h6>
                             <h6 class="card-subtitle mb-2">New / In Production</h6>
                             <?php
-                            $sql = "SELECT COUNT(*) as c FROM orders where status = 'new'";
-                            $sql1 = "SELECT COUNT(*) as c FROM orders where status = 'in-production'";
+                            $sql = "SELECT COUNT(*) AS c FROM orders o $dashboardOrderJoins
+                                    WHERE o.status = 'new' AND $dashboardOrderScope";
+                            $sql1 = "SELECT COUNT(*) AS c FROM orders o $dashboardOrderJoins
+                                     WHERE o.status = 'in-production' AND $dashboardOrderScope";
                             $result = $conn->query($sql);
                             $result1 = $conn->query($sql1);
                             $new_orders = (int)($result->fetch_assoc()['c'] ?? 0);
@@ -82,7 +90,8 @@ $canViewSalesPrices = hasPermission('sales.orders.price.view');
                         <div>
                             <h6 class="card-title">Today's Orders</h6>
                             <?php
-                            $sql = "SELECT COUNT(*) as total FROM orders WHERE DATE(order_date) = CURDATE()";
+                            $sql = "SELECT COUNT(*) AS total FROM orders o $dashboardOrderJoins
+                                    WHERE DATE(o.order_date) = CURDATE() AND $dashboardOrderScope";
                             $result = $conn->query($sql);
                             $today_orders = (int)($result->fetch_assoc()['total'] ?? 0);
                             ?>
@@ -107,9 +116,26 @@ $canViewSalesPrices = hasPermission('sales.orders.price.view');
                         <div>
                             <h6 class="card-title">Low Stock Items</h6>
                             <?php
-                            $sql = "SELECT COUNT(*) as total FROM inventory_products ip 
-                                    JOIN products p ON ip.product_id = p.id 
-                                    WHERE ip.quantity <= p.min_stock_level";
+                            if (isSalesPersonUser()) {
+                                $productCustomerScope = getCustomerChannelScopeSql('product_customer', 'product_factory');
+                                $sql = "SELECT COUNT(*) AS total
+                                        FROM inventory_products ip
+                                        JOIN inventories i ON i.id = ip.inventory_id
+                                        JOIN products p ON ip.product_id = p.id
+                                        JOIN customers product_customer ON product_customer.id = p.customer_id
+                                        LEFT JOIN factories product_factory ON product_factory.id = product_customer.factory_id
+                                        WHERE ip.quantity <= p.min_stock_level
+                                          AND p.type = 'final'
+                                          AND $dashboardInventoryScope
+                                          AND $productCustomerScope";
+                            } else {
+                                $sql = "SELECT COUNT(*) AS total
+                                        FROM inventory_products ip
+                                        JOIN inventories i ON i.id = ip.inventory_id
+                                        JOIN products p ON ip.product_id = p.id
+                                        WHERE ip.quantity <= p.min_stock_level
+                                          AND $dashboardInventoryScope";
+                            }
                             $result = $conn->query($sql);
                             $low_stock = (int)($result->fetch_assoc()['total'] ?? 0);
                             ?>
@@ -137,7 +163,9 @@ $canViewSalesPrices = hasPermission('sales.orders.price.view');
                         <div>
                             <h6 class="card-title">Accounts Receivable</h6>
                             <?php
-                            $sql = "SELECT SUM(total_amount - paid_amount) AS ar FROM orders WHERE paid_amount < total_amount";
+                            $sql = "SELECT SUM(o.total_amount - o.paid_amount) AS ar
+                                    FROM orders o $dashboardOrderJoins
+                                    WHERE o.paid_amount < o.total_amount AND $dashboardOrderScope";
                             $result = $conn->query($sql);
                             $ar = (float)($result->fetch_assoc()['ar'] ?? 0);
                             ?>
@@ -162,7 +190,12 @@ $canViewSalesPrices = hasPermission('sales.orders.price.view');
                         <div>
                             <h6 class="card-title">Open Quotations</h6>
                             <?php
-                            $sql = "SELECT COUNT(*) AS c FROM quotations WHERE status NOT IN ('converted','rejected')";
+                            $sql = "SELECT COUNT(*) AS c
+                                    FROM quotations q
+                                    JOIN customers dashboard_customer ON dashboard_customer.id = q.customer_id
+                                    LEFT JOIN factories dashboard_factory ON dashboard_factory.id = dashboard_customer.factory_id
+                                    WHERE q.status NOT IN ('converted','rejected')
+                                      AND $dashboardOrderScope";
                             $result = $conn->query($sql);
                             $open_q = (int)($result->fetch_assoc()['c'] ?? 0);
                             ?>
@@ -259,9 +292,11 @@ $canViewSalesPrices = hasPermission('sales.orders.price.view');
                         </thead>
                         <tbody>
                             <?php
-                            $sql = "SELECT o.id, o.internal_id, o.order_date, o.total_amount, o.status, c.name as customer_name 
-                                    FROM orders o 
-                                    JOIN customers c ON o.customer_id = c.id 
+                            $sql = "SELECT o.id, o.internal_id, o.order_date, o.total_amount, o.status,
+                                           dashboard_customer.name AS customer_name
+                                    FROM orders o
+                                    $dashboardOrderJoins
+                                    WHERE $dashboardOrderScope
                                     ORDER BY o.order_date DESC LIMIT 5";
                             $result = $conn->query($sql);
                             if ($result && $result->num_rows > 0) {
@@ -297,10 +332,25 @@ $canViewSalesPrices = hasPermission('sales.orders.price.view');
             <div class="card-body">
                 <ul class="list-group">
                     <?php
-                    $sql = "SELECT i.name, COUNT(ip.product_id) as products, SUM(ip.quantity) as total_qty 
-                            FROM inventories i 
-                            LEFT JOIN inventory_products ip ON i.id = ip.inventory_id 
-                            GROUP BY i.id";
+                    if (isSalesPersonUser()) {
+                        $productCustomerScope = getCustomerChannelScopeSql('product_customer', 'product_factory');
+                        $sql = "SELECT i.name, COUNT(ip.product_id) AS products, SUM(ip.quantity) AS total_qty
+                                FROM inventories i
+                                JOIN inventory_products ip ON i.id = ip.inventory_id
+                                JOIN products p ON p.id = ip.product_id
+                                JOIN customers product_customer ON product_customer.id = p.customer_id
+                                LEFT JOIN factories product_factory ON product_factory.id = product_customer.factory_id
+                                WHERE $dashboardInventoryScope
+                                  AND p.type = 'final'
+                                  AND $productCustomerScope
+                                GROUP BY i.id, i.name";
+                    } else {
+                        $sql = "SELECT i.name, COUNT(ip.product_id) AS products, SUM(ip.quantity) AS total_qty
+                                FROM inventories i
+                                LEFT JOIN inventory_products ip ON i.id = ip.inventory_id
+                                WHERE $dashboardInventoryScope
+                                GROUP BY i.id, i.name";
+                    }
                     $result = $conn->query($sql);
                     if ($result && $result->num_rows > 0) {
                         while ($row = $result->fetch_assoc()) {

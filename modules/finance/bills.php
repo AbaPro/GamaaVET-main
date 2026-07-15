@@ -15,6 +15,8 @@ require_once '../../includes/header.php';
 $where = [];
 $params = [];
 
+$where[] = getCustomerChannelScopeSql('c', 'f');
+
 if (!empty($_GET['customer_id'])) {
     $where[] = "o.customer_id = ?";
     $params[] = $_GET['customer_id'];
@@ -39,7 +41,10 @@ $stats_sql = "SELECT
     SUM(total_amount) as total_sales,
     SUM(paid_amount) as total_received,
     SUM(total_amount - paid_amount) as total_pending
-    FROM orders o $where_sql";
+    FROM orders o
+    JOIN customers c ON c.id = o.customer_id
+    LEFT JOIN factories f ON f.id = c.factory_id
+    $where_sql";
 $stmt = $pdo->prepare($stats_sql);
 $stmt->execute($params);
 $stats = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -47,15 +52,21 @@ $stats = $stmt->fetch(PDO::FETCH_ASSOC);
 // Fetch Paginated Orders
 $sql = "SELECT o.id, o.internal_id, c.name as customer, o.total_amount, o.paid_amount, o.status, o.order_date
         FROM orders o 
-        JOIN customers c ON o.customer_id = c.id 
+        JOIN customers c ON o.customer_id = c.id
+        LEFT JOIN factories f ON f.id = c.factory_id
         $where_sql
         ORDER BY o.order_date DESC";
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $orders = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Fetch Customers for filter
-$customers = $pdo->query("SELECT id, name FROM customers ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+// Fetch customers from the same region/assignment scope.
+$customerSql = "SELECT c.id, c.name
+                FROM customers c
+                LEFT JOIN factories f ON f.id = c.factory_id
+                WHERE " . getCustomerChannelScopeSql('c', 'f') . "
+                ORDER BY c.name ASC";
+$customers = $pdo->query($customerSql)->fetchAll(PDO::FETCH_ASSOC);
 ?>
 
 <div class="container-fluid px-4">
@@ -202,5 +213,4 @@ $(document).ready(function() {
 </script>
 
 <?php require_once '../../includes/footer.php'; ?>
-
 

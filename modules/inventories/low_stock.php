@@ -10,13 +10,32 @@ if (!hasPermission('inventories.view')) {
 $page_title = 'Low Stock Items';
 require_once '../../includes/header.php';
 
-// Fetch low stock items across inventories
-$sql = "SELECT ip.inventory_id, i.name AS inventory_name, p.id AS product_id, p.name AS product_name, p.sku, p.min_stock_level, ip.quantity
-        FROM inventory_products ip
-        JOIN products p ON ip.product_id = p.id
-        JOIN inventories i ON ip.inventory_id = i.id
-        WHERE ip.quantity <= p.min_stock_level
-        ORDER BY i.name, p.name";
+// Fetch low stock items from the selected channel. Salespeople see only their final products.
+$inventoryScope = getInventoryChannelScopeSql('i');
+if (isSalesPersonUser()) {
+    $customerScope = getCustomerChannelScopeSql('c', 'f');
+    $sql = "SELECT ip.inventory_id, i.name AS inventory_name, p.id AS product_id,
+                   p.name AS product_name, p.sku, p.min_stock_level, ip.quantity
+            FROM inventory_products ip
+            JOIN products p ON ip.product_id = p.id
+            JOIN inventories i ON ip.inventory_id = i.id
+            JOIN customers c ON c.id = p.customer_id
+            LEFT JOIN factories f ON f.id = c.factory_id
+            WHERE ip.quantity <= p.min_stock_level
+              AND p.type = 'final'
+              AND $inventoryScope
+              AND $customerScope
+            ORDER BY i.name, p.name";
+} else {
+    $sql = "SELECT ip.inventory_id, i.name AS inventory_name, p.id AS product_id,
+                   p.name AS product_name, p.sku, p.min_stock_level, ip.quantity
+            FROM inventory_products ip
+            JOIN products p ON ip.product_id = p.id
+            JOIN inventories i ON ip.inventory_id = i.id
+            WHERE ip.quantity <= p.min_stock_level
+              AND $inventoryScope
+            ORDER BY i.name, p.name";
+}
 
 $result = $conn->query($sql);
 ?>

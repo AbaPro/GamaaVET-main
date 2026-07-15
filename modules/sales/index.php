@@ -27,16 +27,8 @@ require_once '../../includes/header.php';
 // Get statistics for dashboard
 $today = date('Y-m-d');
 $month_start = date('Y-m-01');
-$salesScopeJoins = '';
-$salesScopeCondition = '';
-if (isSalesPersonUser()) {
-    $loginRegion = $_SESSION['login_region'] ?? 'factory';
-    $salesScopeJoins = ' JOIN customers scope_customer ON scope_customer.id = o.customer_id LEFT JOIN factories scope_factory ON scope_factory.id = scope_customer.factory_id ';
-    $salesScopeCondition = ' AND COALESCE(scope_customer.sales_person_id, scope_factory.sales_person_id) = ' . (int)$_SESSION['user_id'];
-    $salesScopeCondition .= $loginRegion === 'factory'
-        ? ' AND scope_customer.direct_sale IS NULL'
-        : " AND scope_customer.direct_sale = '" . $conn->real_escape_string($loginRegion) . "'";
-}
+$salesScopeJoins = ' JOIN customers scope_customer ON scope_customer.id = o.customer_id LEFT JOIN factories scope_factory ON scope_factory.id = scope_customer.factory_id ';
+$salesScopeCondition = ' AND ' . getCustomerChannelScopeSql('scope_customer', 'scope_factory');
 
 $stats = [
     'today_sales' => 0,

@@ -590,6 +590,36 @@ function isSalesPersonUser() {
 }
 
 /**
+ * SQL condition for data that belongs to the currently selected login channel.
+ * Factory data has a NULL direct_sale value; direct-sales data stores its region slug.
+ * Salespeople are additionally restricted to their effective customer assignment.
+ */
+function getCustomerChannelScopeSql($customerAlias = 'c', $factoryAlias = 'f') {
+    global $conn;
+
+    $loginRegion = $_SESSION['login_region'] ?? 'factory';
+    $condition = $loginRegion === 'factory'
+        ? "$customerAlias.direct_sale IS NULL"
+        : "$customerAlias.direct_sale = '" . $conn->real_escape_string($loginRegion) . "'";
+
+    if (isSalesPersonUser()) {
+        $condition .= " AND COALESCE($customerAlias.sales_person_id, $factoryAlias.sales_person_id) = "
+            . (int)$_SESSION['user_id'];
+    }
+
+    return $condition;
+}
+
+function getInventoryChannelScopeSql($inventoryAlias = 'i') {
+    global $conn;
+
+    $loginRegion = $_SESSION['login_region'] ?? 'factory';
+    return $loginRegion === 'factory'
+        ? "$inventoryAlias.direct_sale IS NULL"
+        : "$inventoryAlias.direct_sale = '" . $conn->real_escape_string($loginRegion) . "'";
+}
+
+/**
  * Salespeople are restricted to customers explicitly assigned to them, or
  * inherited from the customer's factory. Admins and non-sales operational
  * roles retain their permission-based access.

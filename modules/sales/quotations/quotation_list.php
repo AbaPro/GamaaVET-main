@@ -25,17 +25,7 @@ $query = "SELECT q.id, q.quotation_date, q.expiry_date, q.total_amount,
           WHERE 1=1";
 $params = [];
 
-if (isSalesPersonUser()) {
-    $query .= " AND COALESCE(c.sales_person_id, f.sales_person_id) = ?";
-    $params[] = (int)$_SESSION['user_id'];
-    $loginRegion = $_SESSION['login_region'] ?? 'factory';
-    if ($loginRegion === 'factory') {
-        $query .= " AND c.direct_sale IS NULL";
-    } else {
-        $query .= " AND c.direct_sale = ?";
-        $params[] = $loginRegion;
-    }
-}
+$query .= " AND " . getCustomerChannelScopeSql('c', 'f');
 
 if (!empty($status)) {
     $query .= " AND q.status = ?";
@@ -67,17 +57,7 @@ $quotations = $stmt->fetchAll(PDO::FETCH_ASSOC);
 // Get customers for filter dropdown within the same scope.
 $customerQuery = "SELECT c.id, c.name FROM customers c LEFT JOIN factories f ON f.id = c.factory_id WHERE 1=1";
 $customerParams = [];
-if (isSalesPersonUser()) {
-    $customerQuery .= " AND COALESCE(c.sales_person_id, f.sales_person_id) = ?";
-    $customerParams[] = (int)$_SESSION['user_id'];
-    $loginRegion = $_SESSION['login_region'] ?? 'factory';
-    if ($loginRegion === 'factory') {
-        $customerQuery .= " AND c.direct_sale IS NULL";
-    } else {
-        $customerQuery .= " AND c.direct_sale = ?";
-        $customerParams[] = $loginRegion;
-    }
-}
+$customerQuery .= " AND " . getCustomerChannelScopeSql('c', 'f');
 $customerQuery .= " ORDER BY c.name";
 $customerStmt = $pdo->prepare($customerQuery);
 $customerStmt->execute($customerParams);
