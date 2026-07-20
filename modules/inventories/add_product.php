@@ -8,9 +8,19 @@ if (!hasPermission('inventories.products.add')) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $inventory_id = sanitize($_POST['inventory_id']);
-    $product_id = sanitize($_POST['product_id']);
-    $quantity = sanitize($_POST['quantity']);
+    $inventory_id = isset($_POST['inventory_id']) ? (int)$_POST['inventory_id'] : 0;
+    $product_id = isset($_POST['product_id']) ? (int)$_POST['product_id'] : 0;
+    $quantity = isset($_POST['quantity']) && is_numeric($_POST['quantity']) ? (float)$_POST['quantity'] : -1;
+
+    if (!canAddProductToInventory($inventory_id, $product_id)) {
+        setAlert('danger', 'Only final products belonging to the currently selected region can be added.');
+        redirect($inventory_id > 0 ? "view.php?id=$inventory_id" : 'index.php');
+    }
+
+    if ($quantity < 0) {
+        setAlert('danger', 'Please enter a valid quantity.');
+        redirect("view.php?id=$inventory_id");
+    }
     
     // Check if product already exists in inventory
     $check_sql = "SELECT id FROM inventory_products WHERE inventory_id = ? AND product_id = ?";

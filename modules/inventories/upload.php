@@ -8,6 +8,9 @@ if (!hasPermission('inventories.products.add')) {
     redirect('../../dashboard.php');
 }
 
+$inventoryScope = getInventoryChannelScopeSql('i');
+$customerScope = getCustomerChannelScopeSql('c', 'f');
+
 // Initialize session if not set
 if (!isset($_SESSION['inventory_bulk_upload'])) {
     $_SESSION['inventory_bulk_upload'] = [
@@ -32,6 +35,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
         redirect('upload.php');
     }
 
+    if (!canAccessInventory($inventory_id)) {
+        setAlert('danger', 'Inventory not found in the currently selected region.');
+        redirect('upload.php');
+    }
+
     if ($_FILES['csv_file']['error'] === UPLOAD_ERR_OK) {
         $file_path = $_FILES['csv_file']['tmp_name'];
         $file_ext = pathinfo($_FILES['csv_file']['name'], PATHINFO_EXTENSION);
@@ -46,8 +54,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
         $missing_products = [];
         $all_products = [];
 
-        // Fetch all products for matching
-        $prod_res = $conn->query("SELECT id, name FROM products");
+        // Only final products belonging to the selected channel are eligible.
+        $prod_res = $conn->query("SELECT p.id, p.name
+                                  FROM products p
+                                  JOIN customers c ON c.id = p.customer_id
+                                  LEFT JOIN factories f ON f.id = c.factory_id
+                                  WHERE p.type = 'final' AND $customerScope");
         while ($p = $prod_res->fetch_assoc()) {
             $all_products[strtolower(trim($p['name']))] = $p['id'];
         }
@@ -199,6 +211,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['process_mapping'])) {
 if (isset($_SESSION['inventory_bulk_upload']) && $_SESSION['inventory_bulk_upload']['step'] == 3) {
     $inventory_id = $_SESSION['inventory_bulk_upload']['inventory_id'];
     $csv_data = $_SESSION['inventory_bulk_upload']['csv_data'];
+
+    if (!canAccessInventory($inventory_id)) {
+        unset($_SESSION['inventory_bulk_upload']);
+        setAlert('danger', 'Inventory not found in the currently selected region.');
+        redirect('upload.php');
+    }
     
     $success_count = 0;
     $error_count = 0;
@@ -210,7 +228,7 @@ if (isset($_SESSION['inventory_bulk_upload']) && $_SESSION['inventory_bulk_uploa
             $qty = $row['quantity'];
             
             // Skip products that were not matched/mapped
-            if (!$product_id) {
+            if (!$product_id || $qty < 0 || !canAddProductToInventory($inventory_id, $product_id)) {
                 $error_count++;
                 continue;
             }
@@ -280,7 +298,10 @@ $step = $_SESSION['inventory_bulk_upload']['step'] ?? 1;
                             <select class="form-select" name="inventory_id" required>
                                 <option value="">-- Select Inventory --</option>
                                 <?php
-                                $inv_res = $conn->query("SELECT id, name FROM inventories WHERE is_active = 1 ORDER BY name");
+                                $inv_res = $conn->query("SELECT i.id, i.name
+                                                         FROM inventories i
+                                                         WHERE i.is_active = 1 AND $inventoryScope
+                                                         ORDER BY i.name");
                                 while ($inv = $inv_res->fetch_assoc()) {
                                     $selected = (isset($_GET['inventory_id']) && $_GET['inventory_id'] == $inv['id']) ? 'selected' : '';
                                     echo "<option value='{$inv['id']}' $selected>".htmlspecialchars($inv['name'])."</option>";
@@ -329,7 +350,12 @@ $step = $_SESSION['inventory_bulk_upload']['step'] ?? 1;
                                 </thead>
                                 <tbody>
                                     <?php 
-                                    $all_prods_res = $conn->query("SELECT id, name, sku FROM products ORDER BY name");
+                                    $all_prods_res = $conn->query("SELECT p.id, p.name, p.sku
+                                                                  FROM products p
+                                                                  JOIN customers c ON c.id = p.customer_id
+                                                                  LEFT JOIN factories f ON f.id = c.factory_id
+                                                                  WHERE p.type = 'final' AND $customerScope
+                                                                  ORDER BY p.name");
                                     $all_prods = $all_prods_res->fetch_all(MYSQLI_ASSOC);
                                     
                                     foreach ($_SESSION['inventory_bulk_upload']['missing_products'] as $missing_name): ?>

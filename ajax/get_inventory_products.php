@@ -14,7 +14,13 @@ if (!isset($_GET['inventory_id']) || !is_numeric($_GET['inventory_id'])) {
     exit;
 }
 
-$inventory_id = sanitize($_GET['inventory_id']);
+$inventory_id = (int)$_GET['inventory_id'];
+
+if (!canAccessInventory($inventory_id)) {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'message' => 'Inventory is outside the selected region']);
+    exit;
+}
 
 // Get inventory products
 $sql = "SELECT p.id, p.name, p.sku, ip.quantity 

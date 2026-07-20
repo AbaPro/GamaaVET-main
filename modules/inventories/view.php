@@ -12,7 +12,13 @@ if (!isset($_GET['id']) || !is_numeric($_GET['id'])) {
     redirect('index.php');
 }
 
-$inventory_id = sanitize($_GET['id']);
+$inventory_id = (int)$_GET['id'];
+
+if (!canAccessInventory($inventory_id)) {
+    setAlert('danger', 'Inventory not found in the currently selected region.');
+    redirect('index.php');
+}
+
 $page_title = 'Inventory Details';
 require_once '../../includes/header.php';
 
@@ -30,6 +36,8 @@ if ($inventory_result->num_rows === 0) {
 
 $inventory = $inventory_result->fetch_assoc();
 $inventory_stmt->close();
+
+$customerScope = getCustomerChannelScopeSql('c', 'f');
 
 // Filter parameters
 $customerFilters = [];
@@ -140,7 +148,11 @@ $products_result = $products_stmt->get_result();
                     <label class="form-label small text-muted">Filter by Customer(s)</label>
                     <select class="form-select form-select-sm js-searchable-select" name="customer_ids[]" multiple>
                         <?php 
-                        $all_custs = $conn->query("SELECT id, name FROM customers ORDER BY name");
+                        $all_custs = $conn->query("SELECT c.id, c.name
+                                                   FROM customers c
+                                                   LEFT JOIN factories f ON f.id = c.factory_id
+                                                   WHERE $customerScope
+                                                   ORDER BY c.name");
                         while($c = $all_custs->fetch_assoc()): ?>
                             <option value="<?= $c['id'] ?>" <?= in_array($c['id'], $customerFilters) ? 'selected' : '' ?>>
                                 <?= htmlspecialchars($c['name']) ?>
@@ -232,11 +244,8 @@ $products_result = $products_stmt->get_result();
                         <div class="row g-2">
                             <div class="col-md-6">
                                 <label for="filter_type" class="form-label small">Product Type</label>
-                                <select class="form-select form-select-sm" id="filter_type">
-                                    <option value="">All types</option>
-                                    <option value="primary">Primary</option>
-                                    <option value="final">Final</option>
-                                    <option value="material">Material</option>
+                                <select class="form-select form-select-sm" id="filter_type" disabled>
+                                    <option value="final" selected>Final products only</option>
                                 </select>
                             </div>
                             <div class="col-md-6">
@@ -244,7 +253,11 @@ $products_result = $products_stmt->get_result();
                                 <select class="form-select form-select-sm" id="filter_customer">
                                     <option value="">All customers</option>
                                     <?php
-                                    $customers_result = $conn->query("SELECT id, name FROM customers ORDER BY name");
+                                    $customers_result = $conn->query("SELECT c.id, c.name
+                                                                      FROM customers c
+                                                                      LEFT JOIN factories f ON f.id = c.factory_id
+                                                                      WHERE $customerScope
+                                                                      ORDER BY c.name");
                                     if ($customers_result) {
                                         while ($customer = $customers_result->fetch_assoc()) {
                                             echo '<option value="' . (int)$customer['id'] . '">' . htmlspecialchars($customer['name']) . '</option>';
@@ -269,7 +282,12 @@ $products_result = $products_stmt->get_result();
                         <select class="form-select" id="product_id" name="product_id" required size="5" style="height: auto;">
                             <option value="">-- Select Product --</option>
                             <?php
-                            $all_products = $conn->query("SELECT id, name, sku, type, customer_id FROM products ORDER BY name");
+                            $all_products = $conn->query("SELECT p.id, p.name, p.sku, p.type, p.customer_id
+                                                          FROM products p
+                                                          JOIN customers c ON c.id = p.customer_id
+                                                          LEFT JOIN factories f ON f.id = c.factory_id
+                                                          WHERE p.type = 'final' AND $customerScope
+                                                          ORDER BY p.name");
                             while ($prod = $all_products->fetch_assoc()) {
                                 $type = isset($prod['type']) ? htmlspecialchars($prod['type']) : '';
                                 $customer_id = isset($prod['customer_id']) ? (int)$prod['customer_id'] : 0;
@@ -417,7 +435,7 @@ $(document).ready(function() {
     $('#filter_type, #filter_customer, #product_search').on('change keyup', applyProductFilters);
 
     $('#addProductModal').on('show.bs.modal', function() {
-        $('#filter_type').val('');
+        $('#filter_type').val('final');
         $('#filter_customer').val('');
         $('#product_search').val('');
         applyProductFilters();

@@ -16,6 +16,11 @@ $transfer_id = (int)$_GET['id'];
 $user_id = $_SESSION['user_id'] ?? null;
 $accepted_at = date('Y-m-d H:i:s');
 
+if (!canAccessInventoryTransfer($transfer_id)) {
+    setAlert('danger', 'Transfer not found in the currently selected region.');
+    redirect('transfers_list.php');
+}
+
 $conn->begin_transaction();
 
 try {

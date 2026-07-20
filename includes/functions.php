@@ -620,6 +620,83 @@ function getInventoryChannelScopeSql($inventoryAlias = 'i') {
 }
 
 /**
+ * Check whether an inventory belongs to the currently selected login channel.
+ */
+function canAccessInventory($inventoryId) {
+    global $conn;
+
+    $inventoryId = (int)$inventoryId;
+    if ($inventoryId <= 0 || !isLoggedIn()) return false;
+
+    $scope = getInventoryChannelScopeSql('i');
+    $stmt = $conn->prepare("SELECT i.id FROM inventories i WHERE i.id = ? AND $scope LIMIT 1");
+    $stmt->bind_param('i', $inventoryId);
+    $stmt->execute();
+    $allowed = $stmt->get_result()->num_rows === 1;
+    $stmt->close();
+
+    return $allowed;
+}
+
+/**
+ * Inventory additions are limited to final products whose customer belongs to
+ * the same selected channel (and salesperson assignment, when applicable).
+ */
+function canAddProductToInventory($inventoryId, $productId) {
+    global $conn;
+
+    $inventoryId = (int)$inventoryId;
+    $productId = (int)$productId;
+    if ($inventoryId <= 0 || $productId <= 0 || !isLoggedIn()) return false;
+
+    $inventoryScope = getInventoryChannelScopeSql('i');
+    $customerScope = getCustomerChannelScopeSql('c', 'f');
+    $sql = "SELECT p.id
+            FROM products p
+            JOIN customers c ON c.id = p.customer_id
+            LEFT JOIN factories f ON f.id = c.factory_id
+            JOIN inventories i ON i.id = ?
+            WHERE p.id = ?
+              AND p.type = 'final'
+              AND $inventoryScope
+              AND $customerScope
+            LIMIT 1";
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param('ii', $inventoryId, $productId);
+    $stmt->execute();
+    $allowed = $stmt->get_result()->num_rows === 1;
+    $stmt->close();
+
+    return $allowed;
+}
+
+/**
+ * A transfer is visible only when both inventories belong to the current channel.
+ */
+function canAccessInventoryTransfer($transferId) {
+    global $conn;
+
+    $transferId = (int)$transferId;
+    if ($transferId <= 0 || !isLoggedIn()) return false;
+
+    $sourceScope = getInventoryChannelScopeSql('source_inventory');
+    $destinationScope = getInventoryChannelScopeSql('destination_inventory');
+    $sql = "SELECT it.id
+            FROM inventory_transfers it
+            JOIN inventories source_inventory ON source_inventory.id = it.from_inventory_id
+            JOIN inventories destination_inventory ON destination_inventory.id = it.to_inventory_id
+            WHERE it.id = ? AND $sourceScope AND $destinationScope
+            LIMIT 1";
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param('i', $transferId);
+    $stmt->execute();
+    $allowed = $stmt->get_result()->num_rows === 1;
+    $stmt->close();
+
+    return $allowed;
+}
+
+/**
  * Salespeople are restricted to customers explicitly assigned to them, or
  * inherited from the customer's factory. Admins and non-sales operational
  * roles retain their permission-based access.

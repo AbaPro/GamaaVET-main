@@ -11,6 +11,11 @@ if (!hasPermission('inventories.transfer')) {
 if (isset($_GET['id']) && is_numeric($_GET['id'])) {
     $transfer_id = (int)$_GET['id'];
 
+    if (!canAccessInventoryTransfer($transfer_id)) {
+        setAlert('danger', 'Transfer not found in the currently selected region.');
+        redirect('transfers_list.php');
+    }
+
     try {
         $pdo->beginTransaction();
 

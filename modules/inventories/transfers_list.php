@@ -11,6 +11,8 @@ $page_title = 'Inventory Transfers';
 require_once '../../includes/header.php';
 
 // Fetch transfers
+$sourceScope = getInventoryChannelScopeSql('i1');
+$destinationScope = getInventoryChannelScopeSql('i2');
 $sql = "SELECT it.*, 
                i1.name as from_inventory, 
                i2.name as to_inventory,
@@ -30,11 +32,18 @@ $sql = "SELECT it.*,
             FROM transfer_items
             GROUP BY transfer_id
         ) items ON items.transfer_id = it.id
+        WHERE $sourceScope AND $destinationScope
         ORDER BY it.created_at DESC";
 $result = $conn->query($sql);
 
 $transferImagesByTransfer = [];
-$tiRes = $conn->query("SELECT inventory_transfer_id, file_path, original_name FROM inventory_transfer_images ORDER BY created_at ASC");
+$tiRes = $conn->query("SELECT images.inventory_transfer_id, images.file_path, images.original_name
+                       FROM inventory_transfer_images images
+                       JOIN inventory_transfers it ON it.id = images.inventory_transfer_id
+                       JOIN inventories i1 ON i1.id = it.from_inventory_id
+                       JOIN inventories i2 ON i2.id = it.to_inventory_id
+                       WHERE $sourceScope AND $destinationScope
+                       ORDER BY images.created_at ASC");
 if ($tiRes) {
     while ($tiRow = $tiRes->fetch_assoc()) {
         $transferImagesByTransfer[$tiRow['inventory_transfer_id']][] = $tiRow;

@@ -13,6 +13,8 @@ if (!isset($_GET['id']) || !is_numeric($_GET['id'])) {
 }
 
 $transfer_id = (int)$_GET['id'];
+$sourceScope = getInventoryChannelScopeSql('i1');
+$destinationScope = getInventoryChannelScopeSql('i2');
 
 $transfer_sql = "SELECT it.*,
                         i1.name as from_inventory,
@@ -33,7 +35,7 @@ $transfer_sql = "SELECT it.*,
                      FROM transfer_items
                      GROUP BY transfer_id
                  ) items ON items.transfer_id = it.id
-                 WHERE it.id = ?";
+                 WHERE it.id = ? AND $sourceScope AND $destinationScope";
 $transfer_stmt = $conn->prepare($transfer_sql);
 $transfer_stmt->bind_param("i", $transfer_id);
 $transfer_stmt->execute();

@@ -24,6 +24,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect('transfer.php');
     }
 
+    if (!canAccessInventory($from_inventory_id) || !canAccessInventory($to_inventory_id)) {
+        setAlert('danger', 'Both inventories must belong to the currently selected region.');
+        redirect('transfer.php');
+    }
+
     if (empty($_POST['product_id']) || !is_array($_POST['product_id'])) {
         setAlert('danger', 'Please add at least one item to transfer.');
         redirect('transfer.php');
@@ -150,17 +155,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// Get all inventories except the one we're transferring from
-$inventories_sql = "SELECT id, name FROM inventories WHERE is_active = 1 ORDER BY name";
+// Transfers are allowed only between inventories in the selected login channel.
+$inventoryScope = getInventoryChannelScopeSql('i');
+$inventories_sql = "SELECT i.id, i.name FROM inventories i WHERE i.is_active = 1 AND $inventoryScope ORDER BY i.name";
 $inventories_result = $conn->query($inventories_sql);
-
-// Get products for the first inventory (default selection)
-$products_sql = "SELECT p.id, p.name, p.sku, ip.quantity 
-                 FROM inventory_products ip 
-                 JOIN products p ON ip.product_id = p.id 
-                 WHERE ip.inventory_id = (SELECT id FROM inventories LIMIT 1)
-                 ORDER BY p.name";
-$products_result = $conn->query($products_sql);
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
