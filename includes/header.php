@@ -31,28 +31,21 @@
     <?php
     $login_region = $_SESSION['login_region'] ?? 'factory';
     $navbar_bg = 'bg-primary';
-    $brand_logo = 'logo.png';
     $brand_name = 'GammaVet';
 
     if ($login_region === 'curva') {
         $navbar_bg = 'bg-success';
-        $brand_logo = 'logo_curva.png';
         $brand_name = 'GammaVet - CureVet';
     } elseif ($login_region === 'primer') {
         $navbar_bg = 'bg-warning text-dark';
-        $brand_logo = 'logo_primer.png';
         $brand_name = 'GammaVet - PremiumVet';
     } elseif ($login_region === 'naturous') {
-        $brand_logo = 'logo_naturous.png';
         $brand_name = 'GammaVet - Naturous';
     } elseif ($login_region === 'activita') {
-        $brand_logo = 'logo_activita.png';
         $brand_name = 'GammaVet - Activita';
     }
 
-    if (!file_exists(ROOT_PATH . '/' . $brand_logo)) {
-        $brand_logo = 'logo.png';
-    }
+    $brand_logo = getBrandLogoFile($login_region);
     ?>
     <!-- Navigation -->
     <nav class="navbar navbar-expand-lg navbar-dark <?= $navbar_bg ?> shadow-sm">

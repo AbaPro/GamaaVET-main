@@ -13,7 +13,7 @@ if (!isset($_GET['id']) || !is_numeric($_GET['id'])) {
 }
 
 $customer_id = sanitize($_GET['id']);
-if (!canAccessCustomer($customer_id)) {
+if (!canAccessCustomer($customer_id) || !isCustomerInCurrentChannel($customer_id)) {
     setAlert('danger', 'You do not have permission to view this customer.');
     redirect('index.php');
 }
@@ -59,6 +59,13 @@ $address_stmt->bind_param("i", $customer_id);
 $address_stmt->execute();
 $primary_address = $address_stmt->get_result()->fetch_assoc();
 $address_stmt->close();
+
+// Get total outstanding balance across all orders (separate from the prepaid wallet)
+$outstanding_stmt = $conn->prepare("SELECT COALESCE(SUM(total_amount - paid_amount), 0) as outstanding FROM orders WHERE customer_id = ?");
+$outstanding_stmt->bind_param("i", $customer_id);
+$outstanding_stmt->execute();
+$outstanding_balance = (float)$outstanding_stmt->get_result()->fetch_assoc()['outstanding'];
+$outstanding_stmt->close();
 
 // Get recent orders (limit 5)
 $orders_sql = "SELECT o.id, o.internal_id, o.order_date, o.total_amount, o.paid_amount, o.status,
@@ -160,7 +167,9 @@ if ($factories_result) {
                 <?php endif; ?>
                 <p><strong>Tax Number:</strong> <?php echo $customer['tax_number'] ? e($customer['tax_number']) : '-'; ?></p>
                 <?php if ($canViewCustomerWallet): ?>
-                    <p><strong>Wallet Balance:</strong> <?php echo number_format($customer['wallet_balance'], 2); ?></p>
+                    <p><strong>Wallet Balance:</strong> <?php echo number_format($customer['wallet_balance'], 2); ?>
+                        <span class="text-muted small">(prepaid deposit)</span></p>
+                    <p><strong>Outstanding Order Balance:</strong> <?php echo number_format($outstanding_balance, 2); ?></p>
                 <?php endif; ?>
                 <p><strong>Created:</strong> <?php echo date('M d, Y H:i', strtotime($customer['created_at'])); ?></p>
                 <p><strong>Last Updated:</strong> <?php echo date('M d, Y H:i', strtotime($customer['updated_at'])); ?></p>

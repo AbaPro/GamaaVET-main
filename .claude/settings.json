@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(php -l /Users/abanoubraafat/Downloads/GamaaVET-main/includes/functions.php)"
+      "Bash(php -l /Users/abanoubraafat/Downloads/GamaaVET-main/includes/functions.php)",
+      "Bash(grep -n \"^CREATE TABLE \\\\`factories\\\\`\" -A 12 database_structure.sql)",
+      "Bash(grep -n 'require_once\\\\|global $conn' includes/auth.php)",
+      "Bash(grep -n 'require_once\\\\|\\\\$conn\\\\b' config/database.php)",
+      "Bash(grep -n '$conn\\\\s*=' config/database.php)",
+      "Bash(git -C /Users/abanoubraafat/Downloads/GamaaVET-main status --short)"
     ]
   }
 }

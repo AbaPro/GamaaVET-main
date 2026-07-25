@@ -81,7 +81,7 @@ $pdf = new TCPDF(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8',
 
 // Set document information
 $pdf->SetCreator(PDF_CREATOR);
-$pdf->SetAuthor('Your Company Name');
+$pdf->SetAuthor(getBrandName($_SESSION['login_region'] ?? 'factory'));
 $pdf->SetTitle(($viewMode === 'statement' ? 'Statement #' : 'Invoice #') . $order['internal_id']);
 $pdf->SetSubject($viewMode === 'statement' ? 'Order Statement' : 'Order Invoice');
 
@@ -95,6 +95,12 @@ if ($viewMode === 'statement') {
     $pdf->setRTL(true);
     $pdf->SetFont('aealarabiya', '', 18);
     $pdf->AddPage();
+
+    $logoPath = ROOT_PATH . '/' . getBrandLogoFile($_SESSION['login_region'] ?? 'factory');
+    if (file_exists($logoPath)) {
+        $pdf->Image($logoPath, 180, 10, 15, '', 'PNG');
+    }
+
     $pdf->Cell(0, 10, 'بيان الطلب', 0, 1, 'C');
     $pdf->Ln(5);
     $pdf->SetFont('aealarabiya', '', 12);
@@ -144,7 +150,8 @@ if ($viewMode === 'statement') {
 $pdf->AddPage();
 
 // Logo
-$logoPath = '../../logo.png';
+$brandSlug = $_SESSION['login_region'] ?? 'factory';
+$logoPath = ROOT_PATH . '/' . getBrandLogoFile($brandSlug);
 if (file_exists($logoPath)) {
     $pdf->Image($logoPath, 15, 18, 15, '', 'PNG');
 }
@@ -153,6 +160,8 @@ if (file_exists($logoPath)) {
 $pdf->SetFont($primaryFont, 'B', 16);
 $pdf->Ln(10);
 $pdf->Cell(0, 10, 'INVOICE', 0, 1, 'C');
+$pdf->SetFont($primaryFont, '', 11);
+$pdf->Cell(0, 6, getBrandName($brandSlug), 0, 1, 'C');
 $pdf->Ln(5);
 
 // Invoice details

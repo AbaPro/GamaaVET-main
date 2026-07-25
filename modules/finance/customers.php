@@ -11,7 +11,10 @@ $page_title = 'Customer Wallets';
 $canViewPhoneNumbers = hasPermission('contacts.phone.view');
 require_once '../../includes/header.php';
 
-$sql = "SELECT * FROM customers ORDER BY name";
+$sql = "SELECT c.* FROM customers c
+        LEFT JOIN factories f ON f.id = c.factory_id
+        WHERE " . getCustomerChannelScopeSql('c', 'f') . "
+        ORDER BY c.name";
 $result = $conn->query($sql);
 ?>
 

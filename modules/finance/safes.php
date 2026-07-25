@@ -10,11 +10,14 @@ if (!hasPermission('finance.safes.create')) {
 $page_title = 'Safes';
 require_once '../../includes/header.php';
 
+$accounts = $conn->query("SELECT id, name FROM accounts WHERE is_active = 1 ORDER BY id ASC")->fetch_all(MYSQLI_ASSOC);
+
 // Create safe
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['name'])) {
     $name = sanitize($_POST['name']);
-    $stmt = $conn->prepare("INSERT INTO safes (name, balance) VALUES (?, 0)");
-    $stmt->bind_param("s", $name);
+    $account_id = !empty($_POST['account_id']) ? (int)$_POST['account_id'] : null;
+    $stmt = $conn->prepare("INSERT INTO safes (name, balance, account_id) VALUES (?, 0, ?)");
+    $stmt->bind_param("si", $name, $account_id);
     $stmt->execute();
     setAlert('success', 'Safe added.');
     redirect('safes.php');
@@ -33,7 +36,7 @@ if (isset($_GET['delete'])) {
     redirect('safes.php');
 }
 
-$result = $conn->query("SELECT * FROM safes");
+$result = $conn->query("SELECT s.*, a.name AS account_name FROM safes s LEFT JOIN accounts a ON a.id = s.account_id ORDER BY s.id");
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -44,12 +47,13 @@ $result = $conn->query("SELECT * FROM safes");
 <div class="card">
     <div class="card-body">
         <table class="table js-datatable table-striped">
-            <thead><tr><th>ID</th><th>Name</th><th>Balance</th><th>Actions</th></tr></thead>
+            <thead><tr><th>ID</th><th>Name</th><th>Brand</th><th>Balance</th><th>Actions</th></tr></thead>
             <tbody>
                 <?php while ($row=$result->fetch_assoc()): ?>
                     <tr>
                         <td><?= $row['id']; ?></td>
                         <td><?= htmlspecialchars($row['name']); ?></td>
+                        <td><?= $row['account_name'] ? htmlspecialchars($row['account_name']) : 'GammaVet'; ?></td>
                         <td><?= number_format($row['balance'],2); ?></td>
                         <td>
                             <?php if ($row['balance']==0): ?>
@@ -69,7 +73,17 @@ $result = $conn->query("SELECT * FROM safes");
       <form method="post">
         <div class="modal-header"><h5 class="modal-title">Add Safe</h5></div>
         <div class="modal-body">
-          <input type="text" class="form-control" name="name" placeholder="Safe name" required>
+          <div class="mb-3">
+            <input type="text" class="form-control" name="name" placeholder="Safe name" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Brand</label>
+            <select class="form-select" name="account_id">
+                <?php foreach ($accounts as $acc): ?>
+                    <option value="<?= $acc['id']; ?>"><?= htmlspecialchars($acc['name']); ?></option>
+                <?php endforeach; ?>
+            </select>
+          </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" data-bs-dismiss="modal">Close</button>

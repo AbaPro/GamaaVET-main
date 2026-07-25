@@ -78,6 +78,23 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
     $notes = sanitize($_POST['notes']);
     $uid = $_SESSION['user_id'];
 
+    if ($from_type === 'safe' && !isSafeInCurrentAccount($from_id)) {
+        setAlert('danger', 'Selected "from" safe is not available for this brand.');
+        redirect('transfers.php');
+    }
+    if ($from_type === 'bank' && !isBankAccountInCurrentAccount($from_id)) {
+        setAlert('danger', 'Selected "from" bank account is not available for this brand.');
+        redirect('transfers.php');
+    }
+    if ($to_type === 'safe' && !isSafeInCurrentAccount($to_id)) {
+        setAlert('danger', 'Selected "to" safe is not available for this brand.');
+        redirect('transfers.php');
+    }
+    if ($to_type === 'bank' && !isBankAccountInCurrentAccount($to_id)) {
+        setAlert('danger', 'Selected "to" bank account is not available for this brand.');
+        redirect('transfers.php');
+    }
+
     $transferImageError = null;
     $uploadedTransferImages = uploadImageAttachments(
         'transfer_image',
@@ -163,7 +180,7 @@ if ($ftiRes) {
 }
 
 $bankAccounts = [];
-$bankRes = $conn->query("SELECT id, bank_name, account_number, balance FROM bank_accounts ORDER BY bank_name");
+$bankRes = $conn->query("SELECT id, bank_name, account_number, balance FROM bank_accounts WHERE " . getAccountScopeSql() . " ORDER BY bank_name");
 if ($bankRes) {
     while ($row = $bankRes->fetch_assoc()) {
         $bankAccounts[] = [
@@ -174,7 +191,7 @@ if ($bankRes) {
 }
 
 $safeAccounts = [];
-$safeRes = $conn->query("SELECT id, name, balance FROM safes ORDER BY name");
+$safeRes = $conn->query("SELECT id, name, balance FROM safes WHERE " . getAccountScopeSql() . " ORDER BY name");
 if ($safeRes) {
     while ($row = $safeRes->fetch_assoc()) {
         $safeAccounts[] = [

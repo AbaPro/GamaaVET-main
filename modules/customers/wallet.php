@@ -16,7 +16,7 @@ if (!isset($_GET['id']) || !is_numeric($_GET['id'])) {
 }
 
 $customer_id = sanitize($_GET['id']);
-if (!canAccessCustomer($customer_id)) {
+if (!canAccessCustomer($customer_id) || !isCustomerInCurrentChannel($customer_id)) {
     setAlert('danger', 'You do not have permission to access this customer.');
     redirect('index.php');
 }
@@ -37,9 +37,9 @@ if ($customer_result->num_rows === 0) {
 $customer = $customer_result->fetch_assoc();
 $customer_stmt->close();
 
-// Fetch safes and bank accounts for payment methods
+// Fetch safes and bank accounts for payment methods, scoped to the current brand
 $safes_data = [];
-$safes_result = $conn->query("SELECT id, name FROM safes ORDER BY name");
+$safes_result = $conn->query("SELECT id, name FROM safes WHERE " . getAccountScopeSql() . " ORDER BY name");
 if ($safes_result) {
     while ($safe = $safes_result->fetch_assoc()) {
         $safes_data[] = $safe;
@@ -47,7 +47,7 @@ if ($safes_result) {
 }
 
 $banks_data = [];
-$banks_result = $conn->query("SELECT id, bank_name as name FROM bank_accounts ORDER BY bank_name");
+$banks_result = $conn->query("SELECT id, bank_name as name FROM bank_accounts WHERE " . getAccountScopeSql() . " ORDER BY bank_name");
 if ($banks_result) {
     while ($bank = $banks_result->fetch_assoc()) {
         $banks_data[] = $bank;
@@ -67,21 +67,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $payment_method = sanitize($_POST['payment_method'] ?? 'cash');
     $bank_account_id = !empty($_POST['bank_account_id']) ? (int)$_POST['bank_account_id'] : null;
     $user_id = $_SESSION['user_id'];
-    
+    $isDebit = in_array($type, ['payment', 'withdrawal'], true);
+
+    $validationError = null;
+    if ($bank_account_id && !isBankAccountInCurrentAccount($bank_account_id)) {
+        $validationError = 'Selected bank account is not available for this brand.';
+    } elseif ($isDebit) {
+        $currentStmt = $conn->prepare("SELECT wallet_balance FROM customers WHERE id = ?");
+        $currentStmt->bind_param("i", $customer_id);
+        $currentStmt->execute();
+        $currentBalance = (float)$currentStmt->get_result()->fetch_assoc()['wallet_balance'];
+        $currentStmt->close();
+
+        if ($currentBalance < $amount) {
+            $validationError = 'Insufficient wallet balance. Available: ' . number_format($currentBalance, 2);
+        }
+    }
+
+    if ($validationError !== null) {
+        setAlert('danger', $validationError);
+        redirect('wallet.php?id=' . $customer_id);
+    }
+
     // Start transaction
     $conn->begin_transaction();
-    
+
     try {
         // Insert wallet transaction
         $transaction_sql = "INSERT INTO customer_wallet_transactions
-                           (customer_id, amount, type, notes, payment_method, bank_account_id, created_by)
-                           VALUES (?, ?, ?, ?, ?, ?, ?)";
+                           (customer_id, amount, type, notes, payment_method, bank_account_id, reference_type, created_by)
+                           VALUES (?, ?, ?, ?, ?, ?, 'manual', ?)";
         $transaction_stmt = $conn->prepare($transaction_sql);
         $transaction_stmt->bind_param("idsssii", $customer_id, $amount, $type, $notes, $payment_method, $bank_account_id, $user_id);
         $transaction_stmt->execute();
         $transaction_id = $transaction_stmt->insert_id;
         $transaction_stmt->close();
-        
+
         // Update customer wallet balance
         $update_sql = "UPDATE customers SET wallet_balance = wallet_balance ";
         $update_sql .= $type === 'deposit' ? '+' : '-';
@@ -103,17 +124,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // Commit transaction
         $conn->commit();
 
-        
         setAlert('success', 'Wallet transaction completed successfully.');
         logActivity("Processed wallet transaction ID: $transaction_id for customer ID: $customer_id ($type: $amount)");
-        $conn->close();
     } catch (Exception $e) {
         $conn->rollback();
         setAlert('danger', 'Error processing wallet transaction: ' . $e->getMessage());
     }
 
-    header("Location: http://localhost/GammaVET/modules/finance/customers.php");
-    exit();
+    redirect('wallet.php?id=' . $customer_id);
 }
 
 // Get wallet transactions with payment method info
@@ -132,10 +150,20 @@ $transactions_stmt->bind_param("i", $customer_id);
 $transactions_stmt->execute();
 $transactions_result = $transactions_stmt->get_result();
 
+// Compute a running balance per row (result set is newest-first, so walk backwards from the current balance).
+$wallet_transactions = $transactions_result->fetch_all(MYSQLI_ASSOC);
+$runningBalance = (float)$customer['wallet_balance'];
+foreach ($wallet_transactions as &$txn) {
+    $txn['running_balance'] = $runningBalance;
+    $isCredit = in_array($txn['type'], ['deposit', 'refund'], true);
+    $runningBalance += $isCredit ? -(float)$txn['amount'] : (float)$txn['amount'];
+}
+unset($txn);
+
 require_once '../../includes/header.php';
 ?>
 
-<div class="d-flex justify-content-between align-items-center mb-4">
+<div class="d-flex justify-content-between align-items-center mb-1">
     <h2>
         Wallet for: <?php echo e($customer['name']); ?>
         <span class="badge bg-<?php echo $customer['wallet_balance'] >= 0 ? 'success' : 'danger'; ?>">
@@ -144,6 +172,7 @@ require_once '../../includes/header.php';
     </h2>
     <a href="view.php?id=<?php echo $customer_id; ?>" class="btn btn-secondary">Back to Customer</a>
 </div>
+<p class="text-muted mb-4">Prepaid wallet balance. Order payments made by cash or bank transfer do not appear here &mdash; only deposits, refunds, and payments made using the Wallet method.</p>
 
 <div class="row mb-4">
     <?php if ($canManageCustomerWallet): ?>
@@ -211,11 +240,12 @@ require_once '../../includes/header.php';
                         <th>Destination</th>
                         <th>Notes</th>
                         <th>Processed By</th>
+                        <th>Running Balance</th>
                     </tr>
                 </thead>
                 <tbody>
-                    <?php if ($transactions_result->num_rows > 0): ?>
-                        <?php while ($transaction = $transactions_result->fetch_assoc()): ?>
+                    <?php if (!empty($wallet_transactions)): ?>
+                        <?php foreach ($wallet_transactions as $transaction): ?>
                             <tr>
                                 <td><?php echo date('M d, Y H:i', strtotime($transaction['created_at'])); ?></td>
                                 <td>
@@ -234,11 +264,12 @@ require_once '../../includes/header.php';
                                 <td><?php echo !empty($transaction['destination_name']) ? e($transaction['destination_name']) : '-'; ?></td>
                                 <td><?php echo $transaction['notes'] ? e($transaction['notes']) : '-'; ?></td>
                                 <td><?php echo $transaction['created_by_name'] ? e($transaction['created_by_name']) : 'System'; ?></td>
+                                <td><?php echo number_format($transaction['running_balance'], 2); ?></td>
                             </tr>
-                        <?php endwhile; ?>
+                        <?php endforeach; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="7" class="text-center">No transactions found</td>
+                            <td colspan="8" class="text-center">No transactions found</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>

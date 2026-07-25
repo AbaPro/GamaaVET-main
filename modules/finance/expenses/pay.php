@@ -39,6 +39,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         setAlert('danger', 'Please select a safe.');
     } elseif ($payment_method === 'transfer' && !$bank_account_id) {
         setAlert('danger', 'Please select a bank account.');
+    } elseif ($safe_id && !isSafeInCurrentAccount($safe_id)) {
+        setAlert('danger', 'Selected safe is not available for this brand.');
+    } elseif ($bank_account_id && !isBankAccountInCurrentAccount($bank_account_id)) {
+        setAlert('danger', 'Selected bank account is not available for this brand.');
     } else {
         try {
             $pdo->beginTransaction();
@@ -113,8 +117,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$safes = $pdo->query("SELECT id, name, balance FROM safes ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
-$banks = $pdo->query("SELECT id, bank_name, account_number, balance FROM bank_accounts ORDER BY bank_name ASC")->fetchAll(PDO::FETCH_ASSOC);
+$safes = $pdo->query("SELECT id, name, balance FROM safes WHERE " . getAccountScopeSql() . " ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+$banks = $pdo->query("SELECT id, bank_name, account_number, balance FROM bank_accounts WHERE " . getAccountScopeSql() . " ORDER BY bank_name ASC")->fetchAll(PDO::FETCH_ASSOC);
 
 $page_title = 'Record Payment: ' . $expense['name'];
 require_once '../../../includes/header.php';

@@ -10,12 +10,15 @@ if (!hasPermission('finance.bank_accounts.create')) {
 $page_title = 'Bank Accounts';
 require_once '../../includes/header.php';
 
+$accounts = $conn->query("SELECT id, name FROM accounts WHERE is_active = 1 ORDER BY id ASC")->fetch_all(MYSQLI_ASSOC);
+
 // Add bank
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bank_name'])) {
     $bank_name = sanitize($_POST['bank_name']);
     $acc_no = sanitize($_POST['account_number']);
-    $stmt = $conn->prepare("INSERT INTO bank_accounts (bank_name, account_number, balance) VALUES (?, ?, 0)");
-    $stmt->bind_param("ss", $bank_name, $acc_no);
+    $account_id = !empty($_POST['account_id']) ? (int)$_POST['account_id'] : null;
+    $stmt = $conn->prepare("INSERT INTO bank_accounts (bank_name, account_number, balance, account_id) VALUES (?, ?, 0, ?)");
+    $stmt->bind_param("ssi", $bank_name, $acc_no, $account_id);
     $stmt->execute();
     setAlert('success', 'Bank account added.');
     redirect('banks.php');
@@ -34,7 +37,7 @@ if (isset($_GET['delete'])) {
     redirect('banks.php');
 }
 
-$result = $conn->query("SELECT * FROM bank_accounts");
+$result = $conn->query("SELECT b.*, a.name AS account_name FROM bank_accounts b LEFT JOIN accounts a ON a.id = b.account_id ORDER BY b.id");
 ?>
 
 <div class="d-flex justify-content-between mb-4">
@@ -45,13 +48,14 @@ $result = $conn->query("SELECT * FROM bank_accounts");
 <div class="card">
     <div class="card-body">
         <table class="table js-datatable table-hover">
-            <thead><tr><th>ID</th><th>Bank Name</th><th>Account #</th><th>Balance</th><th>Actions</th></tr></thead>
+            <thead><tr><th>ID</th><th>Bank Name</th><th>Account #</th><th>Brand</th><th>Balance</th><th>Actions</th></tr></thead>
             <tbody>
                 <?php while ($row=$result->fetch_assoc()): ?>
                     <tr>
                         <td><?= $row['id']; ?></td>
                         <td><?= htmlspecialchars($row['bank_name']); ?></td>
                         <td><?= htmlspecialchars($row['account_number']); ?></td>
+                        <td><?= $row['account_name'] ? htmlspecialchars($row['account_name']) : 'GammaVet'; ?></td>
                         <td><?= number_format($row['balance'],2); ?></td>
                         <td>
                             <?php if ($row['balance']==0): ?>
@@ -76,6 +80,14 @@ $result = $conn->query("SELECT * FROM bank_accounts");
           </div>
           <div class="mb-3"><label class="form-label">Account Number</label>
             <input type="text" class="form-control" name="account_number" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Brand</label>
+            <select class="form-select" name="account_id">
+                <?php foreach ($accounts as $acc): ?>
+                    <option value="<?= $acc['id']; ?>"><?= htmlspecialchars($acc['name']); ?></option>
+                <?php endforeach; ?>
+            </select>
           </div>
         </div>
         <div class="modal-footer">

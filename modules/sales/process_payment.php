@@ -33,12 +33,12 @@ if (!$order) {
     exit();
 }
 
-// Fetch available Safes
-$stmtSafes = $pdo->query("SELECT id, name FROM safes ORDER BY name");
+// Fetch available Safes, scoped to the current brand
+$stmtSafes = $pdo->query("SELECT id, name FROM safes WHERE " . getAccountScopeSql() . " ORDER BY name");
 $allSafes = $stmtSafes->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
-// Fetch available Banks
-$stmtBanks = $pdo->query("SELECT id, bank_name as name FROM bank_accounts ORDER BY bank_name");
+// Fetch available Banks, scoped to the current brand
+$stmtBanks = $pdo->query("SELECT id, bank_name as name FROM bank_accounts WHERE " . getAccountScopeSql() . " ORDER BY bank_name");
 $allBanks = $stmtBanks->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
 $balance = $order['total_amount'] - $order['paid_amount'];
@@ -77,10 +77,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     if (!$safe_id) {
                         throw new Exception("Please select a safe for cash payment.");
                     }
+                    if (!isSafeInCurrentAccount($safe_id)) {
+                        throw new Exception("Selected safe is not available for this brand.");
+                    }
                 } elseif ($payment_method == 'transfer') {
                     $bank_account_id = !empty($payment['bank_account_id']) ? (int)$payment['bank_account_id'] : null;
                     if (!$bank_account_id) {
                         throw new Exception("Please select a bank account for transfer payment.");
+                    }
+                    if (!isBankAccountInCurrentAccount($bank_account_id)) {
+                        throw new Exception("Selected bank account is not available for this brand.");
                     }
                 }
                 
@@ -149,8 +155,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     // Record wallet transaction
                     $stmt = $pdo->prepare("
                         INSERT INTO customer_wallet_transactions
-                        (customer_id, amount, type, reference_id, reference_type, notes, created_by)
-                        VALUES (?, ?, 'payment', ?, 'order', ?, ?)
+                        (customer_id, amount, type, reference_id, reference_type, notes, payment_method, created_by)
+                        VALUES (?, ?, 'payment', ?, 'order', ?, 'wallet', ?)
                     ");
                     $stmt->execute([
                         $order['customer_id'],

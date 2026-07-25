@@ -620,6 +620,118 @@ function getInventoryChannelScopeSql($inventoryAlias = 'i') {
 }
 
 /**
+ * Row-level check that a customer belongs to the currently selected login
+ * channel, independent of the salesperson-ownership logic in canAccessCustomer().
+ * Used to stop a non-salesperson from opening another brand's customer by ID.
+ */
+function isCustomerInCurrentChannel($customerId) {
+    global $conn;
+
+    $customerId = (int)$customerId;
+    if ($customerId <= 0 || !isLoggedIn()) return false;
+
+    $loginRegion = $_SESSION['login_region'] ?? 'factory';
+    $cond = $loginRegion === 'factory'
+        ? "direct_sale IS NULL"
+        : "direct_sale = '" . $conn->real_escape_string($loginRegion) . "'";
+
+    $stmt = $conn->prepare("SELECT id FROM customers WHERE id = ? AND $cond LIMIT 1");
+    $stmt->bind_param('i', $customerId);
+    $stmt->execute();
+    $allowed = $stmt->get_result()->num_rows === 1;
+    $stmt->close();
+
+    return $allowed;
+}
+
+/**
+ * The `accounts` row (brand) matching the current login_region, cached per request.
+ */
+function getCurrentAccountId() {
+    global $conn;
+    static $cached = null;
+    if ($cached !== null) return $cached;
+
+    $slug = $_SESSION['login_region'] ?? 'factory';
+    $stmt = $conn->prepare("SELECT id FROM accounts WHERE slug = ? LIMIT 1");
+    $stmt->bind_param('s', $slug);
+    $stmt->execute();
+    $result = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    $cached = $result ? (int)$result['id'] : 0;
+    return $cached;
+}
+
+/**
+ * WHERE fragment scoping safes/bank_accounts rows to the current brand.
+ * NULL account_id is treated as Factory (mirrors expenses.account_id convention).
+ */
+function getAccountScopeSql($alias = '') {
+    $prefix = $alias ? "$alias." : '';
+    $loginRegion = $_SESSION['login_region'] ?? 'factory';
+    $accountId = getCurrentAccountId();
+
+    if ($loginRegion === 'factory') {
+        return "({$prefix}account_id IS NULL OR {$prefix}account_id = $accountId)";
+    }
+    return "{$prefix}account_id = $accountId";
+}
+
+/**
+ * True when the given safe id is visible in the current brand scope.
+ */
+function isSafeInCurrentAccount($safeId) {
+    global $conn;
+    $safeId = (int)$safeId;
+    if ($safeId <= 0) return false;
+
+    $scope = getAccountScopeSql();
+    $stmt = $conn->prepare("SELECT id FROM safes WHERE id = ? AND $scope LIMIT 1");
+    $stmt->bind_param('i', $safeId);
+    $stmt->execute();
+    $allowed = $stmt->get_result()->num_rows === 1;
+    $stmt->close();
+
+    return $allowed;
+}
+
+/**
+ * True when the given bank account id is visible in the current brand scope.
+ */
+function isBankAccountInCurrentAccount($bankAccountId) {
+    global $conn;
+    $bankAccountId = (int)$bankAccountId;
+    if ($bankAccountId <= 0) return false;
+
+    $scope = getAccountScopeSql();
+    $stmt = $conn->prepare("SELECT id FROM bank_accounts WHERE id = ? AND $scope LIMIT 1");
+    $stmt->bind_param('i', $bankAccountId);
+    $stmt->execute();
+    $allowed = $stmt->get_result()->num_rows === 1;
+    $stmt->close();
+
+    return $allowed;
+}
+
+/**
+ * Brand logo filename for the given (or current) login_region, falling back
+ * to the default GammaVet logo when the brand-specific file isn't on disk.
+ */
+function getBrandLogoFile($slug = null) {
+    $slug = $slug ?? ($_SESSION['login_region'] ?? 'factory');
+    $map = [
+        'factory'  => 'logo.png',
+        'curva'    => 'logo_curva.png',
+        'primer'   => 'logo_primer.png',
+        'naturous' => 'logo_naturous.png',
+        'activita' => 'logo_activita.png',
+    ];
+    $file = $map[$slug] ?? 'logo.png';
+    return file_exists(ROOT_PATH . '/' . $file) ? $file : 'logo.png';
+}
+
+/**
  * Check whether an inventory belongs to the currently selected login channel.
  */
 function canAccessInventory($inventoryId) {

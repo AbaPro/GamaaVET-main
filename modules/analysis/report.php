@@ -1511,8 +1511,9 @@ $reports = [
         ],
         'run' => function($conn) {
             $rows = [];
-            $safes = $conn->query("SELECT 'Safe' AS source_type, name AS label, balance FROM safes")->fetch_all(MYSQLI_ASSOC);
-            $banks = $conn->query("SELECT 'Bank' AS source_type, bank_name AS label, balance FROM bank_accounts")->fetch_all(MYSQLI_ASSOC);
+            $scopeClause = hasPermission('finance.expenses.all_accounts') ? '1=1' : getAccountScopeSql();
+            $safes = $conn->query("SELECT 'Safe' AS source_type, name AS label, balance FROM safes WHERE $scopeClause")->fetch_all(MYSQLI_ASSOC);
+            $banks = $conn->query("SELECT 'Bank' AS source_type, bank_name AS label, balance FROM bank_accounts WHERE $scopeClause")->fetch_all(MYSQLI_ASSOC);
             $personal = $conn->query("SELECT 'Personal' AS source_type, name AS label, personal_balance AS balance FROM users WHERE is_active=1")->fetch_all(MYSQLI_ASSOC);
             $rows = array_merge($safes, $banks, $personal);
             usort($rows, function($a, $b) {

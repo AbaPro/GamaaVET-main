@@ -56,7 +56,7 @@ $pdf = new TCPDF(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8',
 
 // Set document information
 $pdf->SetCreator(PDF_CREATOR);
-$pdf->SetAuthor('Your Company Name');
+$pdf->SetAuthor(getBrandName($_SESSION['login_region'] ?? 'factory'));
 $pdf->SetTitle('Quotation #' . $quotation['id']);
 $pdf->SetSubject('Quotation');
 
@@ -69,10 +69,19 @@ $primaryFont = 'aealarabiya';
 // Add a page
 $pdf->AddPage();
 
+// Logo
+$brandSlug = $_SESSION['login_region'] ?? 'factory';
+$logoPath = ROOT_PATH . '/' . getBrandLogoFile($brandSlug);
+if (file_exists($logoPath)) {
+    $pdf->Image($logoPath, 15, 18, 15, '', 'PNG');
+}
+
 // Quotation title
 $pdf->SetFont($primaryFont, 'B', 16);
 $pdf->Ln(10);
 $pdf->Cell(0, 10, 'QUOTATION', 0, 1, 'C');
+$pdf->SetFont($primaryFont, '', 11);
+$pdf->Cell(0, 6, getBrandName($brandSlug), 0, 1, 'C');
 $pdf->Ln(5);
 
 // Quotation details

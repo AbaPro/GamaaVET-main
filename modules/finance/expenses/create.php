@@ -63,6 +63,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     throw new Exception("Payment amount cannot exceed the expense amount.");
                 }
 
+                if ($safe_id && !isSafeInCurrentAccount($safe_id)) {
+                    throw new Exception("Selected safe is not available for this brand.");
+                }
+                if ($bank_account_id && !isBankAccountInCurrentAccount($bank_account_id)) {
+                    throw new Exception("Selected bank account is not available for this brand.");
+                }
+
                 // Update Safe/Bank Balance first with a non-negative guard.
                 if ($payment_method == 'cash' && $safe_id) {
                     $stmt = $pdo->prepare("UPDATE safes SET balance = balance - ? WHERE id = ? AND balance >= ?");
@@ -145,8 +152,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Fetch Data for form
 $categories = $pdo->query("SELECT * FROM expense_categories ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
 $vendors    = $pdo->query("SELECT id, name FROM vendors ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
-$safes      = $pdo->query("SELECT id, name, balance FROM safes ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
-$banks      = $pdo->query("SELECT id, bank_name, account_number, balance FROM bank_accounts ORDER BY bank_name ASC")->fetchAll(PDO::FETCH_ASSOC);
+$safes      = $pdo->query("SELECT id, name, balance FROM safes WHERE " . getAccountScopeSql() . " ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+$banks      = $pdo->query("SELECT id, bank_name, account_number, balance FROM bank_accounts WHERE " . getAccountScopeSql() . " ORDER BY bank_name ASC")->fetchAll(PDO::FETCH_ASSOC);
 $accounts   = $pdo->query("SELECT * FROM accounts WHERE is_active = 1 ORDER BY id ASC")->fetchAll(PDO::FETCH_ASSOC);
 $currencies = $pdo->query("SELECT * FROM currencies ORDER BY is_default DESC, code ASC")->fetchAll(PDO::FETCH_ASSOC);
 
