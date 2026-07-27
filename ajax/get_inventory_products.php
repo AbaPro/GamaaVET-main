@@ -23,7 +23,7 @@ if (!canAccessInventory($inventory_id)) {
 }
 
 // Get inventory products
-$sql = "SELECT p.id, p.name, p.sku, ip.quantity 
+$sql = "SELECT p.id, p.name, p.sku, p.type, ip.quantity
         FROM inventory_products ip 
         JOIN products p ON ip.product_id = p.id 
         WHERE ip.inventory_id = ? 

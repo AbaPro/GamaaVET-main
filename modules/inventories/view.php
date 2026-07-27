@@ -50,7 +50,7 @@ if (isset($_GET['customer_ids']) && is_array($_GET['customer_ids'])) {
 }
 
 // Get inventory products with filtering
-$products_sql = "SELECT p.id, p.name, p.sku, p.barcode, ip.quantity, p.min_stock_level, c.name AS customer_name 
+$products_sql = "SELECT p.id, p.name, p.sku, p.barcode, p.type, ip.quantity, p.min_stock_level, c.name AS customer_name
                  FROM inventory_products ip 
                  JOIN products p ON ip.product_id = p.id 
                  LEFT JOIN customers c ON p.customer_id = c.id
@@ -89,7 +89,7 @@ $products_result = $products_stmt->get_result();
             <i class="fas fa-print"></i> Print
         </a>
         <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addProductModal">
-            <i class="fas fa-plus"></i> Add Product
+            <i class="fas fa-plus"></i> Add Item
         </button>
     </div>
 </div>
@@ -123,7 +123,7 @@ $products_result = $products_stmt->get_result();
                 $stats = $stats_stmt->get_result()->fetch_assoc();
                 $stats_stmt->close();
                 ?>
-                <p><strong>Total Products:</strong> <?php echo $stats['total_products']; ?></p>
+                <p><strong>Total Items:</strong> <?php echo $stats['total_products']; ?></p>
                 <p><strong>Total Quantity:</strong> <?php echo $stats['total_quantity']; ?></p>
                 <p><strong>Low Stock Items:</strong> <span class="badge bg-<?php echo $stats['low_stock'] > 0 ? 'warning' : 'success'; ?>"><?php echo $stats['low_stock']; ?></span></p>
             </div>
@@ -133,7 +133,7 @@ $products_result = $products_stmt->get_result();
 
 <div class="card">
     <div class="card-header d-flex justify-content-between align-items-center">
-        <h5 class="card-title mb-0">Inventory Products</h5>
+        <h5 class="card-title mb-0">Inventory Items</h5>
         <div id="bulkActions" class="d-none">
             <button type="button" class="btn btn-sm btn-danger" id="btnBulkDelete">
                 <i class="fas fa-trash me-1"></i> Bulk Remove (<span id="selectedCount">0</span>)
@@ -172,7 +172,8 @@ $products_result = $products_stmt->get_result();
                     <tr>
                         <th width="40"><input type="checkbox" class="form-check-input" id="selectAll"></th>
                         <th>SKU</th>
-                        <th>Product Name</th>
+                        <th>Item Name</th>
+                        <th>Type</th>
                         <th>Customer</th>
                         <th>Barcode</th>
                         <th>Quantity</th>
@@ -188,6 +189,11 @@ $products_result = $products_stmt->get_result();
                                 <td><input type="checkbox" class="form-check-input row-select" name="product_ids[]" value="<?= $product['id'] ?>"></td>
                                 <td><?php echo htmlspecialchars($product['sku']); ?></td>
                                 <td><?php echo htmlspecialchars($product['name']); ?></td>
+                                <td>
+                                    <span class="badge bg-<?php echo $product['type'] === 'material' ? 'secondary' : 'primary'; ?>">
+                                        <?php echo $product['type'] === 'material' ? 'Raw Material' : 'Final Product'; ?>
+                                    </span>
+                                </td>
                                 <td><?php echo $product['customer_name'] ? htmlspecialchars($product['customer_name']) : '<span class="text-muted">N/A</span>'; ?></td>
                                 <td><?php echo htmlspecialchars($product['barcode']); ?></td>
                                 <td><?php echo $product['quantity']; ?></td>
@@ -218,7 +224,7 @@ $products_result = $products_stmt->get_result();
                         <?php endwhile; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="8" class="text-center">No products found in this inventory</td>
+                            <td colspan="10" class="text-center">No items found in this inventory</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>
@@ -234,7 +240,7 @@ $products_result = $products_stmt->get_result();
             <form action="add_product.php" method="POST">
                 <input type="hidden" name="inventory_id" value="<?php echo $inventory_id; ?>">
                 <div class="modal-header">
-                    <h5 class="modal-title" id="addProductModalLabel">Add Product to Inventory</h5>
+                    <h5 class="modal-title" id="addProductModalLabel">Add Item to Inventory</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
@@ -244,8 +250,12 @@ $products_result = $products_stmt->get_result();
                         <div class="row g-2">
                             <div class="col-md-6">
                                 <label for="filter_type" class="form-label small">Product Type</label>
-                                <select class="form-select form-select-sm" id="filter_type" disabled>
-                                    <option value="final" selected>Final products only</option>
+                                <select class="form-select form-select-sm" id="filter_type">
+                                    <option value="" selected>All item types</option>
+                                    <option value="final">Final products</option>
+                                    <?php if (!isSalesPersonUser()): ?>
+                                        <option value="material">Raw materials</option>
+                                    <?php endif; ?>
                                 </select>
                             </div>
                             <div class="col-md-6">
@@ -282,16 +292,20 @@ $products_result = $products_stmt->get_result();
                         <select class="form-select" id="product_id" name="product_id" required size="5" style="height: auto;">
                             <option value="">-- Select Product --</option>
                             <?php
+                            $eligibleProductScope = isSalesPersonUser()
+                                ? "p.type = 'final' AND $customerScope"
+                                : "(p.type = 'material' OR (p.type = 'final' AND $customerScope))";
                             $all_products = $conn->query("SELECT p.id, p.name, p.sku, p.type, p.customer_id
                                                           FROM products p
-                                                          JOIN customers c ON c.id = p.customer_id
+                                                          LEFT JOIN customers c ON c.id = p.customer_id
                                                           LEFT JOIN factories f ON f.id = c.factory_id
-                                                          WHERE p.type = 'final' AND $customerScope
-                                                          ORDER BY p.name");
+                                                          WHERE $eligibleProductScope
+                                                          ORDER BY p.type, p.name");
                             while ($prod = $all_products->fetch_assoc()) {
                                 $type = isset($prod['type']) ? htmlspecialchars($prod['type']) : '';
                                 $customer_id = isset($prod['customer_id']) ? (int)$prod['customer_id'] : 0;
-                                echo '<option value="' . $prod['id'] . '" data-type="' . $type . '" data-customer-id="' . $customer_id . '">' . htmlspecialchars($prod['name']) . ' (' . htmlspecialchars($prod['sku']) . ')</option>';
+                                $typeLabel = $prod['type'] === 'material' ? 'Raw Material' : 'Final Product';
+                                echo '<option value="' . $prod['id'] . '" data-type="' . $type . '" data-customer-id="' . $customer_id . '">' . htmlspecialchars($prod['name']) . ' (' . htmlspecialchars($prod['sku']) . ') — ' . $typeLabel . '</option>';
                             }
                             ?>
                         </select>
@@ -435,7 +449,7 @@ $(document).ready(function() {
     $('#filter_type, #filter_customer, #product_search').on('change keyup', applyProductFilters);
 
     $('#addProductModal').on('show.bs.modal', function() {
-        $('#filter_type').val('final');
+        $('#filter_type').val('');
         $('#filter_customer').val('');
         $('#product_search').val('');
         applyProductFilters();

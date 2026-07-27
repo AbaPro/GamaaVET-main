@@ -207,7 +207,7 @@ $inventories_result = $conn->query($inventories_sql);
                 <table class="table" id="transferItemsTable">
                     <thead>
                         <tr>
-                            <th>Product</th>
+                            <th>Item</th>
                             <th>Available</th>
                             <th>Quantity</th>
                             <th>Action</th>
@@ -240,7 +240,7 @@ $inventories_result = $conn->query($inventories_sql);
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title" id="productSelectModalLabel">Select Product</h5>
+                <h5 class="modal-title" id="productSelectModalLabel">Select Item</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
@@ -253,6 +253,7 @@ $inventories_result = $conn->query($inventories_sql);
                         <thead>
                             <tr>
                                 <th>Name</th>
+                                <th>Type</th>
                                 <th>SKU</th>
                                 <th>Available</th>
                                 <th>Action</th>
@@ -292,6 +293,7 @@ $(document).ready(function() {
                         $.each(products, function(index, product) {
                             html += '<tr>' +
                                     '<td>' + product.name + '</td>' +
+                                    '<td>' + (product.type === 'material' ? 'Raw Material' : 'Final Product') + '</td>' +
                                     '<td>' + product.sku + '</td>' +
                                     '<td>' + product.quantity + '</td>' +
                                     '<td><button type="button" class="btn btn-sm btn-primary select-product" ' +
@@ -301,7 +303,7 @@ $(document).ready(function() {
                                     '</tr>';
                         });
                     } else {
-                        html = '<tr><td colspan="4" class="text-center">No products found in this inventory</td></tr>';
+                        html = '<tr><td colspan="5" class="text-center">No items found in this inventory</td></tr>';
                     }
                     
                     $('#productSelectBody').html(html);

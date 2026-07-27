@@ -751,8 +751,9 @@ function canAccessInventory($inventoryId) {
 }
 
 /**
- * Inventory additions are limited to final products whose customer belongs to
- * the same selected channel (and salesperson assignment, when applicable).
+ * Inventory additions may contain raw materials or final products. Final
+ * products remain limited to customers in the selected channel; raw materials
+ * are shared operational items and are available to non-sales inventory users.
  */
 function canAddProductToInventory($inventoryId, $productId) {
     global $conn;
@@ -763,15 +764,17 @@ function canAddProductToInventory($inventoryId, $productId) {
 
     $inventoryScope = getInventoryChannelScopeSql('i');
     $customerScope = getCustomerChannelScopeSql('c', 'f');
+    $productScope = isSalesPersonUser()
+        ? "p.type = 'final' AND $customerScope"
+        : "(p.type = 'material' OR (p.type = 'final' AND $customerScope))";
     $sql = "SELECT p.id
             FROM products p
-            JOIN customers c ON c.id = p.customer_id
+            LEFT JOIN customers c ON c.id = p.customer_id
             LEFT JOIN factories f ON f.id = c.factory_id
             JOIN inventories i ON i.id = ?
             WHERE p.id = ?
-              AND p.type = 'final'
               AND $inventoryScope
-              AND $customerScope
+              AND ($productScope)
             LIMIT 1";
     $stmt = $conn->prepare($sql);
     $stmt->bind_param('ii', $inventoryId, $productId);

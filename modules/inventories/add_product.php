@@ -13,7 +13,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $quantity = isset($_POST['quantity']) && is_numeric($_POST['quantity']) ? (float)$_POST['quantity'] : -1;
 
     if (!canAddProductToInventory($inventory_id, $product_id)) {
-        setAlert('danger', 'Only final products belonging to the currently selected region can be added.');
+        setAlert('danger', 'This raw material or final product cannot be added to the selected inventory.');
         redirect($inventory_id > 0 ? "view.php?id=$inventory_id" : 'index.php');
     }
 
@@ -43,7 +43,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
     if ($insert_stmt->execute()) {
         logInventoryStockChange($inventory_id, $product_id, $quantity, 0, $quantity, 'inventory_add', null, null, null, 'Manual add to inventory');
-        setAlert('success', 'Product added to inventory successfully.');
+        setAlert('success', 'Item added to inventory successfully.');
         logActivity("Added product ID: $product_id to inventory ID: $inventory_id with quantity: $quantity");
     } else {
         setAlert('danger', 'Error adding product to inventory: ' . $conn->error);

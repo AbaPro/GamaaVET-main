@@ -54,12 +54,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
         $missing_products = [];
         $all_products = [];
 
-        // Only final products belonging to the selected channel are eligible.
+        // Final products stay channel-scoped; raw materials are shared
+        // operational items available to non-sales inventory users.
+        $eligibleProductScope = isSalesPersonUser()
+            ? "p.type = 'final' AND $customerScope"
+            : "(p.type = 'material' OR (p.type = 'final' AND $customerScope))";
         $prod_res = $conn->query("SELECT p.id, p.name
                                   FROM products p
-                                  JOIN customers c ON c.id = p.customer_id
+                                  LEFT JOIN customers c ON c.id = p.customer_id
                                   LEFT JOIN factories f ON f.id = c.factory_id
-                                  WHERE p.type = 'final' AND $customerScope");
+                                  WHERE $eligibleProductScope");
         while ($p = $prod_res->fetch_assoc()) {
             $all_products[strtolower(trim($p['name']))] = $p['id'];
         }
@@ -350,12 +354,15 @@ $step = $_SESSION['inventory_bulk_upload']['step'] ?? 1;
                                 </thead>
                                 <tbody>
                                     <?php 
-                                    $all_prods_res = $conn->query("SELECT p.id, p.name, p.sku
+                                    $eligibleProductScope = isSalesPersonUser()
+                                        ? "p.type = 'final' AND $customerScope"
+                                        : "(p.type = 'material' OR (p.type = 'final' AND $customerScope))";
+                                    $all_prods_res = $conn->query("SELECT p.id, p.name, p.sku, p.type
                                                                   FROM products p
-                                                                  JOIN customers c ON c.id = p.customer_id
+                                                                  LEFT JOIN customers c ON c.id = p.customer_id
                                                                   LEFT JOIN factories f ON f.id = c.factory_id
-                                                                  WHERE p.type = 'final' AND $customerScope
-                                                                  ORDER BY p.name");
+                                                                  WHERE $eligibleProductScope
+                                                                  ORDER BY p.type, p.name");
                                     $all_prods = $all_prods_res->fetch_all(MYSQLI_ASSOC);
                                     
                                     foreach ($_SESSION['inventory_bulk_upload']['missing_products'] as $missing_name): ?>
@@ -365,7 +372,7 @@ $step = $_SESSION['inventory_bulk_upload']['step'] ?? 1;
                                             <select class="form-select select2" name="map_<?php echo md5($missing_name); ?>">
                                                 <option value="">-- Skip this product --</option>
                                                 <?php foreach ($all_prods as $p): ?>
-                                                    <option value="<?php echo $p['id']; ?>"><?php echo htmlspecialchars($p['name']); ?> (<?php echo htmlspecialchars($p['sku']); ?>)</option>
+                                                    <option value="<?php echo $p['id']; ?>"><?php echo htmlspecialchars($p['name']); ?> (<?php echo htmlspecialchars($p['sku']); ?>) — <?php echo $p['type'] === 'material' ? 'Raw Material' : 'Final Product'; ?></option>
                                                 <?php endforeach; ?>
                                             </select>
                                         </td>
