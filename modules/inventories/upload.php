@@ -396,7 +396,7 @@ $step = $_SESSION['inventory_bulk_upload']['step'] ?? 1;
 $(document).ready(function() {
     if ($.fn.select2) {
         $('.select2').select2({
-            placeholder: "-- Search and select product --",
+            placeholder: "-- Search by product name or SKU --",
             allowClear: true,
             width: '100%'
         });

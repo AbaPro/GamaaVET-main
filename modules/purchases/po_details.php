@@ -98,23 +98,31 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_status'])) {
         setAlert('danger', "You don't have permission to update PO status.");
         redirect('po_details.php?id=' . $po_id);
     }
-    $new_status = $_POST['status'];
+    $new_status = trim((string)($_POST['status'] ?? ''));
+    $allowedTransitions = [
+        'new' => ['new', 'ordered', 'cancelled'],
+        'ordered' => ['ordered', 'cancelled'],
+        'partially-received' => ['partially-received', 'cancelled'],
+    ];
     
     // Validate status change
-    if ($new_status === 'new' && $po['status'] !== 'new') {
-        $_SESSION['error'] = "Status cannot be changed back to New.";
+    if (!isset($allowedTransitions[$po['status']]) || !in_array($new_status, $allowedTransitions[$po['status']], true)) {
+        $_SESSION['error'] = "That purchase order status change is not allowed.";
         header("Location: po_details.php?id=" . $po_id);
         exit();
     }
 
-    if (in_array($po['status'], ['received', 'cancelled'])) {
-        $_SESSION['error'] = "Status cannot be updated for Received or Cancelled orders.";
-        header("Location: po_details.php?id=" . $po_id);
-        exit();
-    }
-    
     try {
-        
+        $stmt = $pdo->prepare("UPDATE purchase_orders SET status = ? WHERE id = ?");
+        $stmt->execute([$new_status, $po_id]);
+
+        if ($new_status !== $po['status']) {
+            logActivity(
+                "Updated Purchase Order #$po_id status",
+                "Changed from {$po['status']} to {$new_status}."
+            );
+        }
+
         $_SESSION['success'] = "Purchase order status updated successfully!";
         header("Location: po_details.php?id=" . $po_id);
         exit();

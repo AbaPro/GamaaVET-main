@@ -331,7 +331,7 @@ $(document).ready(function() {
             pageLength: 10,
             language: {
                 search: "",
-                searchPlaceholder: "Search products..."
+                searchPlaceholder: "Search by product name or SKU"
             }
         });
         
@@ -426,7 +426,6 @@ $(document).ready(function() {
 </script>
 
 <?php require_once '../../../includes/footer.php'; ?>
-
 
 
 

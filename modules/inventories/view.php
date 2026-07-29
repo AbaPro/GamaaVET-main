@@ -49,6 +49,17 @@ if (isset($_GET['customer_ids']) && is_array($_GET['customer_ids'])) {
     }
 }
 
+$itemSearch = trim((string)($_GET['item_search'] ?? ''));
+$itemType = (string)($_GET['item_type'] ?? '');
+if (!in_array($itemType, ['primary', 'final', 'material'], true)) {
+    $itemType = '';
+}
+
+$stockStatus = (string)($_GET['stock_status'] ?? '');
+if (!in_array($stockStatus, ['in_stock', 'low_stock'], true)) {
+    $stockStatus = '';
+}
+
 // Get inventory products with filtering
 $products_sql = "SELECT p.id, p.name, p.sku, p.barcode, p.type, ip.quantity, p.min_stock_level, c.name AS customer_name
                  FROM inventory_products ip 
@@ -61,6 +72,20 @@ if (!empty($customerFilters)) {
     $products_sql .= " AND p.customer_id IN ($placeholders)";
 }
 
+if ($itemSearch !== '') {
+    $products_sql .= " AND (p.name LIKE ? OR p.sku LIKE ?)";
+}
+
+if ($itemType !== '') {
+    $products_sql .= " AND p.type = ?";
+}
+
+if ($stockStatus === 'low_stock') {
+    $products_sql .= " AND ip.quantity <= COALESCE(p.min_stock_level, 0)";
+} elseif ($stockStatus === 'in_stock') {
+    $products_sql .= " AND ip.quantity > COALESCE(p.min_stock_level, 0)";
+}
+
 $products_sql .= " ORDER BY p.name";
 
 $products_stmt = $conn->prepare($products_sql);
@@ -69,9 +94,20 @@ $bindParams = [$inventory_id];
 foreach ($customerFilters as $cid) {
     $bindParams[] = $cid;
 }
+if ($itemSearch !== '') {
+    $likeItemSearch = '%' . $itemSearch . '%';
+    $types .= 'ss';
+    $bindParams[] = $likeItemSearch;
+    $bindParams[] = $likeItemSearch;
+}
+if ($itemType !== '') {
+    $types .= 's';
+    $bindParams[] = $itemType;
+}
 $products_stmt->bind_param($types, ...$bindParams);
 $products_stmt->execute();
 $products_result = $products_stmt->get_result();
+$filteredProductCount = $products_result->num_rows;
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -144,7 +180,19 @@ $products_result = $products_stmt->get_result();
         <form method="get" class="mb-4">
             <input type="hidden" name="id" value="<?= $inventory_id ?>">
             <div class="row align-items-end g-2">
-                <div class="col-md-4">
+                <div class="col-lg-4 col-md-6">
+                    <label for="item_search" class="form-label small text-muted">Search Inventory Items</label>
+                    <div class="input-group input-group-sm">
+                        <span class="input-group-text bg-white"><i class="fas fa-search text-muted"></i></span>
+                        <input type="search"
+                               class="form-control"
+                               id="item_search"
+                               name="item_search"
+                               value="<?= htmlspecialchars($itemSearch) ?>"
+                               placeholder="Search by product name or SKU">
+                    </div>
+                </div>
+                <div class="col-lg-3 col-md-6">
                     <label class="form-label small text-muted">Filter by Customer(s)</label>
                     <select class="form-select form-select-sm js-searchable-select" name="customer_ids[]" multiple>
                         <?php 
@@ -160,10 +208,34 @@ $products_result = $products_stmt->get_result();
                         <?php endwhile; ?>
                     </select>
                 </div>
-                <div class="col-md-2">
-                    <button type="submit" class="btn btn-sm btn-primary">Filter</button>
-                    <a href="view.php?id=<?= $inventory_id ?>" class="btn btn-sm btn-secondary">Reset</a>
+                <div class="col-lg-2 col-md-4">
+                    <label for="item_type" class="form-label small text-muted">Product Type</label>
+                    <select class="form-select form-select-sm" id="item_type" name="item_type">
+                        <option value="">All types</option>
+                        <option value="final" <?= $itemType === 'final' ? 'selected' : '' ?>>Final products</option>
+                        <option value="material" <?= $itemType === 'material' ? 'selected' : '' ?>>Raw materials</option>
+                        <option value="primary" <?= $itemType === 'primary' ? 'selected' : '' ?>>Primary products</option>
+                    </select>
                 </div>
+                <div class="col-lg-2 col-md-4">
+                    <label for="stock_status" class="form-label small text-muted">Stock Status</label>
+                    <select class="form-select form-select-sm" id="stock_status" name="stock_status">
+                        <option value="">All statuses</option>
+                        <option value="in_stock" <?= $stockStatus === 'in_stock' ? 'selected' : '' ?>>In stock</option>
+                        <option value="low_stock" <?= $stockStatus === 'low_stock' ? 'selected' : '' ?>>Low stock</option>
+                    </select>
+                </div>
+                <div class="col-lg-1 col-md-4 d-flex gap-1">
+                    <button type="submit" class="btn btn-sm btn-primary" title="Apply filters" aria-label="Apply filters">
+                        <i class="fas fa-filter"></i>
+                    </button>
+                    <a href="view.php?id=<?= $inventory_id ?>" class="btn btn-sm btn-outline-secondary" title="Reset filters" aria-label="Reset filters">
+                        <i class="fas fa-undo"></i>
+                    </a>
+                </div>
+            </div>
+            <div class="form-text mt-2">
+                <?= $filteredProductCount ?> <?= $filteredProductCount === 1 ? 'item' : 'items' ?> found
             </div>
         </form>
         <div class="table-responsive">
@@ -283,7 +355,7 @@ $products_result = $products_stmt->get_result();
                         <label for="product_search" class="form-label">Search Product</label>
                         <div class="input-group">
                             <span class="input-group-text bg-white"><i class="fas fa-search text-muted"></i></span>
-                            <input type="text" class="form-control" id="product_search" placeholder="Type name or SKU to search...">
+                            <input type="text" class="form-control" id="product_search" placeholder="Search by product name or SKU">
                         </div>
                     </div>
 

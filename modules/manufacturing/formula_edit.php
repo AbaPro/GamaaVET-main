@@ -549,7 +549,7 @@ if ($formula && !empty($formula['sample_images_json'])) {
         if ($.fn.select2) {
             addedRow.find('.select2-ingredients').select2({
                 width: '100%',
-                placeholder: 'Search product...'
+                placeholder: 'Search by product name or SKU'
             });
         }
 

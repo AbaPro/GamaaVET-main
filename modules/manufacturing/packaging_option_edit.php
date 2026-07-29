@@ -355,7 +355,7 @@ $canonicalUnits = ['kg', 'g', 'L', 'ml', 'pcs'];
         itemsBody.append(row);
         const addedRow = itemsBody.find(`tr[data-index="${idx}"]`);
         if ($.fn.select2) {
-            addedRow.find('.select2-item').select2({ width: '100%', placeholder: 'Search product…' });
+            addedRow.find('.select2-item').select2({ width: '100%', placeholder: 'Search by product name or SKU' });
         }
     }
 

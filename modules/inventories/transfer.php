@@ -246,7 +246,7 @@ $inventories_result = $conn->query($inventories_sql);
             <div class="modal-body">
                 <div class="mb-3">
                     <label for="productSearch" class="form-label">Search Products</label>
-                    <input type="text" class="form-control" id="productSearch" placeholder="Search by name or SKU">
+                    <input type="text" class="form-control" id="productSearch" placeholder="Search by product name or SKU">
                 </div>
                 <div class="table-responsive">
                     <table class="table table-hover" id="productSelectTable">

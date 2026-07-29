@@ -381,7 +381,7 @@ require_once '../../includes/header.php';
             <div class="card-header d-flex justify-content-between align-items-center">
                 <span>Order Items</span>
                 <div class="d-flex gap-2 flex-wrap">
-                    <input type="text" class="form-control form-control-sm" id="productSearch" placeholder="Search products..." aria-label="Search products" disabled>
+                    <input type="text" class="form-control form-control-sm" id="productSearch" placeholder="Search by product name or SKU" aria-label="Search by product name or SKU" disabled>
                     <button type="button" class="btn btn-sm btn-primary" id="addItemBtn" disabled>Add Item</button>
                 </div>
             </div>
@@ -532,7 +532,7 @@ require_once '../../includes/header.php';
                         </div>
                         <div class="col-md-4">
                             <label for="productSearchModal" class="form-label small">Search</label>
-                            <input type="text" id="productSearchModal" class="form-control form-control-sm" placeholder="Type name or SKU...">
+                            <input type="text" id="productSearchModal" class="form-control form-control-sm" placeholder="Search by product name or SKU">
                         </div>
                     </div>
                 </div>
