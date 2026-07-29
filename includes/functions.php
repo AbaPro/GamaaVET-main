@@ -620,9 +620,9 @@ function getInventoryChannelScopeSql($inventoryAlias = 'i') {
 }
 
 /**
- * Row-level check that a customer belongs to the currently selected login
- * channel, independent of the salesperson-ownership logic in canAccessCustomer().
- * Used to stop a non-salesperson from opening another brand's customer by ID.
+ * Row-level check for the Customers area. Factory is the all-customers view;
+ * direct-sales logins may only open customers from their selected channel.
+ * Salesperson ownership is enforced separately by canAccessCustomer().
  */
 function isCustomerInCurrentChannel($customerId) {
     global $conn;
@@ -632,7 +632,7 @@ function isCustomerInCurrentChannel($customerId) {
 
     $loginRegion = $_SESSION['login_region'] ?? 'factory';
     $cond = $loginRegion === 'factory'
-        ? "direct_sale IS NULL"
+        ? "1 = 1"
         : "direct_sale = '" . $conn->real_escape_string($loginRegion) . "'";
 
     $stmt = $conn->prepare("SELECT id FROM customers WHERE id = ? AND $cond LIMIT 1");

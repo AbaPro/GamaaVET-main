@@ -92,7 +92,8 @@ if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
     redirect('index.php');
 }
 
-// Keep the selected direct-sales channel, then scope salespeople to their assignments.
+// Factory is the all-customers view. Direct-sales logins remain scoped to their
+// selected channel, and salespeople remain scoped to their assignments.
 $sql = "SELECT c.*, ct.name AS type_name, f.name AS factory_name,
         sp.name AS sales_person_name,
         (SELECT COUNT(*) FROM products p WHERE p.customer_id = c.id AND p.type = 'material') as material_count,
@@ -100,14 +101,22 @@ $sql = "SELECT c.*, ct.name AS type_name, f.name AS factory_name,
         FROM customers c
         JOIN customer_types ct ON c.type = ct.id
         LEFT JOIN factories f ON c.factory_id = f.id
-        LEFT JOIN users sp ON sp.id = COALESCE(c.sales_person_id, f.sales_person_id)
-        WHERE " . ($login_region === 'factory' ? "c.direct_sale IS NULL" : "c.direct_sale = ?");
-$bindTypes = $login_region === 'factory' ? '' : 's';
-$bindValues = $login_region === 'factory' ? [] : [$login_region];
+        LEFT JOIN users sp ON sp.id = COALESCE(c.sales_person_id, f.sales_person_id)";
+$whereClauses = [];
+$bindTypes = '';
+$bindValues = [];
+if ($login_region !== 'factory') {
+    $whereClauses[] = "c.direct_sale = ?";
+    $bindTypes .= 's';
+    $bindValues[] = $login_region;
+}
 if ($isSalesPerson) {
-    $sql .= " AND COALESCE(c.sales_person_id, f.sales_person_id) = ?";
+    $whereClauses[] = "COALESCE(c.sales_person_id, f.sales_person_id) = ?";
     $bindTypes .= 'i';
     $bindValues[] = (int)$_SESSION['user_id'];
+}
+if ($whereClauses) {
+    $sql .= " WHERE " . implode(" AND ", $whereClauses);
 }
 $sql .= " ORDER BY c.name";
 
