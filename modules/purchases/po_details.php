@@ -310,9 +310,15 @@ require_once '../../includes/header.php';
                                 </tr>
                             </thead>
                             <tbody>
-                                <?php foreach ($receipts as $receipt) : ?>
-                                    <tr>
-                                        <td><?= date('M d, Y H:i', strtotime($receipt['created_at'])) ?></td>
+                                <?php foreach ($receipts as $receiptIndex => $receipt) : ?>
+                                    <?php $isLatestReceipt = ($receiptIndex === 0); ?>
+                                    <tr class="<?= $isLatestReceipt ? 'table-success fw-semibold' : 'text-muted opacity-50' ?>">
+                                        <td>
+                                            <?= date('M d, Y H:i', strtotime($receipt['created_at'])) ?>
+                                            <?php if ($isLatestReceipt) : ?>
+                                                <span class="badge bg-success ms-1">Latest</span>
+                                            <?php endif; ?>
+                                        </td>
                                         <td><?= htmlspecialchars($receipt['created_by_name']) ?></td>
                                         <td>
                                             <?php echo renderAttachmentThumbnails($receiptImagesByReceipt[$receipt['id']] ?? []); ?>
