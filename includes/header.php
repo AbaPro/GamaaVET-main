@@ -284,6 +284,13 @@
                                             <i class="fas fa-flask me-2"></i> Formulas
                                         </a>
                                     </li>
+                                    <?php if (hasPermission('manufacturing.formula.view_all')): ?>
+                                        <li>
+                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/manufacturing/formula_templates.php">
+                                                <i class="fas fa-layer-group me-2"></i> Formula Templates
+                                            </a>
+                                        </li>
+                                    <?php endif; ?>
                                     <li>
                                         <a class="dropdown-item" href="<?= BASE_URL ?>modules/manufacturing/bottle_sizes.php">
                                             <i class="fas fa-wine-bottle me-2"></i> Bottle Sizes

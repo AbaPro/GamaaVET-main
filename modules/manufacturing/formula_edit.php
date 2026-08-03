@@ -58,6 +58,26 @@ if ($productResult && $productResult->num_rows > 0) {
     }
 }
 
+$formulaTemplates = [];
+$formulaTemplatesAvailable = manufacturing_table_exists($conn, 'manufacturing_formula_templates');
+if ($formulaTemplatesAvailable) {
+    $templateResult = $conn->query("
+        SELECT id, name, description, components_json
+        FROM manufacturing_formula_templates
+        WHERE is_active = 1
+        ORDER BY name
+    ");
+    if ($templateResult) {
+        while ($templateRow = $templateResult->fetch_assoc()) {
+            $templateComponents = json_decode($templateRow['components_json'] ?? '[]', true);
+            $templateRow['components'] = is_array($templateComponents) ? $templateComponents : [];
+            unset($templateRow['components_json']);
+            $formulaTemplates[] = $templateRow;
+        }
+    }
+}
+$selectedTemplateId = $id === 0 && isset($_GET['template_id']) ? (int)$_GET['template_id'] : 0;
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $customerId = isset($_POST['customer_id']) ? (int)$_POST['customer_id'] : 0;
     $productId  = isset($_POST['product_id']) && $_POST['product_id'] !== '' ? (int)$_POST['product_id'] : null;
@@ -191,6 +211,13 @@ if ($formula && !empty($formula['components_json'])) {
     $currentComponents = json_decode($formula['components_json'], true) ?: [];
 } elseif (isset($_POST['components'])) {
     $currentComponents = $_POST['components'];
+} elseif ($selectedTemplateId > 0) {
+    foreach ($formulaTemplates as $formulaTemplate) {
+        if ((int)$formulaTemplate['id'] === $selectedTemplateId) {
+            $currentComponents = $formulaTemplate['components'];
+            break;
+        }
+    }
 }
 $currentSampleImages = [];
 if ($formula && !empty($formula['sample_images_json'])) {
@@ -280,6 +307,41 @@ if ($formula && !empty($formula['sample_images_json'])) {
                             </div>
                         </div>
                     </div>
+                </div>
+            </div>
+
+            <div class="card mb-4 border-0 shadow-sm">
+                <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Start from a Formula Template</h5>
+                    <?php if ($formulaTemplatesAvailable): ?>
+                        <a href="formula_template_edit.php" class="btn btn-sm btn-outline-primary">
+                            <i class="fas fa-plus me-1"></i> New Template
+                        </a>
+                    <?php endif; ?>
+                </div>
+                <div class="card-body">
+                    <div class="row g-3 align-items-end">
+                        <div class="col-md-9">
+                            <label class="form-label">Template</label>
+                            <select class="form-select select2" id="formula_template_id">
+                                <option value="">— Select a reusable ingredient list —</option>
+                                <?php foreach ($formulaTemplates as $template): ?>
+                                    <option value="<?= (int)$template['id']; ?>" <?= $selectedTemplateId === (int)$template['id'] ? 'selected' : ''; ?>><?= htmlspecialchars($template['name']); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                            <small class="text-muted">Applying a template copies its ingredients here. You can then change every quantity, unit, or note for this formula.</small>
+                        </div>
+                        <div class="col-md-3 d-grid">
+                            <button type="button" class="btn btn-outline-primary" id="applyFormulaTemplate" <?= empty($formulaTemplates) ? 'disabled' : ''; ?>>
+                                <i class="fas fa-copy me-1"></i> Apply Template
+                            </button>
+                        </div>
+                    </div>
+                    <?php if (!$formulaTemplatesAvailable): ?>
+                        <div class="alert alert-warning mt-3 mb-0">Formula templates will be available after the 20260803 database migration is applied.</div>
+                    <?php elseif (empty($formulaTemplates)): ?>
+                        <div class="alert alert-light border mt-3 mb-0">No active templates yet. Create one to reuse its ingredients across formulas.</div>
+                    <?php endif; ?>
                 </div>
             </div>
 
@@ -457,7 +519,8 @@ if ($formula && !empty($formula['sample_images_json'])) {
 <script>
     const availableProducts = <?= json_encode($products); ?>;
     const canViewComponentName = <?= json_encode($canViewComponentName); ?>;
-    const oldComponents = <?= json_encode($currentComponents); ?>;
+    const oldComponents = <?= json_encode($currentComponents, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
+    const formulaTemplates = <?= json_encode($formulaTemplates, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
     const preselectedProductId = <?= json_encode($formula['product_id'] ?? $_POST['product_id'] ?? ''); ?>;
     const preselectedCustomerId = <?= json_encode($formula['customer_id'] ?? $_POST['customer_id'] ?? ''); ?>;
     const canonicalUnits = ['kg', 'g', 'L', 'ml', 'pcs'];
@@ -604,6 +667,32 @@ if ($formula && !empty($formula['sample_images_json'])) {
 
         $('#addComponent').on('click', function () {
             addComponentRow();
+        });
+
+        $('#applyFormulaTemplate').on('click', function () {
+            const templateId = $('#formula_template_id').val();
+            const template = formulaTemplates.find(function (item) {
+                return String(item.id) === String(templateId);
+            });
+            if (!template) {
+                alert('Please select a formula template first.');
+                return;
+            }
+            if (componentsBody.find('tr').length > 0 && !confirm('Replace the current ingredient rows with the selected template?')) {
+                return;
+            }
+            componentsBody.find('.select2-ingredients').each(function () {
+                if ($.fn.select2 && $(this).hasClass('select2-hidden-accessible')) {
+                    $(this).select2('destroy');
+                }
+            });
+            componentsBody.empty();
+            (template.components || []).forEach(function (component) {
+                addComponentRow(component);
+            });
+            if (!(template.components || []).length) {
+                addComponentRow();
+            }
         });
 
         $(document).on('click', '.remove-component', function () {

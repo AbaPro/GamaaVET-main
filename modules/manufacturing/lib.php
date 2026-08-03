@@ -840,6 +840,23 @@ function manufacturing_table_has_column($conn, $tableName, $columnName) {
     return $result && $result->num_rows > 0;
 }
 
+function manufacturing_table_exists($conn, $tableName) {
+    $stmt = $conn->prepare("
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = DATABASE() AND table_name = ?
+        LIMIT 1
+    ");
+    if (!$stmt) {
+        return false;
+    }
+    $stmt->bind_param('s', $tableName);
+    $stmt->execute();
+    $exists = $stmt->get_result()->num_rows > 0;
+    $stmt->close();
+    return $exists;
+}
+
 function manufacturing_format_duration($startedAt, $completedAt) {
     if (!$startedAt || !$completedAt) {
         return '-';
