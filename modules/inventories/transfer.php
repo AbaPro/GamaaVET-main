@@ -14,9 +14,9 @@ require_once '../../includes/header.php';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $from_inventory_id = (int)sanitize($_POST['from_inventory_id']);
     $to_inventory_id = (int)sanitize($_POST['to_inventory_id']);
+    $receiver_id = (int)sanitize($_POST['receiver_id'] ?? 0);
     $notes = sanitize($_POST['notes']);
     $user_id = $_SESSION['user_id'];
-    $transferred_at = date('Y-m-d H:i:s');
     $uploadedTransferImages = [];
 
     if ($from_inventory_id === $to_inventory_id) {
@@ -29,17 +29,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect('transfer.php');
     }
 
+    // Never trust the posted receiver id: confirm the user really holds the
+    // receive permission rather than relying on the rendered dropdown.
+    if ($receiver_id <= 0) {
+        setAlert('danger', 'Please select the user who will receive this transfer.');
+        redirect('transfer.php');
+    }
+
+    if (!userHasPermissionKey($receiver_id, 'inventories.transfer.receive')) {
+        setAlert('danger', 'The selected receiver is not allowed to receive inventory transfers.');
+        redirect('transfer.php');
+    }
+
     if (empty($_POST['product_id']) || !is_array($_POST['product_id'])) {
         setAlert('danger', 'Please add at least one item to transfer.');
         redirect('transfer.php');
     }
-    
+
     // Generate transfer reference
     $transfer_reference = 'TR-' . date('Ymd') . '-' . generateRandomString(6);
-    
+
     // Start transaction
     $conn->begin_transaction();
-    
+
     try {
         $transferImageError = null;
         $uploadedTransferImages = uploadImageAttachments(
@@ -54,12 +66,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new Exception($transferImageError);
         }
 
-        // Create transfer record
+        // Created as 'pending': stock does NOT move here. The assigned receiver
+        // moves it by confirming in receive_transfer.php.
         $transfer_sql = "INSERT INTO inventory_transfers
-                         (transfer_reference, from_inventory_id, to_inventory_id, status, requested_by, accepted_by, transferred_by, transferred_at, notes)
-                         VALUES (?, ?, ?, 'accepted', ?, ?, ?, ?, ?)";
+                         (transfer_reference, from_inventory_id, to_inventory_id, status, requested_by, received_by, notes)
+                         VALUES (?, ?, ?, 'pending', ?, ?, ?)";
         $transfer_stmt = $conn->prepare($transfer_sql);
-        $transfer_stmt->bind_param("siiiiiss", $transfer_reference, $from_inventory_id, $to_inventory_id, $user_id, $user_id, $user_id, $transferred_at, $notes);
+        $transfer_stmt->bind_param("siiiis", $transfer_reference, $from_inventory_id, $to_inventory_id, $user_id, $receiver_id, $notes);
         $transfer_stmt->execute();
         $transfer_id = $transfer_stmt->insert_id;
         $transfer_stmt->close();
@@ -73,73 +86,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $imgStmt->close();
         }
 
-        // Process transfer items
+        // Record the requested lines. Availability is checked again (and enforced)
+        // when the receiver confirms, since stock can move in the meantime.
+        $itemCount = 0;
         foreach ($_POST['product_id'] as $key => $product_id) {
             $product_id = (int)sanitize($product_id);
             $quantity = (float)sanitize($_POST['quantity'][$key]);
-            
+
             if ($quantity > 0) {
-                $source_before = getInventoryProductQuantity($from_inventory_id, $product_id);
-                // Add to transfer items
                 $item_sql = "INSERT INTO transfer_items (transfer_id, product_id, quantity) VALUES (?, ?, ?)";
                 $item_stmt = $conn->prepare($item_sql);
                 $item_stmt->bind_param("iid", $transfer_id, $product_id, $quantity);
                 $item_stmt->execute();
                 $item_stmt->close();
-                
-                // Deduct from source inventory
-                $deduct_sql = "UPDATE inventory_products 
-                               SET quantity = quantity - ? 
-                               WHERE inventory_id = ? AND product_id = ? AND quantity >= ?";
-                $deduct_stmt = $conn->prepare($deduct_sql);
-                $deduct_stmt->bind_param("diid", $quantity, $from_inventory_id, $product_id, $quantity);
-                $deduct_stmt->execute();
-                
-                if ($deduct_stmt->affected_rows === 0) {
-                    throw new Exception("Insufficient quantity for product ID: $product_id");
-                }
-                $deduct_stmt->close();
-
-                $destination_before = getInventoryProductQuantity($to_inventory_id, $product_id);
-                $add_sql = "INSERT INTO inventory_products (inventory_id, product_id, quantity)
-                            VALUES (?, ?, ?)
-                            ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)";
-                $add_stmt = $conn->prepare($add_sql);
-                $add_stmt->bind_param("iid", $to_inventory_id, $product_id, $quantity);
-                $add_stmt->execute();
-                $add_stmt->close();
-
-                logInventoryStockChange(
-                    $from_inventory_id,
-                    $product_id,
-                    -(float)$quantity,
-                    $source_before,
-                    $source_before - (float)$quantity,
-                    'inventory_transfer',
-                    $transfer_id,
-                    null,
-                    null,
-                    'Transfer out to inventory ID: ' . $to_inventory_id
-                );
-                logInventoryStockChange(
-                    $to_inventory_id,
-                    $product_id,
-                    (float)$quantity,
-                    $destination_before,
-                    $destination_before + (float)$quantity,
-                    'inventory_transfer',
-                    $transfer_id,
-                    null,
-                    null,
-                    'Transfer in from inventory ID: ' . $from_inventory_id
-                );
+                $itemCount++;
             }
         }
-        
+
+        if ($itemCount === 0) {
+            throw new Exception('Please add at least one item with a quantity greater than zero.');
+        }
+
         // Commit transaction
         $conn->commit();
-        setAlert('success', 'Transfer completed successfully. Reference: ' . $transfer_reference);
-        logActivity("Created and accepted inventory transfer: $transfer_reference (ID: $transfer_id) by user ID $user_id at $transferred_at");
+
+        logTransferHistory(
+            $transfer_id,
+            'created',
+            null,
+            null,
+            null,
+            'Transfer created with ' . $itemCount . ' item(s) and ' . count($uploadedTransferImages) . ' image(s)'
+        );
+
+        createNotification(
+            'inventory_transfer_pending',
+            'Transfer awaiting your confirmation',
+            'Transfer ' . $transfer_reference . ' has been assigned to you. Confirm it once you receive the items.',
+            'inventories',
+            'inventory_transfer',
+            $transfer_id,
+            'info',
+            null,
+            $receiver_id,
+            $user_id
+        );
+
+        setAlert('success', 'Transfer created and sent to the receiver for confirmation. Reference: ' . $transfer_reference);
+        logActivity("Created inventory transfer: $transfer_reference (ID: $transfer_id) awaiting receiver ID $receiver_id");
         redirect('transfers_list.php');
     } catch (Exception $e) {
         // Rollback transaction on error
@@ -159,6 +153,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $inventoryScope = getInventoryChannelScopeSql('i');
 $inventories_sql = "SELECT i.id, i.name FROM inventories i WHERE i.is_active = 1 AND $inventoryScope ORDER BY i.name";
 $inventories_result = $conn->query($inventories_sql);
+
+// Only users who can actually act on the transfer may be assigned as receiver.
+$receiverCandidates = getUsersWithPermission('inventories.transfer.receive');
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -192,6 +189,22 @@ $inventories_result = $conn->query($inventories_sql);
                 </div>
             </div>
             
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label for="receiver_id" class="form-label">Receiver <span class="text-danger">*</span></label>
+                    <select class="form-select" id="receiver_id" name="receiver_id" required>
+                        <option value="">-- Select Receiving User --</option>
+                        <?php foreach ($receiverCandidates as $candidate): ?>
+                            <option value="<?php echo (int)$candidate['id']; ?>"><?php echo htmlspecialchars($candidate['name']); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <small class="text-muted">This user is notified and must confirm the transfer. Stock moves only after they confirm.</small>
+                    <?php if (empty($receiverCandidates)): ?>
+                        <div class="text-danger small mt-1">No users hold the "Receive Transfers" permission yet. Grant it in Roles &amp; Permissions first.</div>
+                    <?php endif; ?>
+                </div>
+            </div>
+
             <div class="mb-3">
                 <label for="notes" class="form-label">Notes</label>
                 <textarea class="form-control" id="notes" name="notes" rows="2"></textarea>
@@ -359,6 +372,12 @@ $(document).ready(function() {
         if ($('#transferItemsBody tr').length === 0) {
             e.preventDefault();
             alert('Please add at least one item to transfer.');
+            return;
+        }
+
+        if (!$('#receiver_id').val()) {
+            e.preventDefault();
+            alert('Please select the user who will receive this transfer.');
             return;
         }
 

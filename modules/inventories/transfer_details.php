@@ -20,16 +20,20 @@ $transfer_sql = "SELECT it.*,
                         i1.name as from_inventory,
                         i2.name as to_inventory,
                         u.name as requested_by_name,
-                        au.name as accepted_by_name,
+                        ru.name as received_by_name,
                         tu.name as transferred_by_name,
+                        vu.name as verified_by_name,
+                        ju.name as rejected_by_name,
                         COALESCE(items.item_count, 0) as item_count,
                         COALESCE(items.total_quantity, 0) as total_quantity
                  FROM inventory_transfers it
                  JOIN inventories i1 ON it.from_inventory_id = i1.id
                  JOIN inventories i2 ON it.to_inventory_id = i2.id
                  LEFT JOIN users u ON it.requested_by = u.id
-                 LEFT JOIN users au ON it.accepted_by = au.id
+                 LEFT JOIN users ru ON it.received_by = ru.id
                  LEFT JOIN users tu ON it.transferred_by = tu.id
+                 LEFT JOIN users vu ON it.verified_by = vu.id
+                 LEFT JOIN users ju ON it.rejected_by = ju.id
                  LEFT JOIN (
                      SELECT transfer_id, COUNT(*) as item_count, SUM(quantity) as total_quantity
                      FROM transfer_items
@@ -73,6 +77,55 @@ $items_stmt->bind_param("iii", $transfer['from_inventory_id'], $transfer['to_inv
 $items_stmt->execute();
 $items_result = $items_stmt->get_result();
 
+// Full audit trail: state changes and field-level edits.
+$history = [];
+if (tableExists('inventory_transfer_history')) {
+    $histStmt = $conn->prepare("
+        SELECT h.*, hu.name AS actor_name
+        FROM inventory_transfer_history h
+        LEFT JOIN users hu ON hu.id = h.created_by
+        WHERE h.inventory_transfer_id = ?
+        ORDER BY h.created_at ASC, h.id ASC
+    ");
+    $histStmt->bind_param('i', $transfer_id);
+    $histStmt->execute();
+    $history = $histStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $histStmt->close();
+}
+
+$currentUserId = (int)($_SESSION['user_id'] ?? 0);
+$status = $transfer['status'];
+$isAdmin = isAdminUser();
+$isAssignedReceiver = (int)$transfer['received_by'] === $currentUserId;
+$ownAction = $isAssignedReceiver || (int)$transfer['transferred_by'] === $currentUserId;
+
+$showReceiveActions = $status === 'pending'
+    && hasPermission('inventories.transfer.receive')
+    && ($isAssignedReceiver || $isAdmin);
+$showVerifyActions = $status === 'transferred'
+    && hasPermission('inventories.transfer.verify')
+    && (!$ownAction || $isAdmin);
+$canEdit = $status !== 'rejected'
+    && ((int)$transfer['requested_by'] === $currentUserId || $isAdmin);
+$canDelete = in_array($status, ['pending', 'rejected'], true) || $isAdmin;
+
+$statusColors = [
+    'pending' => 'warning',
+    'transferred' => 'info',
+    'verified' => 'success',
+    'rejected' => 'danger',
+];
+
+$historyActionLabels = [
+    'created' => ['Created', 'primary'],
+    'edited' => ['Edited', 'secondary'],
+    'transferred' => ['Received', 'info'],
+    'verified' => ['Verified', 'success'],
+    'rejected' => ['Rejected', 'danger'],
+    'sent_back' => ['Sent back', 'warning'],
+    'images_added' => ['Images added', 'secondary'],
+];
+
 $page_title = 'Transfer Details';
 require_once '../../includes/header.php';
 ?>
@@ -80,20 +133,45 @@ require_once '../../includes/header.php';
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
         <h2 class="mb-1">Transfer <?= htmlspecialchars($transfer['transfer_reference']) ?></h2>
-        <span class="badge bg-<?php echo ($transfer['status'] == 'pending' ? 'warning' : ($transfer['status'] == 'accepted' ? 'success' : 'danger')); ?>">
-            <?= ucfirst($transfer['status']) ?>
+        <span class="badge bg-<?= $statusColors[$status] ?? 'secondary' ?>">
+            <?= ucfirst($status) ?>
         </span>
+        <?php if ($status === 'pending'): ?>
+            <span class="text-muted small ms-2">Stock has not moved yet — it moves when the receiver confirms.</span>
+        <?php endif; ?>
     </div>
     <div>
-        <?php if ($transfer['status'] === 'pending'): ?>
-            <a href="accept_transfer.php?id=<?= $transfer_id ?>"
+        <?php if ($showReceiveActions): ?>
+            <a href="receive_transfer.php?id=<?= $transfer_id ?>"
                class="btn btn-outline-success"
-               onclick="return confirm('Accept this transfer and add stock to the destination inventory?')">
-                <i class="fas fa-check"></i> Accept
+               onclick="return confirm('Confirm you received these items? This moves the stock from the source to the destination inventory.')">
+                <i class="fas fa-check"></i> Confirm Receipt
             </a>
+            <button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#rejectModal">
+                <i class="fas fa-times"></i> Reject
+            </button>
+        <?php endif; ?>
+        <?php if ($showVerifyActions): ?>
+            <a href="verify_transfer.php?id=<?= $transfer_id ?>&action=verify"
+               class="btn btn-outline-primary"
+               onclick="return confirm('Verify this transfer?')">
+                <i class="fas fa-clipboard-check"></i> Verify
+            </a>
+            <button type="button" class="btn btn-outline-warning" data-bs-toggle="modal" data-bs-target="#sendBackModal">
+                <i class="fas fa-undo"></i> Send Back
+            </button>
+        <?php endif; ?>
+        <?php if ($canEdit): ?>
+            <a href="edit_transfer.php?id=<?= $transfer_id ?>" class="btn btn-outline-secondary">
+                <i class="fas fa-pen"></i> Edit
+            </a>
+        <?php endif; ?>
+        <?php if ($canDelete): ?>
             <a href="delete_transfer.php?id=<?= $transfer_id ?>"
                class="btn btn-outline-danger"
-               onclick="return confirm('Are you sure? This will return stock to the source inventory.')">
+               onclick="return confirm('<?= in_array($status, ['transferred','verified'], true)
+                   ? 'This transfer has already moved stock. Deleting it will reverse the movement. Continue?'
+                   : 'Delete this transfer? No stock has been moved.' ?>')">
                 <i class="fas fa-trash"></i> Delete
             </a>
         <?php endif; ?>
@@ -136,21 +214,43 @@ require_once '../../includes/header.php';
                         <div><?= !empty($transfer['updated_at']) ? date('M d, Y H:i', strtotime($transfer['updated_at'])) : '-' ?></div>
                     </div>
                     <div class="col-md-4">
-                        <div class="text-muted small">Requested By</div>
+                        <div class="text-muted small">Sender</div>
                         <div><?= htmlspecialchars($transfer['requested_by_name'] ?? 'System') ?></div>
                     </div>
                     <div class="col-md-4">
-                        <div class="text-muted small">Accepted By</div>
-                        <div><?= htmlspecialchars($transfer['accepted_by_name'] ?? ($transfer['status'] === 'accepted' ? ($transfer['transferred_by_name'] ?? '-') : '-')) ?></div>
+                        <div class="text-muted small">Receiver <?= $status === 'pending' ? '(assigned)' : '' ?></div>
+                        <div><?= htmlspecialchars($transfer['received_by_name'] ?? '-') ?></div>
                     </div>
                     <div class="col-md-4">
-                        <div class="text-muted small">Transferred By</div>
-                        <div><?= htmlspecialchars($transfer['transferred_by_name'] ?? $transfer['requested_by_name'] ?? 'System') ?></div>
+                        <div class="text-muted small">Received At</div>
+                        <div><?= !empty($transfer['received_at']) ? date('M d, Y H:i', strtotime($transfer['received_at'])) : '-' ?></div>
                     </div>
                     <div class="col-md-4">
-                        <div class="text-muted small">Transferred At</div>
-                        <div><?= !empty($transfer['transferred_at']) ? date('M d, Y H:i', strtotime($transfer['transferred_at'])) : '-' ?></div>
+                        <div class="text-muted small">Verified By</div>
+                        <div><?= htmlspecialchars($transfer['verified_by_name'] ?? '-') ?></div>
                     </div>
+                    <div class="col-md-4">
+                        <div class="text-muted small">Verified At</div>
+                        <div><?= !empty($transfer['verified_at']) ? date('M d, Y H:i', strtotime($transfer['verified_at'])) : '-' ?></div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="text-muted small">Stock Moved At</div>
+                        <div><?= !empty($transfer['transferred_at']) ? date('M d, Y H:i', strtotime($transfer['transferred_at'])) : '<span class="text-muted">Not yet</span>' ?></div>
+                    </div>
+                    <?php if (!empty($transfer['rejected_by'])): ?>
+                        <div class="col-md-4">
+                            <div class="text-muted small">Rejected By</div>
+                            <div><?= htmlspecialchars($transfer['rejected_by_name'] ?? '-') ?></div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="text-muted small">Rejected At</div>
+                            <div><?= !empty($transfer['rejected_at']) ? date('M d, Y H:i', strtotime($transfer['rejected_at'])) : '-' ?></div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="text-muted small">Rejection Reason</div>
+                            <div><?= !empty($transfer['rejection_reason']) ? nl2br(htmlspecialchars($transfer['rejection_reason'])) : '-' ?></div>
+                        </div>
+                    <?php endif; ?>
                     <div class="col-12">
                         <div class="text-muted small">Notes</div>
                         <div><?= !empty($transfer['notes']) ? nl2br(htmlspecialchars($transfer['notes'])) : '<span class="text-muted">No notes</span>' ?></div>
@@ -220,6 +320,105 @@ require_once '../../includes/header.php';
         </div>
     </div>
 </div>
+
+<div class="card mt-4">
+    <div class="card-header">
+        <h5 class="card-title mb-0">Activity &amp; Edit History</h5>
+    </div>
+    <div class="card-body">
+        <?php if (empty($history)): ?>
+            <span class="text-muted">No history recorded for this transfer.</span>
+        <?php else: ?>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>When</th>
+                            <th>Who</th>
+                            <th>Action</th>
+                            <th>Field</th>
+                            <th>From</th>
+                            <th>To</th>
+                            <th>Note</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($history as $index => $entry): ?>
+                            <?php
+                                $isLatest = $index === count($history) - 1;
+                                [$actionLabel, $actionColor] = $historyActionLabels[$entry['action']]
+                                    ?? [ucfirst(str_replace('_', ' ', $entry['action'])), 'secondary'];
+                            ?>
+                            <tr class="<?= $isLatest ? 'table-light fw-semibold' : '' ?>">
+                                <td class="text-nowrap"><?= date('M d, Y H:i', strtotime($entry['created_at'])) ?></td>
+                                <td><?= htmlspecialchars($entry['actor_name'] ?? 'System') ?></td>
+                                <td><span class="badge bg-<?= $actionColor ?>"><?= htmlspecialchars($actionLabel) ?></span></td>
+                                <td><?= !empty($entry['field_name']) ? htmlspecialchars($entry['field_name']) : '-' ?></td>
+                                <td><?= ($entry['old_value'] !== null && $entry['old_value'] !== '') ? htmlspecialchars($entry['old_value']) : '-' ?></td>
+                                <td><?= ($entry['new_value'] !== null && $entry['new_value'] !== '') ? htmlspecialchars($entry['new_value']) : '-' ?></td>
+                                <td><?= !empty($entry['note']) ? htmlspecialchars($entry['note']) : '-' ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php endif; ?>
+    </div>
+</div>
+
+<?php if ($showReceiveActions): ?>
+<div class="modal fade" id="rejectModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <form action="reject_transfer.php" method="POST">
+            <input type="hidden" name="transfer_id" value="<?= $transfer_id ?>">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Reject Transfer</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted small">No stock has been moved, so rejecting simply closes this transfer.</p>
+                    <label for="rejection_reason" class="form-label">Reason <span class="text-danger">*</span></label>
+                    <textarea class="form-control" id="rejection_reason" name="rejection_reason" rows="3" required></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-danger">Reject Transfer</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+<?php endif; ?>
+
+<?php if ($showVerifyActions): ?>
+<div class="modal fade" id="sendBackModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <form action="verify_transfer.php" method="POST">
+            <input type="hidden" name="transfer_id" value="<?= $transfer_id ?>">
+            <input type="hidden" name="action" value="send_back">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Send Transfer Back</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning small mb-3">
+                        This transfer already moved stock. Sending it back returns the items to the
+                        source inventory and puts the transfer back in the receiver's queue.
+                    </div>
+                    <label for="send_back_reason" class="form-label">Reason <span class="text-danger">*</span></label>
+                    <textarea class="form-control" id="send_back_reason" name="send_back_reason" rows="3" required></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-warning">Send Back</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+<?php endif; ?>
 
 <?php
 $items_stmt->close();

@@ -28,36 +28,76 @@ if (isset($_GET['id']) && is_numeric($_GET['id'])) {
             throw new Exception("Transfer not found.");
         }
 
-        if ($transfer['status'] !== 'pending') {
-            throw new Exception("Only pending transfers can be deleted.");
+        // Stock only moves when the receiver confirms, so what needs undoing
+        // depends on the state: pending/rejected never moved anything.
+        $stockAlreadyMoved = in_array($transfer['status'], ['transferred', 'verified'], true);
+
+        if ($stockAlreadyMoved && !isAdminUser()) {
+            throw new Exception("Only an administrator can delete a transfer whose stock has already moved.");
         }
 
-        // 2. Fetch items and return stock to source
+        // 2. Fetch items and, when stock had moved, reverse it (destination -> source)
         $stmt = $pdo->prepare("SELECT * FROM transfer_items WHERE transfer_id = ?");
         $stmt->execute([$transfer_id]);
         $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        $from_inventory_id = $transfer['from_inventory_id'];
+        $from_inventory_id = (int)$transfer['from_inventory_id'];
+        $to_inventory_id = (int)$transfer['to_inventory_id'];
         $stockLogs = [];
 
-        foreach ($items as $item) {
-            $product_id = $item['product_id'];
-            $quantity = (float)$item['quantity'];
-            $beforeStmt = $pdo->prepare("SELECT quantity FROM inventory_products WHERE inventory_id = ? AND product_id = ? LIMIT 1");
-            $beforeStmt->execute([$from_inventory_id, $product_id]);
-            $quantityBefore = (float)($beforeStmt->fetchColumn() ?: 0);
+        if ($stockAlreadyMoved) {
+            foreach ($items as $item) {
+                $product_id = (int)$item['product_id'];
+                $quantity = (float)$item['quantity'];
+                if ($quantity <= 0) {
+                    continue;
+                }
 
-            // Update source inventory
-            $upd = $pdo->prepare("UPDATE inventory_products SET quantity = quantity + ? WHERE inventory_id = ? AND product_id = ?");
-            $upd->execute([$quantity, $from_inventory_id, $product_id]);
-            $stockLogs[] = [
-                'product_id' => (int)$product_id,
-                'quantity' => $quantity,
-                'quantity_before' => $quantityBefore,
-            ];
-            
-            // If row didn't exist (unlikely if they transferred it, but safe), we won't create it here 
-            // since we assume it came from there.
+                // Take it back out of the destination first, refusing to go negative.
+                $destBeforeStmt = $pdo->prepare("SELECT quantity FROM inventory_products WHERE inventory_id = ? AND product_id = ? LIMIT 1");
+                $destBeforeStmt->execute([$to_inventory_id, $product_id]);
+                $destBefore = (float)($destBeforeStmt->fetchColumn() ?: 0);
+
+                $deduct = $pdo->prepare("
+                    UPDATE inventory_products
+                    SET quantity = quantity - ?
+                    WHERE inventory_id = ? AND product_id = ? AND quantity >= ?
+                ");
+                $deduct->execute([$quantity, $to_inventory_id, $product_id, $quantity]);
+                if ($deduct->rowCount() === 0) {
+                    throw new Exception("Cannot delete: the destination inventory no longer holds enough stock to reverse this transfer.");
+                }
+
+                $srcBeforeStmt = $pdo->prepare("SELECT quantity FROM inventory_products WHERE inventory_id = ? AND product_id = ? LIMIT 1");
+                $srcBeforeStmt->execute([$from_inventory_id, $product_id]);
+                $srcBefore = (float)($srcBeforeStmt->fetchColumn() ?: 0);
+
+                // Upsert, not a bare UPDATE: the source row may have been removed
+                // since the transfer, which would otherwise silently lose stock.
+                $upd = $pdo->prepare("
+                    INSERT INTO inventory_products (inventory_id, product_id, quantity)
+                    VALUES (?, ?, ?)
+                    ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)
+                ");
+                $upd->execute([$from_inventory_id, $product_id, $quantity]);
+
+                $stockLogs[] = [
+                    'inventory_id' => $to_inventory_id,
+                    'product_id' => $product_id,
+                    'change' => -$quantity,
+                    'before' => $destBefore,
+                    'after' => $destBefore - $quantity,
+                    'note' => 'Deleted transfer: removed from destination',
+                ];
+                $stockLogs[] = [
+                    'inventory_id' => $from_inventory_id,
+                    'product_id' => $product_id,
+                    'change' => $quantity,
+                    'before' => $srcBefore,
+                    'after' => $srcBefore + $quantity,
+                    'note' => 'Deleted transfer: returned to source',
+                ];
+            }
         }
 
         // 3. Delete transfer images (fetch paths first for post-commit file cleanup)
@@ -67,9 +107,11 @@ if (isset($_GET['id']) && is_numeric($_GET['id'])) {
 
         $pdo->prepare("DELETE FROM inventory_transfer_images WHERE inventory_transfer_id = ?")->execute([$transfer_id]);
 
-        // 4. Delete items and the transfer
+        // 4. Delete items, history and the transfer
         $stmt = $pdo->prepare("DELETE FROM transfer_items WHERE transfer_id = ?");
         $stmt->execute([$transfer_id]);
+
+        $pdo->prepare("DELETE FROM inventory_transfer_history WHERE inventory_transfer_id = ?")->execute([$transfer_id]);
 
         $stmt = $pdo->prepare("DELETE FROM inventory_transfers WHERE id = ?");
         $stmt->execute([$transfer_id]);
@@ -85,20 +127,24 @@ if (isset($_GET['id']) && is_numeric($_GET['id'])) {
 
         foreach ($stockLogs as $stockLog) {
             logInventoryStockChange(
-                $from_inventory_id,
+                $stockLog['inventory_id'],
                 $stockLog['product_id'],
-                $stockLog['quantity'],
-                $stockLog['quantity_before'],
-                $stockLog['quantity_before'] + $stockLog['quantity'],
+                $stockLog['change'],
+                $stockLog['before'],
+                $stockLog['after'],
                 'inventory_transfer_delete',
                 $transfer_id,
                 null,
                 null,
-                'Deleted pending transfer and returned stock'
+                $stockLog['note']
             );
         }
-        setAlert('success', "Transfer deleted and stock returned to source inventory.");
-        logActivity("Deleted inventory transfer #$transfer_id (Ref: {$transfer['transfer_reference']}) and reversed stock.");
+
+        setAlert('success', $stockAlreadyMoved
+            ? "Transfer deleted and the stock movement was reversed."
+            : "Transfer deleted. No stock had been moved.");
+        logActivity("Deleted inventory transfer #$transfer_id (Ref: {$transfer['transfer_reference']})"
+            . ($stockAlreadyMoved ? ' and reversed stock.' : '.'));
 
     } catch (Exception $e) {
         if ($pdo->inTransaction()) {

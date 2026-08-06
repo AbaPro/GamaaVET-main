@@ -812,6 +812,253 @@ function canAccessInventoryTransfer($transferId) {
 }
 
 /**
+ * Append a row to the inventory transfer audit trail. One row per state change,
+ * and one row per changed field on an edit. No-ops when the migration that adds
+ * the table hasn't been applied yet (same guard style as logInventoryStockChange).
+ */
+function logTransferHistory($transferId, $action, $fieldName = null, $oldValue = null, $newValue = null, $note = null) {
+    global $conn;
+
+    if (!tableExists('inventory_transfer_history')) {
+        return;
+    }
+
+    $transferId = (int)$transferId;
+    $action = substr((string)$action, 0, 50);
+    $fieldName = $fieldName !== null ? substr((string)$fieldName, 0, 100) : null;
+    $oldValue = $oldValue !== null ? (string)$oldValue : null;
+    $newValue = $newValue !== null ? (string)$newValue : null;
+    $note = $note !== null ? (string)$note : null;
+    $createdBy = $_SESSION['user_id'] ?? null;
+
+    $stmt = $conn->prepare("
+        INSERT INTO inventory_transfer_history
+            (inventory_transfer_id, action, field_name, old_value, new_value, note, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ");
+    if (!$stmt) {
+        return;
+    }
+
+    $stmt->bind_param("isssssi", $transferId, $action, $fieldName, $oldValue, $newValue, $note, $createdBy);
+    $stmt->execute();
+    $stmt->close();
+}
+
+/**
+ * Active users whose role grants the given permission key. Admins are always
+ * included, mirroring the role-slug short-circuit in hasPermission().
+ */
+function getUsersWithPermission($permissionKey) {
+    global $conn;
+
+    $sql = "SELECT DISTINCT u.id, u.name
+            FROM users u
+            JOIN roles r ON r.id = u.role_id
+            LEFT JOIN role_permissions rp ON rp.role_id = r.id
+            LEFT JOIN permissions p ON p.id = rp.permission_id
+            WHERE u.is_active = 1
+              AND (p.`key` = ? OR r.slug = 'admin')
+            ORDER BY u.name";
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return [];
+    }
+    $stmt->bind_param('s', $permissionKey);
+    $stmt->execute();
+    $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+
+    return $rows;
+}
+
+/**
+ * True when the given user id may act as a transfer receiver/verifier. Used to
+ * validate posted receiver ids server-side instead of trusting the dropdown.
+ */
+function userHasPermissionKey($userId, $permissionKey) {
+    global $conn;
+
+    $userId = (int)$userId;
+    if ($userId <= 0) return false;
+
+    $sql = "SELECT u.id
+            FROM users u
+            JOIN roles r ON r.id = u.role_id
+            LEFT JOIN role_permissions rp ON rp.role_id = r.id
+            LEFT JOIN permissions p ON p.id = rp.permission_id
+            WHERE u.id = ? AND u.is_active = 1
+              AND (p.`key` = ? OR r.slug = 'admin')
+            LIMIT 1";
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return false;
+    }
+    $stmt->bind_param('is', $userId, $permissionKey);
+    $stmt->execute();
+    $allowed = $stmt->get_result()->num_rows === 1;
+    $stmt->close();
+
+    return $allowed;
+}
+
+/**
+ * Role ids holding the given permission key (plus the admin role), for
+ * role-targeted notifications via createNotification($for_role_id).
+ */
+function getRoleIdsWithPermission($permissionKey) {
+    global $conn;
+
+    $sql = "SELECT DISTINCT r.id
+            FROM roles r
+            LEFT JOIN role_permissions rp ON rp.role_id = r.id
+            LEFT JOIN permissions p ON p.id = rp.permission_id
+            WHERE p.`key` = ? OR r.slug = 'admin'";
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return [];
+    }
+    $stmt->bind_param('s', $permissionKey);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $ids = [];
+    while ($row = $result->fetch_assoc()) {
+        $ids[] = (int)$row['id'];
+    }
+    $stmt->close();
+
+    return $ids;
+}
+
+/**
+ * Move the stock for every line of a transfer, in one direction.
+ *
+ * $direction 'out' deducts the source and credits the destination (receiving);
+ * 'in' does the reverse (sending a verified/transferred row back, or deleting one).
+ *
+ * Must be called inside an open transaction with the transfer row locked. Throws
+ * when a deduction would take stock negative, so the caller rolls the whole
+ * transfer back rather than leaving a partial movement behind. Returns the log
+ * entries the caller should hand to logInventoryStockChange() AFTER committing.
+ */
+function applyTransferStockMovement($transfer, $direction = 'out') {
+    global $conn;
+
+    $transferId = (int)$transfer['id'];
+    $sourceId = (int)$transfer['from_inventory_id'];
+    $destinationId = (int)$transfer['to_inventory_id'];
+
+    // 'out' takes from source and gives to destination; 'in' reverses that.
+    $takeFrom = $direction === 'out' ? $sourceId : $destinationId;
+    $giveTo = $direction === 'out' ? $destinationId : $sourceId;
+
+    $itemsStmt = $conn->prepare("
+        SELECT ti.product_id, ti.quantity, p.name AS product_name
+        FROM transfer_items ti
+        JOIN products p ON p.id = ti.product_id
+        WHERE ti.transfer_id = ?
+    ");
+    $itemsStmt->bind_param('i', $transferId);
+    $itemsStmt->execute();
+    $items = $itemsStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $itemsStmt->close();
+
+    // Collect every shortage first so the error names all short products at once.
+    $shortages = [];
+    foreach ($items as $item) {
+        $quantity = (float)$item['quantity'];
+        if ($quantity <= 0) {
+            continue;
+        }
+        $available = getInventoryProductQuantity($takeFrom, (int)$item['product_id']);
+        if ($available < $quantity) {
+            $shortages[] = $item['product_name'] . ' (need ' . rtrim(rtrim(number_format($quantity, 2, '.', ''), '0'), '.')
+                . ', available ' . rtrim(rtrim(number_format($available, 2, '.', ''), '0'), '.') . ')';
+        }
+    }
+    if (!empty($shortages)) {
+        throw new Exception('Insufficient stock for: ' . implode('; ', $shortages));
+    }
+
+    $stockLogs = [];
+    foreach ($items as $item) {
+        $productId = (int)$item['product_id'];
+        $quantity = (float)$item['quantity'];
+        if ($quantity <= 0) {
+            continue;
+        }
+
+        $takeBefore = getInventoryProductQuantity($takeFrom, $productId);
+        $deduct = $conn->prepare("
+            UPDATE inventory_products
+            SET quantity = quantity - ?
+            WHERE inventory_id = ? AND product_id = ? AND quantity >= ?
+        ");
+        $deduct->bind_param('diid', $quantity, $takeFrom, $productId, $quantity);
+        $deduct->execute();
+        $deducted = $deduct->affected_rows;
+        $deduct->close();
+
+        // Re-check under the lock: stock may have moved since the pre-flight scan.
+        if ($deducted === 0) {
+            throw new Exception('Insufficient stock for ' . $item['product_name'] . '. The transfer was not applied.');
+        }
+
+        $giveBefore = getInventoryProductQuantity($giveTo, $productId);
+        $add = $conn->prepare("
+            INSERT INTO inventory_products (inventory_id, product_id, quantity)
+            VALUES (?, ?, ?)
+            ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)
+        ");
+        $add->bind_param('iid', $giveTo, $productId, $quantity);
+        $add->execute();
+        $add->close();
+
+        $stockLogs[] = [
+            'inventory_id' => $takeFrom,
+            'product_id' => $productId,
+            'change' => -$quantity,
+            'before' => $takeBefore,
+            'after' => $takeBefore - $quantity,
+            'peer_inventory_id' => $giveTo,
+            'outbound' => true,
+        ];
+        $stockLogs[] = [
+            'inventory_id' => $giveTo,
+            'product_id' => $productId,
+            'change' => $quantity,
+            'before' => $giveBefore,
+            'after' => $giveBefore + $quantity,
+            'peer_inventory_id' => $takeFrom,
+            'outbound' => false,
+        ];
+    }
+
+    return $stockLogs;
+}
+
+/**
+ * Write the entries returned by applyTransferStockMovement() to the stock ledger.
+ * Call this after the transaction commits.
+ */
+function writeTransferStockLogs($stockLogs, $sourceType, $transferId) {
+    foreach ($stockLogs as $log) {
+        logInventoryStockChange(
+            $log['inventory_id'],
+            $log['product_id'],
+            $log['change'],
+            $log['before'],
+            $log['after'],
+            $sourceType,
+            $transferId,
+            null,
+            null,
+            ($log['outbound'] ? 'Transfer out to inventory ID: ' : 'Transfer in from inventory ID: ') . $log['peer_inventory_id']
+        );
+    }
+}
+
+/**
  * Salespeople are restricted to customers explicitly assigned to them, or
  * inherited from the customer's factory. Admins and non-sales operational
  * roles retain their permission-based access.

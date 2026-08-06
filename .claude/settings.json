@@ -6,7 +6,9 @@
       "Bash(grep -n 'require_once\\\\|global $conn' includes/auth.php)",
       "Bash(grep -n 'require_once\\\\|\\\\$conn\\\\b' config/database.php)",
       "Bash(grep -n '$conn\\\\s*=' config/database.php)",
-      "Bash(git -C /Users/abanoubraafat/Downloads/GamaaVET-main status --short)"
+      "Bash(git -C /Users/abanoubraafat/Downloads/GamaaVET-main status --short)",
+      "Bash(sed -n '/CREATE TABLE `roles`/,/ENGINE=/p' database_structure.sql)",
+      "Bash(sed -n '/CREATE TABLE `permissions`/,/ENGINE=/p' database_structure.sql)"
     ]
   }
 }

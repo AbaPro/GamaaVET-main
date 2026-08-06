@@ -54,7 +54,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'quotations' => ['created_by'],
         'purchase_orders' => ['created_by'],
         'purchase_order_payments' => ['created_by'],
-        'inventory_transfers' => ['requested_by', 'accepted_by']
+        'inventory_transfers' => ['requested_by', 'accepted_by', 'received_by', 'transferred_by', 'verified_by', 'rejected_by']
     ];
 
     $conn->begin_transaction();
