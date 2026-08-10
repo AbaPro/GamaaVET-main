@@ -147,6 +147,61 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
 
+            // Batch size / bottle size may have changed, so re-scale required quantities
+            // for any sourcing rows that haven't already had stock deducted.
+            $rescaleStmt = $pdo->prepare("
+                SELECT mo.*, f.components_json, f.batch_size AS formula_batch_size, f.batch_unit,
+                       bs.size AS bottle_size_value, bs.unit AS bottle_size_unit
+                FROM manufacturing_orders mo
+                JOIN manufacturing_formulas f ON f.id = mo.formula_id
+                LEFT JOIN bottle_sizes bs ON bs.id = mo.bottle_size_id
+                WHERE mo.id = ?
+                LIMIT 1
+            ");
+            $rescaleStmt->execute([$orderId]);
+            $rescaledOrder = $rescaleStmt->fetch(PDO::FETCH_ASSOC);
+
+            $hasSourceCol = $conn->query("SHOW COLUMNS FROM manufacturing_sourcing_components LIKE 'source'")->num_rows > 0;
+
+            $rescaledComponentsRaw = json_decode($rescaledOrder['components_json'] ?? '[]', true);
+            if (!is_array($rescaledComponentsRaw)) {
+                $rescaledComponentsRaw = [];
+            }
+            $rescaledComponents = manufacturing_recalculate_components($rescaledOrder, $rescaledComponentsRaw);
+
+            $updateReqStmt = $pdo->prepare($hasSourceCol
+                ? "UPDATE manufacturing_sourcing_components SET required_quantity = ? WHERE manufacturing_order_id = ? AND source = 'formula' AND formula_component_index = ? AND deducted_at IS NULL"
+                : "UPDATE manufacturing_sourcing_components SET required_quantity = ? WHERE manufacturing_order_id = ? AND formula_component_index = ? AND deducted_at IS NULL");
+            foreach ($rescaledComponents as $index => $component) {
+                $newRequiredQty = $component['quantity'] ?? $component['ratio'] ?? 0;
+                $updateReqStmt->execute([$newRequiredQty, $orderId, $index]);
+            }
+            $updateReqStmt->closeCursor();
+
+            // Packaging rows scale directly with number_of_bottles (unchanged by this form),
+            // but still need to be re-derived from the packaging option's per-bottle quantity.
+            if ($hasSourceCol && !empty($rescaledOrder['number_of_bottles']) && !empty($rescaledOrder['packaging_option_id'])) {
+                $pkgItemsStmt = $pdo->prepare("
+                    SELECT poi.quantity
+                    FROM packaging_option_items poi
+                    WHERE poi.packaging_option_id = ?
+                    ORDER BY poi.id
+                ");
+                $pkgItemsStmt->execute([$rescaledOrder['packaging_option_id']]);
+                $pkgItems = $pkgItemsStmt->fetchAll(PDO::FETCH_ASSOC);
+
+                $updatePkgReqStmt = $pdo->prepare("
+                    UPDATE manufacturing_sourcing_components
+                    SET required_quantity = ?
+                    WHERE manufacturing_order_id = ? AND source = 'packaging' AND formula_component_index = ? AND deducted_at IS NULL
+                ");
+                foreach ($pkgItems as $pkgIdx => $pkgItem) {
+                    $pkgRequiredQty = round((float)$pkgItem['quantity'] * (int)$rescaledOrder['number_of_bottles'], 4);
+                    $updatePkgReqStmt->execute([$pkgRequiredQty, $orderId, $pkgIdx]);
+                }
+                $updatePkgReqStmt->closeCursor();
+            }
+
             $pdo->commit();
             foreach ($stockLogs as $stockLog) {
                 logInventoryStockChange(
