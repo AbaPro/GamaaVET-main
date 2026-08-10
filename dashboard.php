@@ -116,25 +116,29 @@ $dashboardInventoryScope = getInventoryChannelScopeSql('i');
                         <div>
                             <h6 class="card-title">Low Stock Items</h6>
                             <?php
+                            // Counts distinct products whose TOTAL stock across locations is at/below minimum,
+                            // not per-location rows, so a product split across bins isn't over-counted or misflagged.
                             if (isSalesPersonUser()) {
                                 $productCustomerScope = getCustomerChannelScopeSql('product_customer', 'product_factory');
-                                $sql = "SELECT COUNT(*) AS total
+                                $sql = "SELECT COUNT(DISTINCT p.id) AS total
                                         FROM inventory_products ip
                                         JOIN inventories i ON i.id = ip.inventory_id
                                         JOIN products p ON ip.product_id = p.id
                                         JOIN customers product_customer ON product_customer.id = p.customer_id
                                         LEFT JOIN factories product_factory ON product_factory.id = product_customer.factory_id
-                                        WHERE ip.quantity <= p.min_stock_level
-                                          AND p.type = 'final'
+                                        WHERE p.type = 'final'
                                           AND $dashboardInventoryScope
-                                          AND $productCustomerScope";
+                                          AND $productCustomerScope
+                                          AND p.min_stock_level > 0
+                                          AND (SELECT COALESCE(SUM(ip2.quantity),0) FROM inventory_products ip2 WHERE ip2.product_id = p.id) <= p.min_stock_level";
                             } else {
-                                $sql = "SELECT COUNT(*) AS total
+                                $sql = "SELECT COUNT(DISTINCT p.id) AS total
                                         FROM inventory_products ip
                                         JOIN inventories i ON i.id = ip.inventory_id
                                         JOIN products p ON ip.product_id = p.id
-                                        WHERE ip.quantity <= p.min_stock_level
-                                          AND $dashboardInventoryScope";
+                                        WHERE $dashboardInventoryScope
+                                          AND p.min_stock_level > 0
+                                          AND (SELECT COALESCE(SUM(ip2.quantity),0) FROM inventory_products ip2 WHERE ip2.product_id = p.id) <= p.min_stock_level";
                             }
                             $result = $conn->query($sql);
                             $low_stock = (int)($result->fetch_assoc()['total'] ?? 0);

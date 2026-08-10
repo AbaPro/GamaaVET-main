@@ -43,12 +43,13 @@ $sql = "SELECT p.id AS product_id, p.name, p.min_stock_level, COALESCE(SUM(ip.qu
 $result = $conn->query($sql);
 
 $created = 0;
+$resolved = 0;
 while ($row = $result->fetch_assoc()) {
     $min = (float)($row['min_stock_level'] ?? 0);
     if ($min <= 0) continue;
+    $pid = (int)$row['product_id'];
     $qty = (float)$row['qty'];
     if ($qty <= $min) {
-        $pid = (int)$row['product_id'];
         $title = 'Low stock: ' . $row['name'];
         $msg = 'Available quantity ' . $qty . ' is at/below minimum stock ' . $min . '.';
         $severity = $qty <= 0 ? 'danger' : 'warning';
@@ -65,8 +66,15 @@ while ($row = $result->fetch_assoc()) {
             createNotification('low_stock', $title, $msg, 'inventories', 'product', $pid, $severity, $roleId, null, null);
             $created++;
         }
+    } else {
+        // Stock has recovered above minimum: auto-resolve any stale unread alerts for this product.
+        $resolve = $conn->prepare("UPDATE notifications SET is_read=1 WHERE type='low_stock' AND entity_type='product' AND entity_id=? AND is_read=0");
+        $resolve->bind_param('i', $pid);
+        $resolve->execute();
+        $resolved += $resolve->affected_rows;
+        $resolve->close();
     }
 }
 
 header('Content-Type: application/json');
-echo json_encode(['created' => $created]);
+echo json_encode(['created' => $created, 'resolved' => $resolved]);

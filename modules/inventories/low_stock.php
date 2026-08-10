@@ -11,6 +11,8 @@ $page_title = 'Low Stock Items';
 require_once '../../includes/header.php';
 
 // Fetch low stock items from the selected channel. Salespeople see only their final products.
+// Stock is compared against min_stock_level as a total across all locations for the product,
+// not per-location, so a product with healthy total stock split across bins isn't misflagged.
 $inventoryScope = getInventoryChannelScopeSql('i');
 if (isSalesPersonUser()) {
     $customerScope = getCustomerChannelScopeSql('c', 'f');
@@ -21,10 +23,11 @@ if (isSalesPersonUser()) {
             JOIN inventories i ON ip.inventory_id = i.id
             JOIN customers c ON c.id = p.customer_id
             LEFT JOIN factories f ON f.id = c.factory_id
-            WHERE ip.quantity <= p.min_stock_level
-              AND p.type = 'final'
+            WHERE p.type = 'final'
               AND $inventoryScope
               AND $customerScope
+              AND p.min_stock_level > 0
+              AND (SELECT COALESCE(SUM(ip2.quantity),0) FROM inventory_products ip2 WHERE ip2.product_id = p.id) <= p.min_stock_level
             ORDER BY i.name, p.name";
 } else {
     $sql = "SELECT ip.inventory_id, i.name AS inventory_name, p.id AS product_id,
@@ -32,8 +35,9 @@ if (isSalesPersonUser()) {
             FROM inventory_products ip
             JOIN products p ON ip.product_id = p.id
             JOIN inventories i ON ip.inventory_id = i.id
-            WHERE ip.quantity <= p.min_stock_level
-              AND $inventoryScope
+            WHERE $inventoryScope
+              AND p.min_stock_level > 0
+              AND (SELECT COALESCE(SUM(ip2.quantity),0) FROM inventory_products ip2 WHERE ip2.product_id = p.id) <= p.min_stock_level
             ORDER BY i.name, p.name";
 }
 

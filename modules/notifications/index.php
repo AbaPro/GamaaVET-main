@@ -81,16 +81,19 @@ require_once '../../includes/header.php';
           <th>Title</th>
           <th>Message</th>
           <th>Severity</th>
+          <th>Current Status</th>
           <th>Actions</th>
         </tr>
       </thead>
       <tbody>
         <?php if (empty($notifications)): ?>
-          <tr><td colspan="6" class="text-center text-muted py-4">No notifications</td></tr>
+          <tr><td colspan="7" class="text-center text-muted py-4">No notifications</td></tr>
         <?php else: ?>
           <?php
             // Prepare checker for existing open ticket for product notifications
             $productTicketChk = $conn->prepare("SELECT COUNT(*) AS c FROM tickets t JOIN notifications n2 ON n2.id = t.notification_id WHERE n2.entity_type='product' AND n2.entity_id = ? AND t.status IN ('open','in_progress')");
+            // Live re-check for stale low_stock alerts: current total stock vs. min level, as of page render.
+            $stockChk = $conn->prepare("SELECT p.min_stock_level, COALESCE(SUM(ip.quantity),0) AS qty FROM products p LEFT JOIN inventory_products ip ON ip.product_id = p.id WHERE p.id = ? GROUP BY p.id, p.min_stock_level");
           ?>
           <?php foreach ($notifications as $n): ?>
             <tr class="<?= (int)$n['is_read']===1 ? '' : 'table-warning' ?>">
@@ -103,6 +106,29 @@ require_once '../../includes/header.php';
               <td>
                 <?php $sev = $n['severity'] ?? 'warning'; ?>
                 <span class="badge bg-<?= $sev === 'danger' ? 'danger' : ($sev==='info'?'info':'warning') ?>"><?= ucfirst($sev) ?></span>
+              </td>
+              <td>
+                <?php if ($n['type'] === 'low_stock' && !empty($n['entity_id'])): ?>
+                  <?php
+                    $eid = (int)$n['entity_id'];
+                    $stockChk->bind_param('i', $eid);
+                    $stockChk->execute();
+                    $sr = $stockChk->get_result()->fetch_assoc();
+                    $stockChk->free_result();
+                  ?>
+                  <?php if ($sr): ?>
+                    <?php $stillLow = (float)$sr['qty'] <= (float)$sr['min_stock_level']; ?>
+                    <?php if ($stillLow): ?>
+                      <span class="badge bg-danger">Still low: <?= (int)$sr['qty'] ?> / min <?= (int)$sr['min_stock_level'] ?></span>
+                    <?php else: ?>
+                      <span class="badge bg-success">Resolved: now <?= (int)$sr['qty'] ?> / min <?= (int)$sr['min_stock_level'] ?></span>
+                    <?php endif; ?>
+                  <?php else: ?>
+                    <span class="badge bg-secondary">Product not found</span>
+                  <?php endif; ?>
+                <?php else: ?>
+                  <span class="text-muted">&mdash;</span>
+                <?php endif; ?>
               </td>
               <td class="d-flex gap-2">
                 <?php if ((int)$n['is_read'] === 0): ?>
