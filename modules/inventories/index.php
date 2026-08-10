@@ -21,7 +21,12 @@ if ($locationsResult) {
 
 // Handle delete request
 if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
-    $id = sanitize($_GET['delete']);
+    $id = (int)$_GET['delete'];
+
+    if (!canAccessInventory($id)) {
+        setAlert('danger', 'Inventory not found in the currently selected region.');
+        redirect('index.php');
+    }
     
     // Check if inventory has products
     $check_sql = "SELECT COUNT(*) as count FROM inventory_products WHERE inventory_id = ?";
@@ -50,39 +55,22 @@ if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
     redirect('index.php');
 }
 
-// Fetch all inventories
+// Fetch inventories belonging to the currently selected login channel.
 $login_region = $_SESSION['login_region'] ?? 'factory';
-
-if ($login_region === 'factory') {
-    $sql = "
-        SELECT i.*, COALESCE(ip.product_count, 0) AS product_count
-        FROM inventories i
-        LEFT JOIN (
-            SELECT inventory_id, COUNT(*) AS product_count
-            FROM inventory_products
-            GROUP BY inventory_id
-        ) ip ON ip.inventory_id = i.id
-        WHERE i.direct_sale IS NULL
-        ORDER BY i.name
-    ";
-} else {
-    $sql = "
-        SELECT i.*, COALESCE(ip.product_count, 0) AS product_count
-        FROM inventories i
-        LEFT JOIN (
-            SELECT inventory_id, COUNT(*) AS product_count
-            FROM inventory_products
-            GROUP BY inventory_id
-        ) ip ON ip.inventory_id = i.id
-        WHERE i.direct_sale = ?
-        ORDER BY i.name
-    ";
-}
+$inventoryScope = getInventoryChannelScopeSql('i');
+$sql = "
+    SELECT i.*, COALESCE(ip.product_count, 0) AS product_count
+    FROM inventories i
+    LEFT JOIN (
+        SELECT inventory_id, COUNT(*) AS product_count
+        FROM inventory_products
+        GROUP BY inventory_id
+    ) ip ON ip.inventory_id = i.id
+    WHERE $inventoryScope
+    ORDER BY i.name
+";
 
 $stmt = $conn->prepare($sql);
-if ($login_region !== 'factory') {
-    $stmt->bind_param("s", $login_region);
-}
 $stmt->execute();
 $result = $stmt->get_result();
 ?>
@@ -328,4 +316,3 @@ $(document).ready(function() {
     });
 });
 </script>
-

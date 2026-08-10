@@ -614,9 +614,22 @@ function getInventoryChannelScopeSql($inventoryAlias = 'i') {
     global $conn;
 
     $loginRegion = $_SESSION['login_region'] ?? 'factory';
-    return $loginRegion === 'factory'
-        ? "$inventoryAlias.direct_sale IS NULL"
-        : "$inventoryAlias.direct_sale = '" . $conn->real_escape_string($loginRegion) . "'";
+    // Keep the legacy CUREVET inventory out of the factory channel even if its
+    // direct_sale value has not been backfilled yet. The matching migration
+    // fixes the stored value; this fallback protects existing deployments too.
+    $legacyCureVetInventory = "LOWER(REPLACE(TRIM($inventoryAlias.name), ' ', '')) IN ('curevet', 'curevetinventory')";
+
+    if ($loginRegion === 'factory') {
+        return "$inventoryAlias.direct_sale IS NULL AND NOT ($legacyCureVetInventory)";
+    }
+
+    $escapedRegion = $conn->real_escape_string($loginRegion);
+    if ($loginRegion === 'curva') {
+        return "($inventoryAlias.direct_sale = '$escapedRegion' OR "
+            . "($inventoryAlias.direct_sale IS NULL AND $legacyCureVetInventory))";
+    }
+
+    return "$inventoryAlias.direct_sale = '$escapedRegion'";
 }
 
 /**

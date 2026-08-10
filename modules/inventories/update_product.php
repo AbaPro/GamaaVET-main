@@ -8,7 +8,13 @@ if (!hasPermission('inventories.edit')) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $inventory_id = sanitize($_POST['inventory_id']);
+    $inventory_id = (int)($_POST['inventory_id'] ?? 0);
+
+    if (!canAccessInventory($inventory_id)) {
+        setAlert('danger', 'Inventory not found in the currently selected region.');
+        redirect('index.php');
+    }
+
     $product_id = sanitize($_POST['product_id']);
     $quantity = sanitize($_POST['quantity']);
     $quantity_before = getInventoryProductQuantity($inventory_id, $product_id);

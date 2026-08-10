@@ -60,6 +60,27 @@ if (!in_array($stockStatus, ['in_stock', 'low_stock'], true)) {
     $stockStatus = '';
 }
 
+$sortColumns = [
+    'sku' => 'p.sku',
+    'name' => 'p.name',
+    'type' => 'p.type',
+    'customer' => 'customer_name',
+    'barcode' => 'p.barcode',
+    'quantity' => 'ip.quantity',
+    'min_stock' => 'p.min_stock_level',
+    'status' => 'CASE WHEN ip.quantity <= COALESCE(p.min_stock_level, 0) THEN 0 ELSE 1 END',
+];
+$requestedSort = $_GET['sort_by'] ?? 'name';
+$sortBy = is_string($requestedSort) ? $requestedSort : 'name';
+if (!array_key_exists($sortBy, $sortColumns)) {
+    $sortBy = 'name';
+}
+$requestedSortDir = $_GET['sort_dir'] ?? 'asc';
+$sortDir = is_string($requestedSortDir) ? strtolower($requestedSortDir) : 'asc';
+if (!in_array($sortDir, ['asc', 'desc'], true)) {
+    $sortDir = 'asc';
+}
+
 // Get inventory products with filtering
 $products_sql = "SELECT p.id, p.name, p.sku, p.barcode, p.type, ip.quantity, p.min_stock_level, c.name AS customer_name
                  FROM inventory_products ip 
@@ -86,7 +107,7 @@ if ($stockStatus === 'low_stock') {
     $products_sql .= " AND ip.quantity > COALESCE(p.min_stock_level, 0)";
 }
 
-$products_sql .= " ORDER BY p.name";
+$products_sql .= " ORDER BY {$sortColumns[$sortBy]} " . strtoupper($sortDir) . ", p.name ASC";
 
 $products_stmt = $conn->prepare($products_sql);
 $types = 'i' . str_repeat('i', count($customerFilters));
@@ -108,6 +129,31 @@ $products_stmt->bind_param($types, ...$bindParams);
 $products_stmt->execute();
 $products_result = $products_stmt->get_result();
 $filteredProductCount = $products_result->num_rows;
+
+$sortUrl = static function (string $column) use ($inventory_id, $sortBy, $sortDir): string {
+    $query = $_GET;
+    $query['id'] = $inventory_id;
+    $query['sort_by'] = $column;
+    $query['sort_dir'] = $sortBy === $column && $sortDir === 'asc' ? 'desc' : 'asc';
+
+    return 'view.php?' . http_build_query($query);
+};
+
+$sortIcon = static function (string $column) use ($sortBy, $sortDir): string {
+    if ($sortBy !== $column) {
+        return 'fas fa-sort text-muted';
+    }
+
+    return $sortDir === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
+};
+
+$ariaSort = static function (string $column) use ($sortBy, $sortDir): string {
+    if ($sortBy !== $column) {
+        return 'none';
+    }
+
+    return $sortDir === 'asc' ? 'ascending' : 'descending';
+};
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -179,6 +225,8 @@ $filteredProductCount = $products_result->num_rows;
     <div class="card-body">
         <form method="get" class="mb-4">
             <input type="hidden" name="id" value="<?= $inventory_id ?>">
+            <input type="hidden" name="sort_by" value="<?= htmlspecialchars($sortBy) ?>">
+            <input type="hidden" name="sort_dir" value="<?= htmlspecialchars($sortDir) ?>">
             <div class="row align-items-end g-2">
                 <div class="col-lg-4 col-md-6">
                     <label for="item_search" class="form-label small text-muted">Search Inventory Items</label>
@@ -243,14 +291,25 @@ $filteredProductCount = $products_result->num_rows;
                 <thead>
                     <tr>
                         <th width="40"><input type="checkbox" class="form-check-input" id="selectAll"></th>
-                        <th>SKU</th>
-                        <th>Item Name</th>
-                        <th>Type</th>
-                        <th>Customer</th>
-                        <th>Barcode</th>
-                        <th>Quantity</th>
-                        <th>Min Stock</th>
-                        <th>Status</th>
+                        <?php foreach ([
+                            'sku' => 'SKU',
+                            'name' => 'Item Name',
+                            'type' => 'Type',
+                            'customer' => 'Customer',
+                            'barcode' => 'Barcode',
+                            'quantity' => 'Quantity',
+                            'min_stock' => 'Min Stock',
+                            'status' => 'Status',
+                        ] as $column => $label): ?>
+                            <th aria-sort="<?= $ariaSort($column) ?>">
+                                <a href="<?= htmlspecialchars($sortUrl($column)) ?>"
+                                   class="text-reset text-decoration-none d-inline-flex align-items-center gap-1"
+                                   title="Sort by <?= htmlspecialchars($label) ?>">
+                                    <?= htmlspecialchars($label) ?>
+                                    <i class="<?= $sortIcon($column) ?>" aria-hidden="true"></i>
+                                </a>
+                            </th>
+                        <?php endforeach; ?>
                         <th>Actions</th>
                     </tr>
                 </thead>

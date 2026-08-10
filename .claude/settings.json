@@ -8,7 +8,17 @@
       "Bash(grep -n '$conn\\\\s*=' config/database.php)",
       "Bash(git -C /Users/abanoubraafat/Downloads/GamaaVET-main status --short)",
       "Bash(sed -n '/CREATE TABLE `roles`/,/ENGINE=/p' database_structure.sql)",
-      "Bash(sed -n '/CREATE TABLE `permissions`/,/ENGINE=/p' database_structure.sql)"
+      "Bash(sed -n '/CREATE TABLE `permissions`/,/ENGINE=/p' database_structure.sql)",
+      "Bash(grep -n \"CREATE TABLE \\\\`inventory_products\\\\`\" -A 15 database/database_structure.sql)",
+      "Bash(grep -n \"CREATE TABLE \\\\`transfer_items\\\\`\" -A 12 database/database_structure.sql)",
+      "Bash(grep -n \"CREATE TABLE \\\\`products\\\\`\" -A 30 database/database_structure.sql)",
+      "Bash(grep -n \"CREATE TABLE \\\\`inventory_products\\\\`\" -A 12 database_structure.sql)",
+      "Bash(grep -n \"CREATE TABLE \\\\`transfer_items\\\\`\" -A 12 database_structure.sql)",
+      "Bash(docker start *)",
+      "Bash(docker exec *)",
+      "Bash(docker cp *)",
+      "Read(//Users/abanoubraafat/Downloads/**)",
+      "Bash(head -50 /Users/abanoubraafat/Downloads/gammavit_stg3-2.sql)"
     ]
   }
 }

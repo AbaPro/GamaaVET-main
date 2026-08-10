@@ -8,7 +8,13 @@ if (!hasPermission('inventories.edit')) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $id = sanitize($_POST['id']);
+    $id = (int)($_POST['id'] ?? 0);
+
+    if (!canAccessInventory($id)) {
+        setAlert('danger', 'Inventory not found in the currently selected region.');
+        redirect('index.php');
+    }
+
     $name = sanitize($_POST['name']);
     $locationId = isset($_POST['location_id']) ? (int)$_POST['location_id'] : 0;
     $description = sanitize($_POST['description']);

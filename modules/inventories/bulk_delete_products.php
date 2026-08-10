@@ -15,6 +15,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['product_ids']) && !e
     $inventory_id = (int)$_POST['inventory_id'];
     $success_count = 0;
 
+    if (!canAccessInventory($inventory_id)) {
+        setAlert('danger', 'Inventory not found in the currently selected region.');
+        header('Location: index.php');
+        exit();
+    }
+
     try {
         $conn->begin_transaction();
         

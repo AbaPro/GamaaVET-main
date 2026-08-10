@@ -12,7 +12,12 @@ if (!isset($_GET['id']) || !is_numeric($_GET['id'])) {
     redirect('index.php');
 }
 
-$inventory_id = sanitize($_GET['id']);
+$inventory_id = (int)$_GET['id'];
+
+if (!canAccessInventory($inventory_id)) {
+    setAlert('danger', 'Inventory not found in the currently selected region.');
+    redirect('index.php');
+}
 
 // Get inventory info
 $inventory_sql = "SELECT i.*, l.name AS location_name, l.address AS location_address FROM inventories i LEFT JOIN locations l ON l.id = i.location_id WHERE i.id = ?";

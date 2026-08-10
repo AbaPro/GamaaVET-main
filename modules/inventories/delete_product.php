@@ -13,8 +13,14 @@ if (!isset($_GET['inventory_id']) || !is_numeric($_GET['inventory_id']) ||
     redirect('index.php');
 }
 
-$inventory_id = sanitize($_GET['inventory_id']);
+$inventory_id = (int)$_GET['inventory_id'];
 $product_id = sanitize($_GET['product_id']);
+
+if (!canAccessInventory($inventory_id)) {
+    setAlert('danger', 'Inventory not found in the currently selected region.');
+    redirect('index.php');
+}
+
 $quantity_before = getInventoryProductQuantity($inventory_id, $product_id);
 
 // Remove product from inventory
