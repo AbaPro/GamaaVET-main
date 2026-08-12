@@ -101,7 +101,7 @@ function uploadImageAttachment($fieldName, $relativeDir, $filenamePrefix, $requi
 
     $relativeDir = trim($relativeDir, '/');
     $uploadDir = ROOT_PATH . '/' . $relativeDir;
-    if (!is_dir($uploadDir) && !mkdir($uploadDir, 0775, true)) {
+    if (!is_dir($uploadDir) && !mkdir($uploadDir, 0775, true) && !is_dir($uploadDir)) {
         $error = 'Failed to prepare upload folder.';
         return null;
     }
@@ -124,6 +124,7 @@ function uploadImageAttachment($fieldName, $relativeDir, $filenamePrefix, $requi
 function uploadImageAttachments($fieldName, $relativeDir, $filenamePrefix, $minRequired = 0, &$error = null) {
     $error = null;
     $results = [];
+    $filesToSave = [];
 
     if (empty($_FILES[$fieldName]) || empty($_FILES[$fieldName]['name']) || !is_array($_FILES[$fieldName]['name'])) {
         if ($minRequired > 0) {
@@ -137,6 +138,8 @@ function uploadImageAttachments($fieldName, $relativeDir, $filenamePrefix, $minR
     $uploadDir = ROOT_PATH . '/' . $relativeDir;
     $safePrefix = preg_replace('/[^a-zA-Z0-9_-]/', '_', $filenamePrefix);
 
+    // Validate the complete batch before moving any file so a bad second image
+    // cannot leave the first image orphaned on disk.
     foreach ($_FILES[$fieldName]['name'] as $idx => $originalName) {
         if ($originalName === '' || $originalName === null) {
             continue; // empty slot in the multi-file input, skip silently
@@ -160,32 +163,57 @@ function uploadImageAttachments($fieldName, $relativeDir, $filenamePrefix, $minR
             return [];
         }
 
-        if (!is_dir($uploadDir) && !mkdir($uploadDir, 0775, true)) {
-            $error = 'Failed to prepare upload folder.';
+        $tmpName = $_FILES[$fieldName]['tmp_name'][$idx] ?? '';
+        if ($tmpName === '' || !is_uploaded_file($tmpName)) {
+            $error = 'Failed to validate one or more uploaded images.';
             return [];
         }
 
-        $newFile = $safePrefix . '_' . uniqid('', true) . '.' . $ext;
-        if (!move_uploaded_file($_FILES[$fieldName]['tmp_name'][$idx], $uploadDir . '/' . $newFile)) {
+        $imageInfo = @getimagesize($tmpName);
+        $allowedMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+        if ($imageInfo === false || !in_array($imageInfo['mime'] ?? '', $allowedMimeTypes, true)) {
+            $error = 'One or more files are not valid images.';
+            return [];
+        }
+
+        $filesToSave[] = [
+            'tmp_name' => $tmpName,
+            'extension' => $ext,
+            'original_name' => $originalName,
+        ];
+    }
+
+    if ($minRequired > 0 && count($filesToSave) < $minRequired) {
+        $error = 'At least ' . $minRequired . ' image(s) required.';
+        return [];
+    }
+
+    if (empty($filesToSave)) {
+        return [];
+    }
+
+    if (!is_dir($uploadDir) && !mkdir($uploadDir, 0775, true) && !is_dir($uploadDir)) {
+        $error = 'Failed to prepare upload folder.';
+        return [];
+    }
+
+    foreach ($filesToSave as $file) {
+        $newFile = $safePrefix . '_' . uniqid('', true) . '.' . $file['extension'];
+        if (!move_uploaded_file($file['tmp_name'], $uploadDir . '/' . $newFile)) {
+            foreach ($results as $saved) {
+                $fullPath = ROOT_PATH . '/' . $saved['path'];
+                if (is_file($fullPath)) {
+                    unlink($fullPath);
+                }
+            }
             $error = 'Failed to save uploaded image.';
             return [];
         }
 
         $results[] = [
             'path' => $relativeDir . '/' . $newFile,
-            'original_name' => $originalName,
+            'original_name' => $file['original_name'],
         ];
-    }
-
-    if ($minRequired > 0 && count($results) < $minRequired) {
-        foreach ($results as $saved) {
-            $fullPath = ROOT_PATH . '/' . $saved['path'];
-            if (is_file($fullPath)) {
-                unlink($fullPath);
-            }
-        }
-        $error = 'At least ' . $minRequired . ' image(s) required.';
-        return [];
     }
 
     return $results;

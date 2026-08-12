@@ -12,6 +12,7 @@ if (!hasPermission('purchases.create')) {
 // Block editing if the status is not 'new' (if the edit param is provided)
 $edit_po = null;
 $edit_po_items = [];
+$edit_po_images = [];
 if (isset($_GET['edit'])) {
     $e_id = (int)$_GET['edit'];
     $stmt = $pdo->prepare("SELECT * FROM purchase_orders WHERE id = ?");
@@ -31,11 +32,22 @@ if (isset($_GET['edit'])) {
         ");
         $stmt2->execute([$e_id]);
         $edit_po_items = $stmt2->fetchAll(PDO::FETCH_ASSOC);
+
+        $stmt3 = $pdo->prepare("
+            SELECT file_path, original_name
+            FROM purchase_order_images
+            WHERE purchase_order_id = ?
+            ORDER BY created_at ASC, id ASC
+        ");
+        $stmt3->execute([$e_id]);
+        $edit_po_images = $stmt3->fetchAll(PDO::FETCH_ASSOC);
     }
 }
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+    $uploadedPOImages = [];
+
     try {
         if (empty($_POST['items'])) {
             throw new Exception("Please add at least one item to the purchase order.");
@@ -52,11 +64,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             throw new Exception("Please ensure at least one item has a quantity greater than zero.");
         }
 
-        $pdo->beginTransaction();
-
         $editing_id = isset($_POST['edit_id']) ? (int)$_POST['edit_id'] : 0;
 
+        $pdo->beginTransaction();
+
         if ($editing_id) {
+            $editCheck = $pdo->prepare("SELECT id FROM purchase_orders WHERE id = ? AND status = 'new' FOR UPDATE");
+            $editCheck->execute([$editing_id]);
+            if (!$editCheck->fetchColumn()) {
+                throw new Exception("Only purchase orders in 'New' (draft) status can be edited.");
+            }
+
             // Update existing draft PO
             $stmt = $pdo->prepare("
                 UPDATE purchase_orders SET
@@ -98,6 +116,34 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $po_id = $pdo->lastInsertId();
         }
 
+        $imageError = null;
+        $uploadedPOImages = uploadImageAttachments(
+            'po_images',
+            'assets/uploads/purchase_orders',
+            'po_' . (int)$po_id,
+            0,
+            $imageError
+        );
+        if ($imageError !== null) {
+            throw new Exception($imageError);
+        }
+
+        if (!empty($uploadedPOImages)) {
+            $imageStmt = $pdo->prepare("
+                INSERT INTO purchase_order_images
+                    (purchase_order_id, file_path, original_name, created_by)
+                VALUES (?, ?, ?, ?)
+            ");
+            foreach ($uploadedPOImages as $file) {
+                $imageStmt->execute([
+                    $po_id,
+                    $file['path'],
+                    $file['original_name'],
+                    $_SESSION['user_id']
+                ]);
+            }
+        }
+
         // Insert PO items
         $stmt = $pdo->prepare("
             INSERT INTO purchase_order_items (
@@ -132,6 +178,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     } catch (Exception $e) {
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
+        }
+        foreach ($uploadedPOImages as $file) {
+            $fullPath = ROOT_PATH . '/' . $file['path'];
+            if (is_file($fullPath)) {
+                unlink($fullPath);
+            }
         }
         $_SESSION['error'] = "Error saving purchase order: " . $e->getMessage();
     }
@@ -172,7 +224,7 @@ require_once '../../includes/header.php';
 
     <?php include '../../includes/messages.php'; ?>
 
-    <form id="poForm" method="post">
+    <form id="poForm" method="post" enctype="multipart/form-data">
         <?php if ($edit_po): ?>
             <input type="hidden" name="edit_id" value="<?= (int)$edit_po['id'] ?>">
         <?php endif; ?>
@@ -233,6 +285,20 @@ require_once '../../includes/header.php';
                         <div class="mb-3">
                             <label for="notes" class="form-label">Notes</label>
                             <textarea class="form-control" id="notes" name="notes" rows="2"><?= $edit_po ? htmlspecialchars($edit_po['notes']) : '' ?></textarea>
+                        </div>
+                    </div>
+                    <div class="col-md-12">
+                        <div class="mb-3">
+                            <label for="po_images" class="form-label">Purchase Order Images <span class="text-muted">(optional)</span></label>
+                            <input type="file" class="form-control" id="po_images" name="po_images[]" accept="image/jpeg,image/png,image/gif,image/webp" multiple>
+                            <small class="text-muted">Upload one or multiple JPG, PNG, GIF, or WEBP images. Maximum 5MB per image.</small>
+                            <div id="po-images-preview" class="mt-2 d-flex flex-wrap gap-2"></div>
+                            <?php if (!empty($edit_po_images)): ?>
+                                <div class="mt-2">
+                                    <small class="text-muted d-block mb-1">Already attached (new uploads will be added):</small>
+                                    <?= renderAttachmentThumbnails($edit_po_images) ?>
+                                </div>
+                            <?php endif; ?>
                         </div>
                     </div>
                 </div>
@@ -380,6 +446,25 @@ require_once '../../includes/header.php';
 
 <script>
     $(document).ready(function() {
+        $('#po_images').on('change', function() {
+            const preview = $('#po-images-preview');
+            preview.empty();
+
+            Array.from(this.files || []).forEach(function(file) {
+                const imageUrl = URL.createObjectURL(file);
+                const image = $('<img>', {
+                    src: imageUrl,
+                    alt: file.name,
+                    title: file.name,
+                    class: 'img-thumbnail'
+                }).css({ height: '100px', width: 'auto', objectFit: 'cover' });
+                image.on('load', function() {
+                    URL.revokeObjectURL(imageUrl);
+                });
+                preview.append(image);
+            });
+        });
+
         // Load contacts when vendor changes
         $('#vendor_id').change(function() {
             const vendorId = $(this).val();

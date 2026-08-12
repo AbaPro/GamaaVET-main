@@ -16,6 +16,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['order_ids']) && is_ar
     $errors = [];
 
     foreach ($order_ids as $id) {
+        $poImagePaths = [];
+
         try {
             $pdo->beginTransaction();
 
@@ -33,6 +35,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['order_ids']) && is_ar
                 throw new Exception("PO #$id has items already received in inventory and cannot be deleted.");
             }
 
+            $stmt = $pdo->prepare("SELECT file_path FROM purchase_order_images WHERE purchase_order_id = ?");
+            $stmt->execute([$id]);
+            $poImagePaths = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
             // 3. Delete items
             $stmt = $pdo->prepare("DELETE FROM purchase_order_items WHERE purchase_order_id = ?");
             $stmt->execute([$id]);
@@ -42,8 +48,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['order_ids']) && is_ar
             $stmt->execute([$id]);
 
             $pdo->commit();
+            foreach ($poImagePaths as $relativePath) {
+                if (strpos($relativePath, 'assets/uploads/purchase_orders/') !== 0) {
+                    continue;
+                }
+                $fullPath = ROOT_PATH . '/' . $relativePath;
+                if (is_file($fullPath)) {
+                    unlink($fullPath);
+                }
+            }
             $deleted_count++;
-            logActivity("Deleted Purchase Order #$id and its items.");
+            logActivity("Deleted Purchase Order #$id, its items, and attached images.");
 
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) {

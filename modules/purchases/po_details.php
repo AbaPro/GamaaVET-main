@@ -34,6 +34,15 @@ if (!$po) {
     exit();
 }
 
+$stmt = $pdo->prepare("
+    SELECT file_path, original_name
+    FROM purchase_order_images
+    WHERE purchase_order_id = ?
+    ORDER BY created_at ASC, id ASC
+");
+$stmt->execute([$po_id]);
+$poImages = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
 // Fetch PO items
 $stmt = $pdo->prepare("
     SELECT poi.*, p.name AS product_name, p.sku, p.barcode, p.type,
@@ -333,6 +342,13 @@ require_once '../../includes/header.php';
                     <hr>
                     <h5>Order Notes</h5>
                     <p><?= nl2br(htmlspecialchars($po['notes'] ?? 'No notes available')) ?></p>
+
+                    <h5>Purchase Order Images</h5>
+                    <?php if (empty($poImages)): ?>
+                        <p class="text-muted">No purchase order images uploaded.</p>
+                    <?php else: ?>
+                        <?= renderAttachmentThumbnails($poImages) ?>
+                    <?php endif; ?>
                     
                     <?php if ($canUpdatePOStatus && !in_array($po['status'], ['received', 'cancelled'])) : ?>
                         <hr>
