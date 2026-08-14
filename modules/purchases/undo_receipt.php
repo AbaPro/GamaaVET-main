@@ -45,10 +45,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['po_id'])) {
         $stmt->execute([$po_id]);
         $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
         $stockLogs = [];
+        $reversed_value = 0.0;
 
         foreach ($items as $item) {
             $received_qty = (float)$item['received_quantity'];
             $product_id = (int)$item['product_id'];
+            $reversed_value += $received_qty * (float)$item['unit_price'];
             $beforeStmt = $pdo->prepare("SELECT quantity FROM inventory_products WHERE inventory_id = ? AND product_id = ? LIMIT 1");
             $beforeStmt->execute([$inventory_id, $product_id]);
             $quantityBefore = (float)($beforeStmt->fetchColumn() ?: 0);
@@ -74,6 +76,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['po_id'])) {
         // 4. Update PO status and total_amount
         $stmt = $pdo->prepare("UPDATE purchase_orders SET status = 'ordered', total_amount = 0 WHERE id = ?");
         $stmt->execute([$po_id]);
+
+        // 5. Reverse the wallet draw-down recorded when the goods were received
+        if ($reversed_value > 0) {
+            $stmt = $pdo->prepare("UPDATE vendors SET wallet_balance = wallet_balance + ? WHERE id = ?");
+            $stmt->execute([$reversed_value, $po['vendor_id']]);
+
+            $stmt = $pdo->prepare("
+                INSERT INTO vendor_wallet_transactions
+                (vendor_id, amount, type, reference_id, reference_type, notes, created_by)
+                VALUES (?, ?, 'refund', ?, 'purchase_order', ?, ?)
+            ");
+            $stmt->execute([
+                $po['vendor_id'],
+                $reversed_value,
+                $po_id,
+                'Reversal of goods received against PO #' . $po_id,
+                $_SESSION['user_id']
+            ]);
+        }
 
         $pdo->commit();
         foreach ($stockLogs as $stockLog) {

@@ -44,6 +44,16 @@ if (isset($_GET['edit'])) {
     }
 }
 
+// Purchase-order destinations are shared locations, but CureVet belongs only
+// to its direct-sale channel and must not be exposed to the other channels.
+$locationWhere = "is_active = 1";
+if (($_SESSION['login_region'] ?? 'factory') !== 'curva') {
+    $locationWhere .= " AND LOWER(REPLACE(TRIM(name), ' ', '')) NOT IN ('curevet', 'curevetinventory')";
+}
+$locations = $pdo->query("SELECT id, name FROM locations WHERE $locationWhere ORDER BY name")
+    ->fetchAll(PDO::FETCH_ASSOC);
+$allowedWarehouseLocations = array_column($locations, 'name', 'name');
+
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $uploadedPOImages = [];
@@ -62,6 +72,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
         if ($valid_items_count === 0) {
             throw new Exception("Please ensure at least one item has a quantity greater than zero.");
+        }
+
+        $warehouseLocation = $_POST['warehouse_location'] ?? '';
+        if ($warehouseLocation === '' || !isset($allowedWarehouseLocations[$warehouseLocation])) {
+            throw new Exception("Please select a valid warehouse destination.");
         }
 
         $editing_id = isset($_POST['edit_id']) ? (int)$_POST['edit_id'] : 0;
@@ -87,7 +102,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $_POST['contact_id'],
                 $_POST['order_date'],
                 $_POST['notes'],
-                $_POST['warehouse_location'] ?? null,
+                $warehouseLocation,
                 $editing_id,
             ]);
             $po_id = $editing_id;
@@ -110,7 +125,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 0.00,
                 0.00,
                 $_POST['notes'],
-                $_POST['warehouse_location'] ?? null,
+                $warehouseLocation,
                 $_SESSION['user_id']
             ]);
             $po_id = $pdo->lastInsertId();
@@ -209,9 +224,6 @@ $categories = $pdo->query("SELECT id, name FROM categories WHERE parent_id IS NU
 
 // Get subcategories for product filter
 $subcategories = $pdo->query("SELECT id, name, parent_id FROM categories WHERE parent_id IS NOT NULL ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
-
-// Get warehouse locations for dropdown
-$locations = $pdo->query("SELECT id, name FROM locations WHERE is_active = 1 ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 
 // Set default date
 $order_date = $edit_po ? $edit_po['order_date'] : date('Y-m-d');
@@ -465,18 +477,37 @@ require_once '../../includes/header.php';
             });
         });
 
+        // Escape untrusted values before injecting them into option markup
+        function escapeContactHtml(s) {
+            return s == null ? '' : String(s).replace(/[&<>"']/g, m => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            })[m]);
+        }
+
+        // Build the contact dropdown options for a vendor's contacts
+        function renderContactOptions(contacts, selectedContactId) {
+            let options = '<option value="">Select Contact</option>';
+            contacts.forEach(function(contact) {
+                const selected = (selectedContactId && contact.id == selectedContactId) ? ' selected' : '';
+                options += `<option value="${contact.id}"${selected}>` +
+                    `${escapeContactHtml(contact.name)} (${escapeContactHtml(contact.phone || '-')})` +
+                    `</option>`;
+            });
+            return options;
+        }
+
         // Load contacts when vendor changes
         $('#vendor_id').change(function() {
             const vendorId = $(this).val();
             if (vendorId) {
                 $('#contact_id').prop('disabled', false);
                 $.getJSON('../../ajax/get_vendor_details.php?id=' + vendorId, function(response) {
-                    if (response.success && response.vendor) {
-                        let options = '<option value="">Select Contact</option>';
-                        options += `<option value="${response.vendor.id}">
-                        ${response.vendor.name} (${response.vendor.phone ?? '-'})
-                    </option>`;
-                        $('#contact_id').html(options).prop('disabled', false);
+                    if (response.success && response.contacts && response.contacts.length) {
+                        $('#contact_id').html(renderContactOptions(response.contacts)).prop('disabled', false);
                     } else {
                         $('#contact_id').html('<option value="">No contacts found</option>').prop('disabled', true);
                     }
@@ -718,12 +749,12 @@ require_once '../../includes/header.php';
             const selectedContactId = <?= (int)$edit_po['contact_id'] ?>;
             if (vendorId) {
                 $.getJSON('../../ajax/get_vendor_details.php?id=' + vendorId, function(response) {
-                    if (response.success && response.vendor) {
-                        let options = '<option value="">Select Contact</option>';
-                        options += `<option value="${response.vendor.id}" ${response.vendor.id == selectedContactId ? 'selected' : ''}>
-                            ${response.vendor.name} (${response.vendor.phone ?? '-'})
-                        </option>`;
-                        $('#contact_id').html(options).prop('disabled', false);
+                    if (response.success && response.contacts && response.contacts.length) {
+                        $('#contact_id')
+                            .html(renderContactOptions(response.contacts, selectedContactId))
+                            .prop('disabled', false);
+                    } else {
+                        $('#contact_id').html('<option value="">No contacts found</option>').prop('disabled', true);
                     }
                 });
             }

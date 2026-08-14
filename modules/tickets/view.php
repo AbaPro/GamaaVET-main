@@ -2,7 +2,11 @@
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
 
-if (!hasPermission('tickets.manage') && !hasPermission('tickets.create') && !hasPermission('tickets.view')) {
+$canManageTickets = hasPermission('tickets.manage');
+$canCreateTickets = hasPermission('tickets.create');
+$canViewTickets = hasPermission('tickets.view');
+
+if (!$canManageTickets && !$canCreateTickets && !$canViewTickets) {
     setAlert('danger', 'Access denied.');
     redirect('../../dashboard.php');
 }
@@ -19,8 +23,8 @@ $ticket = $conn->query("SELECT t.*, r.name AS assigned_role, u.name AS assigned_
 if (!$ticket) redirect('index.php');
 
 $roles = $conn->query("SELECT id, name, slug FROM roles WHERE is_active=1 ORDER BY name")->fetch_all(MYSQLI_ASSOC);
-$canManageTickets = hasPermission('tickets.manage');
 $canUpdateTicketStatus = $canManageTickets || hasPermission('tickets.update_status');
+$canAddTicketNote = $canManageTickets || $canCreateTickets || $canViewTickets;
 
 $userId = $_SESSION['user_id'] ?? null;
 if (!isset($_SESSION['role_id']) && $userId) {
@@ -28,9 +32,24 @@ if (!isset($_SESSION['role_id']) && $userId) {
 }
 $roleId = $_SESSION['role_id'] ?? null;
 
+// Non-managers may only interact with tickets in their scope. This check must
+// happen before processing POST requests so a crafted request cannot update an
+// unrelated ticket.
+if (!$canManageTickets) {
+    $isUnassigned = empty($ticket['assigned_to_role_id']) && empty($ticket['assigned_to_user_id']);
+    $allowed = $isUnassigned
+        || ((int)($ticket['assigned_to_role_id'] ?? 0) === (int)$roleId)
+        || ((int)($ticket['assigned_to_user_id'] ?? 0) === (int)$userId)
+        || ((int)($ticket['created_by'] ?? 0) === (int)$userId);
+    if (!$allowed) {
+        setAlert('danger', 'Access denied.');
+        redirect('index.php');
+    }
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Add Note logic
-    if (isset($_POST['add_note']) && (hasPermission('tickets.manage') || hasPermission('tickets.create'))) {
+    if (isset($_POST['add_note']) && $canAddTicketNote) {
         $note = trim($_POST['note'] ?? '');
         if ($note !== '') {
             $stmt = $conn->prepare("INSERT INTO ticket_notes (ticket_id, user_id, note) VALUES (?, ?, ?)");
@@ -53,19 +72,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->close();
         setAlert('success', 'Ticket status updated.');
         redirect('view.php?id=' . $id);
-    }
-}
-
-// Access control check
-if (!hasPermission('tickets.manage')) {
-    $isUnassigned = empty($ticket['assigned_to_role_id']) && empty($ticket['assigned_to_user_id']);
-    $allowed = $isUnassigned
-        || ((int)($ticket['assigned_to_role_id'] ?? 0) === (int)$roleId)
-        || ((int)($ticket['assigned_to_user_id'] ?? 0) === (int)$userId)
-        || ((int)($ticket['created_by'] ?? 0) === (int)$userId);
-    if (!$allowed) {
-        setAlert('danger', 'Access denied.');
-        redirect('index.php');
     }
 }
 
@@ -171,7 +177,7 @@ require_once '../../includes/header.php';
         <?php endif; ?>
       </div>
 
-      <?php if (hasPermission('tickets.manage') || hasPermission('tickets.create')): ?>
+      <?php if ($canAddTicketNote): ?>
         <form method="post" class="mt-3" id="addNoteForm">
           <div class="mb-2">
             <label for="note" class="form-label">Add Note</label>

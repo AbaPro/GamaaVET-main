@@ -94,10 +94,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             ");
             $stmt->execute([$amount, $po_id]);
             
-            // If payment is from wallet, update vendor wallet
+            // If payment is from wallet, spend the vendor's credit balance
             if ($payment_method == 'wallet') {
+                $vStmt = $pdo->prepare("SELECT wallet_balance FROM vendors WHERE id = ? FOR UPDATE");
+                $vStmt->execute([$po['vendor_id']]);
+                $walletBalance = (float)$vStmt->fetchColumn();
+                if ($walletBalance < $amount) {
+                    throw new Exception("Insufficient vendor wallet balance. Available: " . number_format($walletBalance, 2));
+                }
+
                 $stmt = $pdo->prepare("
-                    UPDATE vendors SET wallet_balance = wallet_balance + ? 
+                    UPDATE vendors SET wallet_balance = wallet_balance - ?
                     WHERE id = ?
                 ");
                 $stmt->execute([$amount, $po['vendor_id']]);

@@ -38,8 +38,15 @@ $stmt = $pdo->prepare("
 $stmt->execute([$po_id]);
 $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Fetch inventories for the location dropdown
-$inventories = $pdo->query("SELECT id, name FROM inventories WHERE is_active = 1 ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+// Fetch only inventories available in the currently selected login channel.
+$inventoryScope = getInventoryChannelScopeSql('i');
+$inventories = $pdo->query("
+    SELECT i.id, i.name
+    FROM inventories i
+    WHERE i.is_active = 1 AND $inventoryScope
+    ORDER BY i.name
+")->fetchAll(PDO::FETCH_ASSOC);
+$allowedInventoryIds = array_fill_keys(array_map('intval', array_column($inventories, 'id')), true);
 
 // Handle item receipt
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
@@ -65,7 +72,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $some_received = false;
         $stockLogs = [];
         $priceLogs = [];
-        
+        $received_value = 0.0;
+
         // Update received quantities
         foreach ($items as $item) {
             $received_qty = (float)($_POST['received_qty'][$item['id']] ?? 0);
@@ -73,7 +81,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $max_qty = $item['quantity'] - ($item['received_quantity'] ?? 0);
             
             if ($received_qty > 0 && $received_qty <= $max_qty) {
+                if (!isset($allowedInventoryIds[$inventory_id])) {
+                    throw new Exception("Please select a valid inventory destination.");
+                }
                 $some_received = true;
+                $received_value += $received_qty * (float)$item['unit_price'];
                 $beforeStmt = $pdo->prepare("SELECT quantity FROM inventory_products WHERE inventory_id = ? AND product_id = ? LIMIT 1");
                 $beforeStmt->execute([$inventory_id, $item['product_id']]);
                 $quantityBefore = (float)($beforeStmt->fetchColumn() ?: 0);
@@ -154,6 +166,26 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $imgStmt = $pdo->prepare("INSERT INTO purchase_order_receipt_images (purchase_order_receipt_id, file_path, original_name, created_by) VALUES (?, ?, ?, ?)");
         foreach ($uploadedReceiptImages as $file) {
             $imgStmt->execute([$receipt_id, $file['path'], $file['original_name'], $_SESSION['user_id']]);
+        }
+
+        // Receiving goods creates an amount owed to the vendor, which draws down
+        // their credit balance (positive wallet_balance = credit we hold with them).
+        if ($received_value > 0) {
+            $stmt = $pdo->prepare("UPDATE vendors SET wallet_balance = wallet_balance - ? WHERE id = ?");
+            $stmt->execute([$received_value, $po['vendor_id']]);
+
+            $stmt = $pdo->prepare("
+                INSERT INTO vendor_wallet_transactions
+                (vendor_id, amount, type, reference_id, reference_type, notes, created_by)
+                VALUES (?, ?, 'withdrawal', ?, 'purchase_order', ?, ?)
+            ");
+            $stmt->execute([
+                $po['vendor_id'],
+                $received_value,
+                $po_id,
+                'Goods received against PO #' . $po_id . ($notes !== '' ? ' - ' . $notes : ''),
+                $_SESSION['user_id']
+            ]);
         }
 
         $pdo->commit();

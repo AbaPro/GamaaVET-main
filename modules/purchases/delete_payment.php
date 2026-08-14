@@ -36,8 +36,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['payment_id'])) {
 
         // 3. Reverse impact on Vendor Wallet (if applicable)
         if ($method === 'wallet') {
-            // Reversing the '+' done in process_payment.php
-            $stmt = $pdo->prepare("UPDATE vendors SET wallet_balance = wallet_balance - ? WHERE id = ?");
+            // Reversing the '-' done in process_payment.php: refund the spent credit
+            $stmt = $pdo->prepare("UPDATE vendors SET wallet_balance = wallet_balance + ? WHERE id = ?");
             $stmt->execute([$amount, $vendor_id]);
 
             // Delete related wallet transaction

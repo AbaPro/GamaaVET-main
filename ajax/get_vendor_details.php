@@ -31,5 +31,25 @@ if ($result->num_rows === 0) {
 $vendor = $result->fetch_assoc();
 $stmt->close();
 
-echo json_encode(['success' => true, 'vendor' => $vendor]);
+// Get vendor contacts
+$stmt = $conn->prepare("SELECT id, name, phone, position, is_primary
+                        FROM vendor_contacts
+                        WHERE vendor_id = ?
+                        ORDER BY is_primary DESC, name");
+$stmt->bind_param("i", $vendor_id);
+$stmt->execute();
+$res = $stmt->get_result();
+
+$contacts = [];
+while ($r = $res->fetch_assoc()) {
+    $r['is_primary'] = (int)$r['is_primary'] === 1;
+    $contacts[] = $r;
+}
+$stmt->close();
+
+echo json_encode([
+    'success' => true,
+    'vendor' => $vendor,
+    'contacts' => $contacts
+], JSON_UNESCAPED_UNICODE);
 ?>

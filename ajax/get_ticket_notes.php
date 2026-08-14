@@ -22,7 +22,9 @@ $roleId = $_SESSION['role_id'] ?? null;
 if (!hasPermission('tickets.manage')) {
     $ticket = $conn->query("SELECT assigned_to_role_id, assigned_to_user_id, created_by FROM tickets WHERE id = " . $ticketId)->fetch_assoc();
     if (!$ticket) { echo json_encode(['success' => false]); exit; }
-    $allowed = ((int)($ticket['assigned_to_role_id'] ?? 0) === (int)$roleId)
+    $isUnassigned = empty($ticket['assigned_to_role_id']) && empty($ticket['assigned_to_user_id']);
+    $allowed = $isUnassigned
+        || ((int)($ticket['assigned_to_role_id'] ?? 0) === (int)$roleId)
         || ((int)($ticket['assigned_to_user_id'] ?? 0) === (int)$userId)
         || ((int)($ticket['created_by'] ?? 0) === (int)$userId);
     if (!$allowed) { echo json_encode(['success' => false]); exit; }
