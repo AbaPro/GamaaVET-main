@@ -1333,6 +1333,12 @@ function createNotification($type, $title, $message, $module = null, $entity_typ
     return $id;
 }
 
+// Valid ticket workflow statuses. Single source of truth for the status
+// dropdown and the server-side allowlist that validates submissions.
+if (!defined('TICKET_STATUSES')) {
+    define('TICKET_STATUSES', ['open', 'in_progress', 'resolved', 'closed']);
+}
+
 function createTicket($notification_id, $title, $description, $priority = 'medium', $assigned_to_role_id = null, $assigned_to_user_id = null) {
     global $conn;
     $created_by = $_SESSION['user_id'] ?? null;

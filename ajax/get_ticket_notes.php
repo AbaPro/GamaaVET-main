@@ -4,7 +4,10 @@ require_once '../includes/functions.php';
 
 header('Content-Type: application/json');
 
-if (!hasPermission('tickets.manage') && !hasPermission('tickets.create') && !hasPermission('tickets.view')) {
+// Mirrors the entry gate in modules/tickets/view.php so the polling endpoint
+// never exposes more than the page it backs.
+if (!hasPermission('tickets.manage') && !hasPermission('tickets.create')
+    && !hasPermission('tickets.view') && !hasPermission('tickets.update_status')) {
     echo json_encode(['success' => false]);
     exit;
 }
@@ -17,10 +20,19 @@ if ($ticketId <= 0) {
 }
 
 $userId = $_SESSION['user_id'] ?? null;
+// Without this the role scope check below compares against null and silently
+// denies access to users whose session predates the role being loaded.
+if (!isset($_SESSION['role_id']) && $userId) {
+    loadUserAccessToSession($userId);
+}
 $roleId = $_SESSION['role_id'] ?? null;
 
 if (!hasPermission('tickets.manage')) {
-    $ticket = $conn->query("SELECT assigned_to_role_id, assigned_to_user_id, created_by FROM tickets WHERE id = " . $ticketId)->fetch_assoc();
+    $scopeStmt = $conn->prepare("SELECT assigned_to_role_id, assigned_to_user_id, created_by FROM tickets WHERE id = ?");
+    $scopeStmt->bind_param('i', $ticketId);
+    $scopeStmt->execute();
+    $ticket = $scopeStmt->get_result()->fetch_assoc();
+    $scopeStmt->close();
     if (!$ticket) { echo json_encode(['success' => false]); exit; }
     $isUnassigned = empty($ticket['assigned_to_role_id']) && empty($ticket['assigned_to_user_id']);
     $allowed = $isUnassigned

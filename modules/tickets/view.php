@@ -5,8 +5,12 @@ require_once '../../includes/functions.php';
 $canManageTickets = hasPermission('tickets.manage');
 $canCreateTickets = hasPermission('tickets.create');
 $canViewTickets = hasPermission('tickets.view');
+$canUpdateTicketStatus = $canManageTickets || hasPermission('tickets.update_status');
 
-if (!$canManageTickets && !$canCreateTickets && !$canViewTickets) {
+// Any ticket permission grants entry; the per-ticket scope check below decides
+// which tickets are actually reachable. tickets.update_status is included so a
+// role holding only that permission is not locked out of the page it acts on.
+if (!$canManageTickets && !$canCreateTickets && !$canViewTickets && !$canUpdateTicketStatus) {
     setAlert('danger', 'Access denied.');
     redirect('../../dashboard.php');
 }
@@ -15,15 +19,18 @@ global $conn;
 $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 if ($id <= 0) redirect('index.php');
 
-$ticket = $conn->query("SELECT t.*, r.name AS assigned_role, u.name AS assigned_user_name 
-                        FROM tickets t 
-                        LEFT JOIN roles r ON r.id = t.assigned_to_role_id 
-                        LEFT JOIN users u ON u.id = t.assigned_to_user_id 
-                        WHERE t.id = " . $id)->fetch_assoc();
+$ticketStmt = $conn->prepare("SELECT t.*, r.name AS assigned_role, u.name AS assigned_user_name
+                              FROM tickets t
+                              LEFT JOIN roles r ON r.id = t.assigned_to_role_id
+                              LEFT JOIN users u ON u.id = t.assigned_to_user_id
+                              WHERE t.id = ?");
+$ticketStmt->bind_param('i', $id);
+$ticketStmt->execute();
+$ticket = $ticketStmt->get_result()->fetch_assoc();
+$ticketStmt->close();
 if (!$ticket) redirect('index.php');
 
 $roles = $conn->query("SELECT id, name, slug FROM roles WHERE is_active=1 ORDER BY name")->fetch_all(MYSQLI_ASSOC);
-$canUpdateTicketStatus = $canManageTickets || hasPermission('tickets.update_status');
 $canAddTicketNote = $canManageTickets || $canCreateTickets || $canViewTickets;
 
 $userId = $_SESSION['user_id'] ?? null;
@@ -66,6 +73,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Update status logic
     if (isset($_POST['update_ticket']) && $canUpdateTicketStatus) {
         $status = $_POST['status'] ?? 'open';
+        if (!in_array($status, TICKET_STATUSES, true)) {
+            setAlert('danger', 'Invalid ticket status.');
+            redirect('view.php?id=' . $id);
+        }
         $stmt = $conn->prepare("UPDATE tickets SET status=? WHERE id=?");
         $stmt->bind_param('si', $status, $id);
         $stmt->execute();
@@ -126,7 +137,7 @@ require_once '../../includes/header.php';
               <div>
                 <label class="form-label">Status</label>
                 <select name="status" class="form-select">
-                  <?php foreach (['open','in_progress','resolved','closed'] as $st): ?>
+                  <?php foreach (TICKET_STATUSES as $st): ?>
                     <option value="<?= $st ?>" <?= $ticket['status']===$st?'selected':'' ?>><?= ucfirst($st) ?></option>
                   <?php endforeach; ?>
                 </select>

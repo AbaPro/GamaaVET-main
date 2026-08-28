@@ -9,6 +9,50 @@ if (!hasPermission('manufacturing.orders.create')) {
 }
 
 $old = $_POST;
+$salesOrderId = isset($_POST['sales_order_id'])
+    ? (int)$_POST['sales_order_id']
+    : (int)($_GET['sales_order_id'] ?? 0);
+$salesOrderItemId = isset($_POST['sales_order_item_id'])
+    ? (int)$_POST['sales_order_item_id']
+    : (int)($_GET['sales_order_item_id'] ?? 0);
+$sourceSalesOrder = null;
+$salesOrderLinkError = null;
+
+if ($salesOrderId > 0 || $salesOrderItemId > 0) {
+    if ($salesOrderId <= 0 || $salesOrderItemId <= 0 || !canAccessOrder($salesOrderId)) {
+        $salesOrderLinkError = 'The linked sales order item is invalid or inaccessible.';
+    } else {
+        $sourceStmt = $pdo->prepare("
+            SELECT o.id, o.internal_id, o.customer_id,
+                   oi.id AS order_item_id, oi.product_id, oi.quantity,
+                   COALESCE((
+                       SELECT SUM(ip.quantity)
+                       FROM inventory_products ip
+                       WHERE ip.product_id = oi.product_id
+                   ), 0) AS current_stock
+            FROM orders o
+            JOIN order_items oi ON oi.order_id = o.id
+            JOIN products p ON p.id = oi.product_id AND p.type = 'final'
+            WHERE o.id = ? AND oi.id = ?
+            LIMIT 1
+        ");
+        $sourceStmt->execute([$salesOrderId, $salesOrderItemId]);
+        $sourceSalesOrder = $sourceStmt->fetch(PDO::FETCH_ASSOC) ?: null;
+
+        if (!$sourceSalesOrder) {
+            $salesOrderLinkError = 'The linked sales order item could not be found.';
+        } elseif ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+            $requiredQuantity = (float)$sourceSalesOrder['quantity'];
+            $currentStock = (float)$sourceSalesOrder['current_stock'];
+            $shortage = max(0, $requiredQuantity - $currentStock);
+
+            $old['customer_id'] = $sourceSalesOrder['customer_id'];
+            $old['product_id'] = $sourceSalesOrder['product_id'];
+            $old['number_of_bottles'] = max(1, (int)ceil($shortage > 0 ? $shortage : $requiredQuantity));
+            $old['due_date'] = date('Y-m-d', strtotime('+7 days'));
+        }
+    }
+}
 
 $products = [];
 $productMap = [];
@@ -66,7 +110,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $priority = 'normal';
     }
 
-    if ($customerId <= 0) {
+    if ($salesOrderLinkError !== null) {
+        setAlert('danger', $salesOrderLinkError);
+    } elseif ($sourceSalesOrder && (
+        $customerId !== (int)$sourceSalesOrder['customer_id']
+        || $productId !== (int)$sourceSalesOrder['product_id']
+    )) {
+        setAlert('danger', 'The customer and final product must match the linked sales order item.');
+    } elseif ($customerId <= 0) {
         setAlert('danger', 'Please select the customer for this manufacturing order.');
     } elseif ($productId <= 0) {
         setAlert('danger', 'Please select the final product for this manufacturing order.');
@@ -121,8 +172,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $orderStmt = $pdo->prepare("
                 INSERT INTO manufacturing_orders
                     (order_number, customer_id, product_id, bottle_size_id, number_of_bottles, packaging_option_id,
-                     formula_id, location_id, batch_size, due_date, priority, notes, created_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     formula_id, location_id, batch_size, due_date, priority, notes, sales_order_id, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ");
             $orderStmt->execute([
                 $orderNumber,
@@ -137,6 +188,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $dueDate ?: null,
                 $priority,
                 $orderNotes,
+                $sourceSalesOrder ? (int)$sourceSalesOrder['id'] : null,
                 $createdBy
             ]);
             $orderId = $pdo->lastInsertId();
@@ -205,7 +257,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $pdo->commit();
             setAlert('success', "Manufacturing order {$orderNumber} created.");
-            logActivity("Created manufacturing order {$orderNumber}", ['order_id' => $orderId]);
+            logActivity("Created manufacturing order {$orderNumber}", [
+                'order_id' => $orderId,
+                'sales_order_id' => $sourceSalesOrder ? (int)$sourceSalesOrder['id'] : null,
+            ]);
             header("Location: order.php?id={$orderId}");
             exit;
         } catch (Exception $exception) {
@@ -242,12 +297,25 @@ foreach ($bottleSizes as $bs) {
         <h2>Create Manufacturing Order</h2>
         <p class="text-muted mb-0">Select a customer formula, define production quantities, and stage the multi-phase manufacturing workflow.</p>
     </div>
-    <a href="index.php" class="btn btn-outline-secondary">
-        <i class="fas fa-arrow-left me-1"></i> Back to manufacturing dashboard
+    <a href="<?= $sourceSalesOrder ? '../sales/order_details.php?id=' . (int)$sourceSalesOrder['id'] : 'index.php'; ?>" class="btn btn-outline-secondary">
+        <i class="fas fa-arrow-left me-1"></i>
+        <?= $sourceSalesOrder ? 'Back to sales order' : 'Back to manufacturing dashboard'; ?>
     </a>
 </div>
 
+<?php if ($sourceSalesOrder): ?>
+    <div class="alert alert-info">
+        <i class="fas fa-link me-1"></i>
+        Customer, final product, quantity, and due date were prefilled from sales order
+        <strong><?= e($sourceSalesOrder['internal_id'] ?: '#' . $sourceSalesOrder['id']); ?></strong>.
+    </div>
+<?php endif; ?>
+
 <form method="post">
+    <?php if ($sourceSalesOrder): ?>
+        <input type="hidden" name="sales_order_id" value="<?= (int)$sourceSalesOrder['id']; ?>">
+        <input type="hidden" name="sales_order_item_id" value="<?= (int)$sourceSalesOrder['order_item_id']; ?>">
+    <?php endif; ?>
     <div class="card mb-4">
         <div class="card-header">Order Fundamentals</div>
         <div class="card-body">
@@ -398,8 +466,8 @@ foreach ($bottleSizes as $bs) {
 
     let loadedFormulas = [];
     let pendingFormulaSelection = <?php echo json_encode($selectedFormulaId ?: ''); ?>;
-    let pendingProductSelection = <?php echo json_encode($_POST['product_id'] ?? ''); ?>;
-    let pendingPackagingSelection = <?php echo json_encode($_POST['packaging_option_id'] ?? ''); ?>;
+    let pendingProductSelection = <?php echo json_encode($old['product_id'] ?? ''); ?>;
+    let pendingPackagingSelection = <?php echo json_encode($old['packaging_option_id'] ?? ''); ?>;
 
     function escapeForAttr(value) {
         if (!value) return '';

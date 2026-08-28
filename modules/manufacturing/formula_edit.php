@@ -119,6 +119,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $rawComponents = $_POST['components'] ?? [];
     $components = [];
+    $componentsMissingUnit = [];
     if (!empty($rawComponents) && is_array($rawComponents)) {
         foreach ($rawComponents as $componentRow) {
             $componentProductId = isset($componentRow['product_id']) ? (int)$componentRow['product_id'] : 0;
@@ -133,11 +134,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 continue;
             }
 
+            $componentUnit = trim(sanitize($componentRow['unit'] ?? ''));
+            if ($componentUnit === '') {
+                $componentsMissingUnit[] = $componentName;
+            }
+
             $components[] = [
                 'product_id' => $componentProductId > 0 ? $componentProductId : null,
                 'name' => $componentName,
                 'quantity' => sanitize($componentRow['quantity'] ?? ''),
-                'unit' => sanitize($componentRow['unit'] ?? ''),
+                'unit' => $componentUnit,
                 'notes' => sanitize($componentRow['notes'] ?? ''),
             ];
         }
@@ -149,6 +155,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         setAlert('danger', 'Please enter a formula name.');
     } elseif (empty($components)) {
         setAlert('danger', 'Please add at least one component.');
+    } elseif (!empty($componentsMissingUnit)) {
+        setAlert('danger', 'Please select a unit for every component: ' . implode(', ', $componentsMissingUnit));
     } else {
         $componentsJson = json_encode($components, JSON_UNESCAPED_UNICODE);
 
@@ -207,10 +215,11 @@ require_once '../../includes/header.php';
 $canViewComponentName = hasPermission('manufacturing.component.name.view');
 
 $currentComponents = [];
-if ($formula && !empty($formula['components_json'])) {
-    $currentComponents = json_decode($formula['components_json'], true) ?: [];
-} elseif (isset($_POST['components'])) {
+if (isset($_POST['components']) && is_array($_POST['components'])) {
+    // Keep what the user just submitted so a failed validation does not discard their edits.
     $currentComponents = $_POST['components'];
+} elseif ($formula && !empty($formula['components_json'])) {
+    $currentComponents = json_decode($formula['components_json'], true) ?: [];
 } elseif ($selectedTemplateId > 0) {
     foreach ($formulaTemplates as $formulaTemplate) {
         if ((int)$formulaTemplate['id'] === $selectedTemplateId) {
@@ -359,7 +368,7 @@ if ($formula && !empty($formula['sample_images_json'])) {
                                 <tr>
                                     <th>Product (from Catalog)</th>
                                     <th style="width: 150px;">Quantity</th>
-                                    <th style="width: 120px;">Unit</th>
+                                    <th style="width: 120px;">Unit <span class="text-danger">*</span></th>
                                     <th>Notes</th>
                                     <th style="width: 50px;"></th>
                                 </tr>
@@ -528,7 +537,7 @@ if ($formula && !empty($formula['sample_images_json'])) {
     let componentIndex = 0;
 
     function renderUnitSelect(name, selectedUnit) {
-        let html = `<select class="form-select form-select-sm" name="${name}">`;
+        let html = `<select class="form-select form-select-sm" name="${name}" required>`;
         html += '<option value="">— unit —</option>';
         canonicalUnits.forEach(function (u) {
             const sel = selectedUnit === u ? 'selected' : '';

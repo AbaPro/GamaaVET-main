@@ -327,26 +327,38 @@ if ($dispatchCount == 0) {
         'details' => [
             ['key' => 'final_product_count', 'text' => 'عدد المنتج النهائي', 'type' => 'number'],
             ['key' => 'carton_count', 'text' => 'عدد الكراتين', 'type' => 'number'],
-            ['key' => 'units_per_carton', 'text' => 'وحدات/كرتونة', 'type' => 'number']
+            ['key' => 'units_per_carton', 'text' => 'وحدات/كرتونة', 'type' => 'number'],
+            ['key' => 'custom_material_name', 'text' => 'اسم المادة', 'type' => 'text', 'value' => 'مطبوعات']
         ],
         'before_loading' => [
             ['key' => 'release_order_received', 'text' => 'تم استلام إذن صرف/أمر تسليم', 'type' => 'checkbox'],
             ['key' => 'quantity_counted', 'text' => 'تم عدّ الكمية قبل التحميل', 'type' => 'checkbox'],
-            ['key' => 'load_photographed', 'text' => 'تم تصوير الحمولة (صور مرفقة)', 'type' => 'checkbox']
+            ['key' => 'load_photographed', 'text' => 'تم تصوير الحمولة (صور مرفقة)', 'type' => 'image']
         ]
     ];
     
-    $insertDispatchStmt = $conn->prepare("INSERT INTO manufacturing_dispatch_checklist (manufacturing_order_id, section_name, item_key, item_text, item_type, item_order) VALUES (?, ?, ?, ?, ?, ?)");
+    $insertDispatchStmt = $conn->prepare("INSERT INTO manufacturing_dispatch_checklist (manufacturing_order_id, section_name, item_key, item_text, item_type, item_value, item_order) VALUES (?, ?, ?, ?, ?, ?, ?)");
     $itemOrder = 0;
     foreach ($dispatchChecklist as $sectionName => $items) {
         foreach ($items as $item) {
-            $insertDispatchStmt->bind_param("issssi", $orderId, $sectionName, $item['key'], $item['text'], $item['type'], $itemOrder);
+            $itemValue = $item['value'] ?? null;
+            $insertDispatchStmt->bind_param("isssssi", $orderId, $sectionName, $item['key'], $item['text'], $item['type'], $itemValue, $itemOrder);
             $insertDispatchStmt->execute();
             $itemOrder++;
         }
     }
     $insertDispatchStmt->close();
 }
+
+// Backfill for orders created before the dispatch custom-material field existed.
+$ensureDispatchMaterialStmt = $conn->prepare("
+    INSERT IGNORE INTO manufacturing_dispatch_checklist
+        (manufacturing_order_id, section_name, item_key, item_text, item_type, item_value, item_order)
+    VALUES (?, 'details', 'custom_material_name', 'اسم المادة', 'text', 'مطبوعات', 3)
+");
+$ensureDispatchMaterialStmt->bind_param("i", $orderId);
+$ensureDispatchMaterialStmt->execute();
+$ensureDispatchMaterialStmt->close();
 
 // Initialize Delivery info record if not exists
 $checkDeliveryStmt = $conn->prepare("SELECT COUNT(*) as cnt FROM manufacturing_delivery_info WHERE manufacturing_order_id = ?");
@@ -606,30 +618,88 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 
                 if ($itemType === 'image') continue;
 
+                if ($itemKey === 'custom_material_name' && trim((string)$value) === '') {
+                    $value = 'مطبوعات';
+                }
+
                 $updateDispatchStmt = $conn->prepare("UPDATE manufacturing_dispatch_checklist SET item_value = ? WHERE item_key = ? AND manufacturing_order_id = ?");
                 $updateDispatchStmt->bind_param("ssi", $value, $itemKey, $orderId);
                 $updateDispatchStmt->execute();
                 $updateDispatchStmt->close();
             }
         }
-        
-        // Handle image uploads for dispatch checklist items
+
+        // Remove individual dispatch photos requested for deletion.
+        $removedPhotos = $_POST['dispatch_photos_remove'] ?? [];
+        if (is_array($removedPhotos)) {
+            foreach ($removedPhotos as $itemKey => $pathsToRemove) {
+                if (!is_array($pathsToRemove) || empty($pathsToRemove)) {
+                    continue;
+                }
+                $existing = manufacturing_decode_dispatch_photos(
+                    manufacturing_get_dispatch_item_value($conn, $orderId, $itemKey)
+                );
+                $kept = [];
+                foreach ($existing as $photo) {
+                    if (in_array($photo['path'], $pathsToRemove, true)) {
+                        $absolute = __DIR__ . '/../../' . $photo['path'];
+                        if (is_file($absolute)) {
+                            @unlink($absolute);
+                        }
+                        continue;
+                    }
+                    $kept[] = $photo;
+                }
+                $encoded = $kept ? json_encode($kept, JSON_UNESCAPED_UNICODE) : null;
+                $removeStmt = $conn->prepare("UPDATE manufacturing_dispatch_checklist SET item_value = ? WHERE item_key = ? AND manufacturing_order_id = ?");
+                $removeStmt->bind_param("ssi", $encoded, $itemKey, $orderId);
+                $removeStmt->execute();
+                $removeStmt->close();
+            }
+        }
+
+        // Handle image uploads for dispatch checklist items (multiple per item).
         if (isset($_FILES['dispatch_photos']) && is_array($_FILES['dispatch_photos']['name'])) {
-            $uploadDir = __DIR__ . '/../../assets/uploads/dispatch/';
-            if (!is_dir($uploadDir)) mkdir($uploadDir, 0755, true);
-            foreach ($_FILES['dispatch_photos']['name'] as $itemKey => $fileName) {
-                if ($_FILES['dispatch_photos']['error'][$itemKey] === UPLOAD_ERR_OK) {
-                    $fileExt = pathinfo($fileName, PATHINFO_EXTENSION);
-                    $newFileName = 'dispatch_' . $orderId . '_' . $itemKey . '_' . time() . '.' . $fileExt;
-                    $uploadPath = $uploadDir . $newFileName;
-                    if (move_uploaded_file($_FILES['dispatch_photos']['tmp_name'][$itemKey], $uploadPath)) {
-                        $photoPathRelative = 'assets/uploads/dispatch/' . $newFileName;
-                        $updateDispatchPhotoStmt = $conn->prepare("UPDATE manufacturing_dispatch_checklist SET item_value = ? WHERE item_key = ? AND manufacturing_order_id = ?");
-                        $updateDispatchPhotoStmt->bind_param("ssi", $photoPathRelative, $itemKey, $orderId);
-                        $updateDispatchPhotoStmt->execute();
-                        $updateDispatchPhotoStmt->close();
+            $targetDir = manufacturing_get_storage_path_for_type('dispatch_photos');
+            $relativeDir = 'assets/uploads/manufacturing/dispatch_photos';
+            foreach ($_FILES['dispatch_photos']['name'] as $itemKey => $fileNames) {
+                // Each item is a multi-file input, so the per-item entry is itself an array.
+                $fileNames = (array)$fileNames;
+                $uploaded = manufacturing_decode_dispatch_photos(
+                    manufacturing_get_dispatch_item_value($conn, $orderId, $itemKey)
+                );
+
+                foreach (array_keys($fileNames) as $fileIdx) {
+                    $file = [
+                        'name'     => $_FILES['dispatch_photos']['name'][$itemKey][$fileIdx] ?? '',
+                        'type'     => $_FILES['dispatch_photos']['type'][$itemKey][$fileIdx] ?? '',
+                        'tmp_name' => $_FILES['dispatch_photos']['tmp_name'][$itemKey][$fileIdx] ?? '',
+                        'error'    => $_FILES['dispatch_photos']['error'][$itemKey][$fileIdx] ?? UPLOAD_ERR_NO_FILE,
+                        'size'     => $_FILES['dispatch_photos']['size'][$itemKey][$fileIdx] ?? 0,
+                    ];
+                    if ($file['name'] === '') {
+                        continue;
+                    }
+                    try {
+                        $stored = manufacturing_store_uploaded_image(
+                            $file,
+                            $targetDir,
+                            $relativeDir,
+                            'dispatch_' . $orderId . '_' . $itemKey
+                        );
+                        if ($stored) {
+                            $uploaded[] = $stored;
+                        }
+                    } catch (Exception $e) {
+                        setAlert('warning', 'Photo "' . htmlspecialchars($file['name']) . '" was not saved: ' . $e->getMessage());
                     }
                 }
+
+                $encoded = $uploaded ? json_encode($uploaded, JSON_UNESCAPED_UNICODE) : null;
+                $updateDispatchPhotoStmt = $conn->prepare("UPDATE manufacturing_dispatch_checklist SET item_value = ? WHERE item_key = ? AND manufacturing_order_id = ?");
+                $updateDispatchPhotoStmt->bind_param("ssi", $encoded, $itemKey, $orderId);
+                $updateDispatchPhotoStmt->execute();
+                $updateDispatchPhotoStmt->close();
             }
         }
         
@@ -694,11 +764,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // Only check products (components with product_id), skip manual components
         $sourcingStmt = $conn->prepare("
             SELECT msc.component_name, msc.product_id, SUM(msc.required_quantity) AS required_quantity, msc.unit,
-                   p.barcode, COALESCE(SUM(DISTINCT ip.quantity), 0) AS available_qty
+                   p.barcode,
+                   COALESCE((
+                       SELECT SUM(ip.quantity)
+                       FROM inventory_products ip
+                       JOIN inventories inv ON inv.id = ip.inventory_id
+                       WHERE ip.product_id = msc.product_id AND inv.location_id = ?
+                   ), 0) AS available_qty
             FROM manufacturing_sourcing_components msc
             LEFT JOIN products p ON p.id = msc.product_id
-            LEFT JOIN inventories inv ON inv.location_id = ?
-            LEFT JOIN inventory_products ip ON ip.product_id = msc.product_id AND ip.inventory_id = inv.id
             WHERE msc.manufacturing_order_id = ? AND msc.product_id IS NOT NULL
             GROUP BY msc.component_name, msc.product_id, msc.unit, p.barcode
         ");
@@ -1395,11 +1469,15 @@ $isCompletedOrder = $order['status'] === 'completed';
                                         SELECT MIN(msc.id) AS id,
                                                msc.component_name, msc.product_id, SUM(msc.required_quantity) AS required_quantity,
                                                msc.unit, GROUP_CONCAT(DISTINCT msc.notes SEPARATOR '; ') AS notes,
-                                               p.barcode, p.sku, COALESCE(SUM(DISTINCT ip.quantity), 0) AS available_qty
+                                               p.barcode, p.sku,
+                                               COALESCE((
+                                                   SELECT SUM(ip.quantity)
+                                                   FROM inventory_products ip
+                                                   JOIN inventories inv ON inv.id = ip.inventory_id
+                                                   WHERE ip.product_id = msc.product_id AND inv.location_id = ?
+                                               ), 0) AS available_qty
                                         FROM manufacturing_sourcing_components msc
                                         LEFT JOIN products p ON p.id = msc.product_id
-                                        LEFT JOIN inventories inv ON inv.location_id = ?
-                                        LEFT JOIN inventory_products ip ON ip.product_id = msc.product_id AND ip.inventory_id = inv.id
                                         WHERE msc.manufacturing_order_id = ?
                                         GROUP BY msc.component_name, msc.product_id, msc.unit, p.barcode, p.sku
                                         ORDER BY MIN(msc.formula_component_index)
@@ -2045,10 +2123,17 @@ $isCompletedOrder = $order['status'] === 'completed';
                                         <h6 class="mt-4 mb-3 text-primary">تفاصيل الشحن (Dispatch Details)</h6>
                                         <div class="row g-3 mb-3">
                                             <?php foreach ($dispatchSections['details'] as $item): ?>
+                                                <?php
+                                                // The material name is edited inline in the material tracking
+                                                // table below, so it is not repeated here.
+                                                if ($item['item_key'] === 'custom_material_name') {
+                                                    continue;
+                                                }
+                                                ?>
                                                 <div class="col-md-4">
                                                     <label class="form-label"><?= htmlspecialchars($item['item_text']); ?></label>
-                                                    <input type="number" class="form-control form-control-sm" 
-                                                           name="dispatch_values[<?= htmlspecialchars($item['item_key']); ?>]" 
+                                                    <input type="number" class="form-control form-control-sm"
+                                                           name="dispatch_values[<?= htmlspecialchars($item['item_key']); ?>]"
                                                            value="<?= htmlspecialchars($item['item_value'] ?? ''); ?>"
                                                            placeholder="0" required>
                                                 </div>
@@ -2072,15 +2157,35 @@ $isCompletedOrder = $order['status'] === 'completed';
                                                                                <?= $item['item_value'] === 'checked' ? 'checked' : ''; ?>>
                                                                     </div>
                                                                 <?php elseif ($item['item_type'] === 'image'): ?>
+                                                                    <?php $itemPhotos = manufacturing_decode_dispatch_photos($item['item_value'] ?? ''); ?>
                                                                     <div class="mb-2">
-                                                                        <input type="file" class="form-control form-control-sm" name="dispatch_photos[<?= htmlspecialchars($item['item_key']); ?>]" accept="image/*">
-                                                                        <?php if ($item['item_value']): ?>
-                                                                            <div class="mt-2 text-center">
-                                                                                <a href="../../<?= htmlspecialchars($item['item_value']); ?>" target="_blank">
-                                                                                    <img src="../../<?= htmlspecialchars($item['item_value']); ?>" class="img-thumbnail" style="max-height: 80px;">
-                                                                                </a>
-                                                                                <br><small class="text-muted">Current photo</small>
+                                                                        <input type="file" class="form-control form-control-sm"
+                                                                               name="dispatch_photos[<?= htmlspecialchars($item['item_key']); ?>][]"
+                                                                               accept="image/*" multiple>
+                                                                        <small class="text-muted d-block mt-1">
+                                                                            يمكن اختيار أكثر من صورة (JPG, PNG, GIF, WEBP — حد أقصى 5 ميجا لكل صورة)
+                                                                        </small>
+                                                                        <?php if (!empty($itemPhotos)): ?>
+                                                                            <div class="d-flex flex-wrap justify-content-center gap-2 mt-2">
+                                                                                <?php foreach ($itemPhotos as $photo): ?>
+                                                                                    <div class="text-center">
+                                                                                        <a href="../../<?= htmlspecialchars($photo['path']); ?>" target="_blank">
+                                                                                            <img src="../../<?= htmlspecialchars($photo['path']); ?>" class="img-thumbnail" style="max-height: 80px;">
+                                                                                        </a>
+                                                                                        <div class="form-check d-flex justify-content-center mt-1">
+                                                                                            <input class="form-check-input" type="checkbox"
+                                                                                                   id="rm_<?= htmlspecialchars($item['item_key'] . '_' . md5($photo['path'])); ?>"
+                                                                                                   name="dispatch_photos_remove[<?= htmlspecialchars($item['item_key']); ?>][]"
+                                                                                                   value="<?= htmlspecialchars($photo['path']); ?>">
+                                                                                            <label class="form-check-label small text-danger ms-1"
+                                                                                                   for="rm_<?= htmlspecialchars($item['item_key'] . '_' . md5($photo['path'])); ?>">حذف</label>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                <?php endforeach; ?>
                                                                             </div>
+                                                                            <small class="text-muted d-block mt-1">
+                                                                                <?= count($itemPhotos); ?> صورة مرفقة
+                                                                            </small>
                                                                         <?php endif; ?>
                                                                     </div>
                                                                 <?php endif; ?>
@@ -2118,6 +2223,12 @@ $isCompletedOrder = $order['status'] === 'completed';
                                                             $customMaterialName = $item['item_value'];
                                                         }
                                                     }
+                                                    // The dispatch step has its own editable name; it wins when set.
+                                                    foreach ($dispatchSections['details'] as $item) {
+                                                        if ($item['item_key'] === 'custom_material_name' && trim((string)($item['item_value'] ?? '')) !== '') {
+                                                            $customMaterialName = $item['item_value'];
+                                                        }
+                                                    }
                                                     $materials['prints'] = $customMaterialName;
                                                     foreach ($materials as $matKey => $matLabel):
                                                         $issuedKey = $matKey . '_issued';
@@ -2137,7 +2248,16 @@ $isCompletedOrder = $order['status'] === 'completed';
                                                         }
                                                     ?>
                                                         <tr>
-                                                            <td style="text-align: right;"><strong><?= htmlspecialchars($matLabel); ?></strong></td>
+                                                            <td style="text-align: right;">
+                                                                <?php if ($matKey === 'prints'): ?>
+                                                                    <input type="text" class="form-control form-control-sm fw-bold"
+                                                                           name="dispatch_values[custom_material_name]"
+                                                                           value="<?= htmlspecialchars($customMaterialName); ?>"
+                                                                           placeholder="مطبوعات" style="text-align: right;">
+                                                                <?php else: ?>
+                                                                    <strong><?= htmlspecialchars($matLabel); ?></strong>
+                                                                <?php endif; ?>
+                                                            </td>
                                                             <td>
                                                                 <div class="small fw-bold mb-1"><?= htmlspecialchars($issuedVal ?: '0'); ?></div>
                                                                 <input type="text" class="form-control form-control-sm" name="packaging_notes[<?= $issuedKey; ?>]" value="<?= htmlspecialchars($issuedNote); ?>" placeholder="Note...">

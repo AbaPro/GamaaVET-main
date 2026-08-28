@@ -143,6 +143,51 @@ function manufacturing_store_uploaded_image($file, $targetDir, $relativeDir, $pr
     ];
 }
 
+/**
+ * Normalise a dispatch checklist image value into a list of photos.
+ *
+ * Values are stored as a JSON array of {path, original_name}. Rows written
+ * before multi-upload held a single bare path, so those are promoted to a
+ * one-element list rather than being dropped.
+ */
+function manufacturing_decode_dispatch_photos($value) {
+    $value = trim((string)$value);
+    if ($value === '') {
+        return [];
+    }
+
+    $decoded = json_decode($value, true);
+    if (is_array($decoded)) {
+        $photos = [];
+        foreach ($decoded as $entry) {
+            if (is_array($entry) && !empty($entry['path'])) {
+                $photos[] = [
+                    'path' => $entry['path'],
+                    'original_name' => $entry['original_name'] ?? basename($entry['path']),
+                ];
+            } elseif (is_string($entry) && $entry !== '') {
+                $photos[] = ['path' => $entry, 'original_name' => basename($entry)];
+            }
+        }
+        return $photos;
+    }
+
+    // Legacy single-path value.
+    return [['path' => $value, 'original_name' => basename($value)]];
+}
+
+function manufacturing_get_dispatch_item_value($conn, $orderId, $itemKey) {
+    $stmt = $conn->prepare("
+        SELECT item_value FROM manufacturing_dispatch_checklist
+        WHERE manufacturing_order_id = ? AND item_key = ? LIMIT 1
+    ");
+    $stmt->bind_param("is", $orderId, $itemKey);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return $row['item_value'] ?? '';
+}
+
 function manufacturing_normalize_uploaded_file($files, $idx) {
     return [
         'name' => $files['name'][$idx] ?? '',
@@ -516,17 +561,43 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
                 $html .= '<table border="1" cellpadding="5" style="width:100%; border-collapse:collapse; margin-bottom:15px;">';
                 $html .= '<tbody>';
                 foreach ($dispatchData['before_loading'] as $item) {
-                    $checked = ($item['item_value'] === 'checked') ? '<strong>YES</strong>' : 'NO';
+                    if (($item['item_type'] ?? '') === 'image') {
+                        $photos = manufacturing_decode_dispatch_photos($item['item_value'] ?? '');
+                        $cell = $photos ? '<strong>YES</strong> (' . count($photos) . ')' : 'NO';
+                    } else {
+                        $cell = ($item['item_value'] === 'checked') ? '<strong>YES</strong>' : 'NO';
+                    }
                     $html .= '<tr>';
                     $html .= '<td style="width:80%; text-align:right;">' . htmlspecialchars($item['item_text']) . '</td>';
-                    $html .= '<td style="width:20%; text-align:center;">' . $checked . '</td>';
+                    $html .= '<td style="width:20%; text-align:center;">' . $cell . '</td>';
                     $html .= '</tr>';
                 }
                 $html .= '</tbody></table>';
+
+                // Attached load photos
+                foreach ($dispatchData['before_loading'] as $item) {
+                    if (($item['item_type'] ?? '') !== 'image') {
+                        continue;
+                    }
+                    $photos = manufacturing_decode_dispatch_photos($item['item_value'] ?? '');
+                    if (empty($photos)) {
+                        continue;
+                    }
+                    $html .= '<h5 style="margin-top:15px;">' . htmlspecialchars($item['item_text']) . '</h5>';
+                    $html .= '<div style="margin-bottom:15px;">';
+                    foreach ($photos as $photo) {
+                        $absolute = __DIR__ . '/../../' . $photo['path'];
+                        if (!is_file($absolute)) {
+                            continue;
+                        }
+                        $html .= '<img src="' . htmlspecialchars($absolute) . '" style="max-height:140px; margin:4px; border:1px solid #ccc;">';
+                    }
+                    $html .= '</div>';
+                }
             }
-            
+
             $html .= '</div>';
-            
+
             // Material Tracking Table (from Packaging) for Dispatch Verification
             $packagingStmt = $conn->prepare("
                 SELECT section_name, item_key, item_text, item_value, item_notes
@@ -567,6 +638,12 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
                 foreach ($pkgData['after'] as $pi) {
                     if ($pi['item_key'] === 'custom_material_name' && trim((string)($pi['item_value'] ?? '')) !== '') {
                         $customMaterialName = $pi['item_value'];
+                    }
+                }
+                // The dispatch step has its own editable name; it wins when set.
+                foreach ($dispatchData['details'] as $di) {
+                    if ($di['item_key'] === 'custom_material_name' && trim((string)($di['item_value'] ?? '')) !== '') {
+                        $customMaterialName = $di['item_value'];
                     }
                 }
                 $materials['prints'] = $customMaterialName;
@@ -953,10 +1030,14 @@ function manufacturing_detect_order_audit_notes($conn, $order, $steps) {
     }
 
     $missingStmt = $conn->prepare("
-        SELECT component_name, required_quantity, unit, COALESCE(SUM(DISTINCT ip.quantity), 0) AS available_qty
+        SELECT component_name, required_quantity, unit,
+               COALESCE((
+                   SELECT SUM(ip.quantity)
+                   FROM inventory_products ip
+                   JOIN inventories inv ON inv.id = ip.inventory_id
+                   WHERE ip.product_id = msc.product_id AND inv.location_id = ?
+               ), 0) AS available_qty
         FROM manufacturing_sourcing_components msc
-        LEFT JOIN inventories inv ON inv.location_id = ?
-        LEFT JOIN inventory_products ip ON ip.product_id = msc.product_id AND ip.inventory_id = inv.id
         WHERE msc.manufacturing_order_id = ? AND msc.product_id IS NOT NULL
         GROUP BY msc.component_name, msc.product_id, msc.required_quantity, msc.unit
         HAVING available_qty < required_quantity

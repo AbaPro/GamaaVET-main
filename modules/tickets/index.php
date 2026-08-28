@@ -2,7 +2,10 @@
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
 
-if (!hasPermission('tickets.manage') && !hasPermission('tickets.create') && !hasPermission('tickets.view')) {
+// tickets.update_status is included so a role holding only that permission can
+// still reach the list to find the tickets it is allowed to act on.
+if (!hasPermission('tickets.manage') && !hasPermission('tickets.create')
+    && !hasPermission('tickets.view') && !hasPermission('tickets.update_status')) {
     setAlert('danger', 'Access denied.');
     redirect('../../dashboard.php');
 }

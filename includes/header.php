@@ -333,7 +333,7 @@
                         </li>
                     <?php endif; ?>
                     <!-- Tickets -->
-                    <?php if ((hasPermission('tickets.manage') || hasPermission('tickets.create') || hasPermission('tickets.view')) && $login_region === 'factory'): ?>
+                    <?php if ((hasPermission('tickets.manage') || hasPermission('tickets.create') || hasPermission('tickets.view') || hasPermission('tickets.update_status')) && $login_region === 'factory'): ?>
                         <li class="nav-item">
                             <a class="nav-link" href="<?= BASE_URL ?>modules/tickets/">
                                 <i class="fas fa-ticket-alt me-1"></i> Tickets

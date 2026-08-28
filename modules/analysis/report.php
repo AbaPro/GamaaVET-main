@@ -2,47 +2,54 @@
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
 require_once '../../config/database.php';
+require_once __DIR__ . '/report_catalog.php';
 
-$reportKey = $_GET['key'] ?? '';
-if ($reportKey === '') {
-    setAlert('danger', 'Please select a report.');
-    redirect('index.php');
+if (!hasPermission('analysis.view_reports')) {
+    setAlert('danger', 'Access denied.');
+    redirect('../../dashboard.php');
 }
 
-function normalizeDate($value) {
-    if (!$value) return '';
+function analysisNormalizeDate($value): string
+{
+    $value = is_string($value) ? trim($value) : '';
     return preg_match('/^\d{4}-\d{2}-\d{2}$/', $value) ? $value : '';
 }
 
-function runQuery($conn, $sql, $types, $params) {
+function analysisRunQuery(mysqli $conn, string $sql, string $types = '', array $params = []): array
+{
     $stmt = $conn->prepare($sql);
     if (!$stmt) {
-        throw new Exception('Failed to prepare query.');
+        throw new RuntimeException('Could not prepare the report query.');
     }
-    if ($types !== '' && !empty($params)) {
+    if ($types !== '' && $params) {
         $stmt->bind_param($types, ...$params);
     }
-    $stmt->execute();
-    $res = $stmt->get_result();
-    $rows = $res ? $res->fetch_all(MYSQLI_ASSOC) : [];
+    if (!$stmt->execute()) {
+        $stmt->close();
+        throw new RuntimeException('Could not run the report query.');
+    }
+    $result = $stmt->get_result();
+    $rows = $result ? $result->fetch_all(MYSQLI_ASSOC) : [];
     $stmt->close();
     return $rows;
 }
 
-function addDateFilters(&$where, &$types, &$params, $field, $from, $to) {
-    if ($from !== '') {
+function analysisAddDateFilters(array &$where, string &$types, array &$params, string $field, array $filters): void
+{
+    if ($filters['date_from'] !== '') {
         $where[] = "$field >= ?";
         $types .= 's';
-        $params[] = $from;
+        $params[] = $filters['date_from'];
     }
-    if ($to !== '') {
+    if ($filters['date_to'] !== '') {
         $where[] = "$field <= ?";
         $types .= 's';
-        $params[] = $to;
+        $params[] = $filters['date_to'];
     }
 }
 
-function addIntFilter(&$where, &$types, &$params, $field, $value) {
+function analysisAddIdFilter(array &$where, string &$types, array &$params, string $field, int $value): void
+{
     if ($value > 0) {
         $where[] = "$field = ?";
         $types .= 'i';
@@ -50,2016 +57,871 @@ function addIntFilter(&$where, &$types, &$params, $field, $value) {
     }
 }
 
-function addTextFilter(&$where, &$types, &$params, $field, $value) {
-    if ($value !== '') {
-        $where[] = "$field = ?";
-        $types .= 's';
-        $params[] = $value;
+function analysisRequirementAllowed(?string $requirement): bool
+{
+    if ($requirement === 'final_prices') {
+        return canViewProductPrice('final');
     }
+    if ($requirement === 'purchase_prices') {
+        return hasPermission('purchases.po.price.view');
+    }
+    return true;
 }
 
-function formatMetricValue($value, $format) {
+function analysisTableHasColumn(mysqli $conn, string $table, string $column): bool
+{
+    $sql = 'SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ? LIMIT 1';
+    return analysisRunQuery($conn, $sql, 'ss', [$table, $column]) !== [];
+}
+
+function analysisFormatValue($value, string $format, array $row = []): string
+{
     if ($value === null || $value === '') {
-        return 'N/A';
+        return '<span class="text-muted">—</span>';
     }
-    switch ($format) {
-        case 'currency':
-            return number_format((float)$value, 2);
-        case 'number':
-            return number_format((float)$value, 0);
-        case 'percent':
-            return number_format((float)$value, 2) . '%';
-        default:
-            return htmlspecialchars((string)$value);
+    if ($format === 'currency') {
+        return htmlspecialchars(formatCurrency((float)$value, $row['currency'] ?? 'EGP'));
     }
+    if ($format === 'money') {
+        return number_format((float)$value, 2);
+    }
+    if ($format === 'number') {
+        return number_format((float)$value, 0);
+    }
+    if ($format === 'quantity') {
+        $number = (float)$value;
+        return number_format($number, floor($number) === $number ? 0 : 2);
+    }
+    if ($format === 'percent') {
+        return number_format((float)$value, 1) . '%';
+    }
+    if ($format === 'date') {
+        $timestamp = strtotime((string)$value);
+        return $timestamp ? htmlspecialchars(date('M j, Y', $timestamp)) : htmlspecialchars((string)$value);
+    }
+    if ($format === 'status') {
+        return htmlspecialchars(ucwords(str_replace(['-', '_'], ' ', (string)$value)));
+    }
+    return htmlspecialchars((string)$value);
 }
 
-$filters = [
-    'date_from' => normalizeDate($_GET['date_from'] ?? ''),
-    'date_to' => normalizeDate($_GET['date_to'] ?? ''),
-    'category_id' => isset($_GET['category_id']) ? (int)$_GET['category_id'] : 0,
-    'product_type' => in_array($_GET['product_type'] ?? '', ['final','material','primary'], true) ? $_GET['product_type'] : '',
-    'customer_id' => isset($_GET['customer_id']) ? (int)$_GET['customer_id'] : 0,
-    'vendor_id' => isset($_GET['vendor_id']) ? (int)$_GET['vendor_id'] : 0,
+function analysisFormatCell(array $column, array $row): string
+{
+    $display = analysisFormatValue($row[$column['key']] ?? null, $column['format'], $row);
+    $link = $column['link'] ?? null;
+    if (!$link) {
+        return $display;
+    }
+
+    $recordId = (int)($row[$link['id_key']] ?? 0);
+    if ($recordId <= 0) {
+        return $display;
+    }
+
+    $parameter = $link['parameter'] ?? 'id';
+    $href = BASE_URL . ltrim($link['path'], '/') . '?' . rawurlencode($parameter) . '=' . rawurlencode((string)$recordId);
+    return '<a class="text-decoration-none" href="' . htmlspecialchars($href) . '">' . $display . '</a>';
+}
+
+$catalog = getAnalysisReportCatalog();
+$requestedKey = trim((string)($_GET['key'] ?? ''));
+
+$legacyAliases = [
+    'sales_summary' => 'sales_overview',
+    'gross_sales' => 'sales_overview',
+    'net_sales' => 'sales_overview',
+    'sales_growth' => 'sales_overview',
+    'average_transaction_value' => 'sales_overview',
+    'items_per_transaction' => 'sales_overview',
+    'revenue_per_hour' => 'sales_overview',
+    'sales_per_day' => 'sales_overview',
+    'discount_rate' => 'sales_overview',
+    'discount_impact' => 'sales_overview',
+    'total_sales_today' => 'sales_overview',
+    'total_sales_this_month' => 'sales_overview',
+    'sales_by_product' => 'final_product_sales',
+    'top_products_overview' => 'final_product_sales',
+    'sales_by_category' => 'final_product_sales',
+    'top_categories_overview' => 'final_product_sales',
+    'top_customers' => 'customer_sales',
+    'customer_lifetime_value' => 'customer_sales',
+    'customer_purchase_frequency' => 'customer_sales',
+    'sales_by_customer_type' => 'customer_sales',
+    'accounts_receivable' => 'open_receivables',
+    'ar_aging' => 'open_receivables',
+    'returns_summary' => 'returns_by_product',
+    'inventory_levels' => 'final_product_stock',
+    'low_stock' => 'stock_alerts',
+    'purchase_summary' => 'purchase_overview',
+    'purchase_cost' => 'purchase_overview',
+    'purchase_volume' => 'purchase_overview',
+    'purchases_by_supplier' => 'material_purchases',
+    'outstanding_purchase_orders' => 'open_purchase_orders',
+    'accounts_payable' => 'vendor_payables',
+    'ap_aging' => 'vendor_payables',
+    'payments_by_method' => 'payments_by_method',
+    'cash_positions' => 'cash_positions',
 ];
 
-$canViewFinalPrices = canViewProductPrice('final');
-$canViewMaterialPrices = canViewProductPrice('material');
-$canViewFinalCosts = canViewProductCost('final');
-$canViewMaterialCosts = canViewProductCost('material');
-$canViewAllPrices = $canViewFinalPrices && $canViewMaterialPrices;
-$canViewAllCosts = $canViewFinalCosts && $canViewMaterialCosts;
+if (isset($legacyAliases[$requestedKey]) && $legacyAliases[$requestedKey] !== $requestedKey) {
+    $query = $_GET;
+    $query['key'] = $legacyAliases[$requestedKey];
+    unset($query['format'], $query['product_type']);
+    redirect('report.php?' . http_build_query($query));
+}
 
-$reports = [
-    'sales_summary' => [
-        'title' => 'Sales Summary',
-        'description' => 'Monthly orders, sales, paid, and balance.',
-        'columns' => [
-            ['key' => 'period', 'label' => 'Period', 'format' => 'text'],
-            ['key' => 'orders', 'label' => 'Orders', 'format' => 'number'],
-            ['key' => 'total_sales', 'label' => 'Total Sales', 'format' => 'currency', 'requires' => 'prices'],
-            ['key' => 'paid', 'label' => 'Paid', 'format' => 'currency', 'requires' => 'prices'],
-            ['key' => 'balance', 'label' => 'Balance', 'format' => 'currency', 'requires' => 'prices'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            addIntFilter($where, $types, $params, 'o.customer_id', $filters['customer_id']);
-            $itemWhere = [];
-            $itemTypes = '';
-            $itemParams = [];
-            addIntFilter($itemWhere, $itemTypes, $itemParams, 'p.category_id', $filters['category_id']);
-            addTextFilter($itemWhere, $itemTypes, $itemParams, 'p.type', $filters['product_type']);
-            if (!empty($itemWhere)) {
-                $where[] = "EXISTS (
-                    SELECT 1
-                    FROM order_items oi
-                    JOIN products p ON p.id = oi.product_id
-                    WHERE oi.order_id = o.id AND " . implode(' AND ', $itemWhere) . "
-                )";
-                $types .= $itemTypes;
-                $params = array_merge($params, $itemParams);
-            }
-            $sql = "SELECT DATE_FORMAT(o.order_date, '%Y-%m') AS period,
-                           COUNT(*) AS orders,
-                           SUM(o.total_amount) AS total_sales,
-                           SUM(o.paid_amount) AS paid,
-                           SUM(o.total_amount - o.paid_amount) AS balance
-                    FROM orders o";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY DATE_FORMAT(o.order_date, '%Y-%m') ORDER BY period DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'gross_sales' => [
-        'title' => 'Gross Sales',
-        'description' => 'Total sales before discounts and returns.',
-        'columns' => [
-            ['key' => 'period', 'label' => 'Period', 'format' => 'text'],
-            ['key' => 'orders', 'label' => 'Orders', 'format' => 'number'],
-            ['key' => 'gross_sales', 'label' => 'Gross Sales', 'format' => 'currency', 'requires' => 'prices'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            $sql = "SELECT DATE_FORMAT(o.order_date, '%Y-%m') AS period,
-                           COUNT(DISTINCT o.id) AS orders,
-                           SUM(oi.total_price) AS gross_sales
-                    FROM order_items oi
-                    JOIN orders o ON o.id = oi.order_id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY DATE_FORMAT(o.order_date, '%Y-%m') ORDER BY period DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'net_sales' => [
-        'title' => 'Net Sales',
-        'description' => 'Sales after discounts and returns.',
-        'columns' => [
-            ['key' => 'period', 'label' => 'Period', 'format' => 'text'],
-            ['key' => 'orders', 'label' => 'Orders', 'format' => 'number'],
-            ['key' => 'net_sales', 'label' => 'Net Sales', 'format' => 'currency', 'requires' => 'prices'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            $sql = "SELECT DATE_FORMAT(o.order_date, '%Y-%m') AS period,
-                           COUNT(*) AS orders,
-                           SUM(o.total_amount) AS net_sales
-                    FROM orders o";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY DATE_FORMAT(o.order_date, '%Y-%m') ORDER BY period DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'sales_growth' => [
-        'title' => 'Sales Growth',
-        'description' => 'Period-over-period sales change.',
-        'columns' => [
-            ['key' => 'period', 'label' => 'Period', 'format' => 'text'],
-            ['key' => 'total_sales', 'label' => 'Total Sales', 'format' => 'currency', 'requires' => 'prices'],
-            ['key' => 'previous_sales', 'label' => 'Previous Period', 'format' => 'currency', 'requires' => 'prices'],
-            ['key' => 'growth_pct', 'label' => 'Growth %', 'format' => 'number'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            $baseSql = "SELECT DATE_FORMAT(o.order_date, '%Y-%m-01') AS period_start,
-                               DATE_FORMAT(o.order_date, '%Y-%m') AS period,
-                               SUM(o.total_amount) AS total_sales
-                        FROM orders o";
-            if (!empty($where)) {
-                $baseSql .= " WHERE " . implode(' AND ', $where);
-            }
-            $baseSql .= " GROUP BY DATE_FORMAT(o.order_date, '%Y-%m-01')";
-            $sql = "SELECT cur.period,
-                           cur.total_sales,
-                           prev.total_sales AS previous_sales,
-                           CASE
-                               WHEN prev.total_sales > 0
-                               THEN ((cur.total_sales - prev.total_sales) / prev.total_sales) * 100
-                               ELSE NULL
-                           END AS growth_pct
-                    FROM ($baseSql) cur
-                    LEFT JOIN ($baseSql) prev
-                      ON prev.period_start = DATE_SUB(cur.period_start, INTERVAL 1 MONTH)
-                    ORDER BY cur.period_start DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'average_transaction_value' => [
-        'title' => 'Average Transaction Value (ATV)',
-        'description' => 'Average order value per transaction.',
-        'columns' => [
-            ['key' => 'period', 'label' => 'Period', 'format' => 'text'],
-            ['key' => 'orders', 'label' => 'Orders', 'format' => 'number'],
-            ['key' => 'avg_value', 'label' => 'Avg Transaction', 'format' => 'currency', 'requires' => 'prices'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            $sql = "SELECT DATE_FORMAT(o.order_date, '%Y-%m') AS period,
-                           COUNT(*) AS orders,
-                           AVG(o.total_amount) AS avg_value
-                    FROM orders o";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY DATE_FORMAT(o.order_date, '%Y-%m') ORDER BY period DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'items_per_transaction' => [
-        'title' => 'Items per Transaction (IPT)',
-        'description' => 'Average items per order.',
-        'columns' => [
-            ['key' => 'period', 'label' => 'Period', 'format' => 'text'],
-            ['key' => 'orders', 'label' => 'Orders', 'format' => 'number'],
-            ['key' => 'total_items', 'label' => 'Items', 'format' => 'number'],
-            ['key' => 'avg_items', 'label' => 'Avg Items', 'format' => 'number'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            $sql = "SELECT DATE_FORMAT(o.order_date, '%Y-%m') AS period,
-                           COUNT(DISTINCT o.id) AS orders,
-                           SUM(oi.quantity) AS total_items,
-                           CASE
-                               WHEN COUNT(DISTINCT o.id) > 0
-                               THEN SUM(oi.quantity) / COUNT(DISTINCT o.id)
-                               ELSE 0
-                           END AS avg_items
-                    FROM order_items oi
-                    JOIN orders o ON o.id = oi.order_id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY DATE_FORMAT(o.order_date, '%Y-%m') ORDER BY period DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'revenue_per_hour' => [
-        'title' => 'Revenue per Hour',
-        'description' => 'Hourly sales performance.',
-        'columns' => [
-            ['key' => 'hour', 'label' => 'Hour', 'format' => 'text'],
-            ['key' => 'orders', 'label' => 'Orders', 'format' => 'number'],
-            ['key' => 'total_sales', 'label' => 'Total Sales', 'format' => 'currency', 'requires' => 'prices'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'DATE(o.created_at)', $filters['date_from'], $filters['date_to']);
-            $sql = "SELECT DATE_FORMAT(o.created_at, '%Y-%m-%d %H:00') AS hour,
-                           COUNT(*) AS orders,
-                           SUM(o.total_amount) AS total_sales
-                    FROM orders o";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY DATE_FORMAT(o.created_at, '%Y-%m-%d %H:00') ORDER BY hour DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'sales_per_day' => [
-        'title' => 'Sales per Day',
-        'description' => 'Daily sales totals.',
-        'columns' => [
-            ['key' => 'day', 'label' => 'Day', 'format' => 'text'],
-            ['key' => 'orders', 'label' => 'Orders', 'format' => 'number'],
-            ['key' => 'total_sales', 'label' => 'Total Sales', 'format' => 'currency', 'requires' => 'prices'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            $sql = "SELECT o.order_date AS day,
-                           COUNT(*) AS orders,
-                           SUM(o.total_amount) AS total_sales
-                    FROM orders o";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY o.order_date ORDER BY day DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'sales_by_product' => [
-        'title' => 'Sales by Product',
-        'description' => 'Top products by quantity and revenue.',
-        'columns' => [
-            ['key' => 'sku', 'label' => 'SKU', 'format' => 'text'],
-            ['key' => 'product_name', 'label' => 'Product', 'format' => 'text'],
-            ['key' => 'category_name', 'label' => 'Category', 'format' => 'text'],
-            ['key' => 'quantity', 'label' => 'Qty Sold', 'format' => 'number'],
-            ['key' => 'revenue', 'label' => 'Revenue', 'format' => 'currency', 'requires' => 'prices'],
-            ['key' => 'avg_price', 'label' => 'Avg Price', 'format' => 'currency', 'requires' => 'prices'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            addIntFilter($where, $types, $params, 'p.category_id', $filters['category_id']);
-            addTextFilter($where, $types, $params, 'p.type', $filters['product_type']);
-            $sql = "SELECT p.sku, p.name AS product_name, c.name AS category_name,
-                           SUM(oi.quantity) AS quantity,
-                           SUM(oi.total_price) AS revenue,
-                           AVG(oi.unit_price) AS avg_price
-                    FROM order_items oi
-                    JOIN orders o ON o.id = oi.order_id
-                    JOIN products p ON p.id = oi.product_id
-                    LEFT JOIN categories c ON c.id = p.category_id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY p.id ORDER BY revenue DESC LIMIT 50";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'discount_rate' => [
-        'title' => 'Discount Rate',
-        'description' => 'Average discount percentage applied.',
-        'columns' => [
-            ['key' => 'period', 'label' => 'Period', 'format' => 'text'],
-            ['key' => 'orders', 'label' => 'Orders', 'format' => 'number'],
-            ['key' => 'avg_discount_pct', 'label' => 'Avg Discount %', 'format' => 'number'],
-            ['key' => 'total_discount', 'label' => 'Total Discount', 'format' => 'currency', 'requires' => 'prices'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            $sql = "SELECT DATE_FORMAT(o.order_date, '%Y-%m') AS period,
-                           COUNT(*) AS orders,
-                           AVG(o.discount_percentage) AS avg_discount_pct,
-                           SUM(o.discount_amount) AS total_discount
-                    FROM orders o";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY DATE_FORMAT(o.order_date, '%Y-%m') ORDER BY period DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'discount_impact' => [
-        'title' => 'Discount Impact',
-        'description' => 'Discount value and effect on revenue.',
-        'columns' => [
-            ['key' => 'period', 'label' => 'Period', 'format' => 'text'],
-            ['key' => 'gross_sales', 'label' => 'Gross Sales', 'format' => 'currency', 'requires' => 'prices'],
-            ['key' => 'total_discount', 'label' => 'Total Discount', 'format' => 'currency', 'requires' => 'prices'],
-            ['key' => 'net_sales', 'label' => 'Net Sales', 'format' => 'currency', 'requires' => 'prices'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            $sql = "SELECT DATE_FORMAT(o.order_date, '%Y-%m') AS period,
-                           SUM(oi.total_price) AS gross_sales,
-                           SUM(o.discount_amount) AS total_discount,
-                           SUM(o.total_amount) AS net_sales
-                    FROM orders o
-                    JOIN order_items oi ON oi.order_id = o.id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY DATE_FORMAT(o.order_date, '%Y-%m') ORDER BY period DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'total_sales_today' => [
-        'title' => 'Total Sales Today',
-        'description' => 'Today\'s sales total.',
-        'columns' => [
-            ['key' => 'day', 'label' => 'Day', 'format' => 'text'],
-            ['key' => 'orders', 'label' => 'Orders', 'format' => 'number'],
-            ['key' => 'total_sales', 'label' => 'Total Sales', 'format' => 'currency', 'requires' => 'prices'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            if ($filters['date_from'] === '' && $filters['date_to'] === '') {
-                $where[] = "o.order_date = CURDATE()";
-            } else {
-                addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            }
-            $sql = "SELECT o.order_date AS day,
-                           COUNT(*) AS orders,
-                           SUM(o.total_amount) AS total_sales
-                    FROM orders o";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY o.order_date ORDER BY day DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'total_sales_this_month' => [
-        'title' => 'Total Sales This Month',
-        'description' => 'Month-to-date sales total.',
-        'columns' => [
-            ['key' => 'period', 'label' => 'Period', 'format' => 'text'],
-            ['key' => 'orders', 'label' => 'Orders', 'format' => 'number'],
-            ['key' => 'total_sales', 'label' => 'Total Sales', 'format' => 'currency', 'requires' => 'prices'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            if ($filters['date_from'] === '' && $filters['date_to'] === '') {
-                $where[] = "o.order_date >= DATE_FORMAT(CURDATE(), '%Y-%m-01')";
-                $where[] = "o.order_date <= LAST_DAY(CURDATE())";
-            } else {
-                addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            }
-            $sql = "SELECT DATE_FORMAT(o.order_date, '%Y-%m') AS period,
-                           COUNT(*) AS orders,
-                           SUM(o.total_amount) AS total_sales
-                    FROM orders o";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY DATE_FORMAT(o.order_date, '%Y-%m') ORDER BY period DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'top_products_overview' => [
-        'title' => 'Top Products Overview',
-        'description' => 'Best-selling products snapshot.',
-        'columns' => [
-            ['key' => 'product_name', 'label' => 'Product', 'format' => 'text'],
-            ['key' => 'quantity', 'label' => 'Qty Sold', 'format' => 'number'],
-            ['key' => 'revenue', 'label' => 'Revenue', 'format' => 'currency', 'requires' => 'prices'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            $sql = "SELECT p.name AS product_name,
-                           SUM(oi.quantity) AS quantity,
-                           SUM(oi.total_price) AS revenue
-                    FROM order_items oi
-                    JOIN orders o ON o.id = oi.order_id
-                    JOIN products p ON p.id = oi.product_id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY p.id ORDER BY revenue DESC LIMIT 10";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'top_categories_overview' => [
-        'title' => 'Top Categories Overview',
-        'description' => 'Best-performing categories snapshot.',
-        'columns' => [
-            ['key' => 'category_name', 'label' => 'Category', 'format' => 'text'],
-            ['key' => 'quantity', 'label' => 'Qty Sold', 'format' => 'number'],
-            ['key' => 'revenue', 'label' => 'Revenue', 'format' => 'currency', 'requires' => 'prices'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            $sql = "SELECT c.name AS category_name,
-                           SUM(oi.quantity) AS quantity,
-                           SUM(oi.total_price) AS revenue
-                    FROM order_items oi
-                    JOIN orders o ON o.id = oi.order_id
-                    JOIN products p ON p.id = oi.product_id
-                    LEFT JOIN categories c ON c.id = p.category_id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY c.id ORDER BY revenue DESC LIMIT 10";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'customer_lifetime_value' => [
-        'title' => 'Customer Lifetime Value (CLV)',
-        'description' => 'Total value per customer over time.',
-        'columns' => [
-            ['key' => 'customer_name', 'label' => 'Customer', 'format' => 'text'],
-            ['key' => 'orders', 'label' => 'Orders', 'format' => 'number'],
-            ['key' => 'total_sales', 'label' => 'Total Sales', 'format' => 'currency', 'requires' => 'prices'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            addIntFilter($where, $types, $params, 'o.customer_id', $filters['customer_id']);
-            $sql = "SELECT c.name AS customer_name,
-                           COUNT(*) AS orders,
-                           SUM(o.total_amount) AS total_sales
-                    FROM orders o
-                    JOIN customers c ON c.id = o.customer_id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY o.customer_id ORDER BY total_sales DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'repeat_purchase_rate' => [
-        'title' => 'Repeat Purchase Rate',
-        'description' => 'Share of customers who buy again.',
-        'columns' => [
-            ['key' => 'total_customers', 'label' => 'Customers', 'format' => 'number'],
-            ['key' => 'repeat_customers', 'label' => 'Repeat Customers', 'format' => 'number'],
-            ['key' => 'repeat_rate', 'label' => 'Repeat Rate %', 'format' => 'number'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            $sql = "SELECT COUNT(*) AS total_customers,
-                           SUM(CASE WHEN order_count > 1 THEN 1 ELSE 0 END) AS repeat_customers,
-                           CASE
-                               WHEN COUNT(*) > 0
-                               THEN (SUM(CASE WHEN order_count > 1 THEN 1 ELSE 0 END) / COUNT(*)) * 100
-                               ELSE 0
-                           END AS repeat_rate
-                    FROM (
-                        SELECT o.customer_id, COUNT(*) AS order_count
-                        FROM orders o";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY o.customer_id
-                    ) t";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'customer_purchase_frequency' => [
-        'title' => 'Customer Purchase Frequency',
-        'description' => 'Average orders per customer.',
-        'columns' => [
-            ['key' => 'total_customers', 'label' => 'Customers', 'format' => 'number'],
-            ['key' => 'total_orders', 'label' => 'Orders', 'format' => 'number'],
-            ['key' => 'avg_orders_per_customer', 'label' => 'Avg Orders', 'format' => 'number'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            $sql = "SELECT COUNT(DISTINCT o.customer_id) AS total_customers,
-                           COUNT(*) AS total_orders,
-                           CASE
-                               WHEN COUNT(DISTINCT o.customer_id) > 0
-                               THEN COUNT(*) / COUNT(DISTINCT o.customer_id)
-                               ELSE 0
-                           END AS avg_orders_per_customer
-                    FROM orders o";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'average_basket_size' => [
-        'title' => 'Average Basket Size',
-        'description' => 'Average items per order.',
-        'columns' => [
-            ['key' => 'total_orders', 'label' => 'Orders', 'format' => 'number'],
-            ['key' => 'total_items', 'label' => 'Items', 'format' => 'number'],
-            ['key' => 'avg_items_per_order', 'label' => 'Avg Items', 'format' => 'number'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            $sql = "SELECT COUNT(DISTINCT o.id) AS total_orders,
-                           SUM(oi.quantity) AS total_items,
-                           CASE
-                               WHEN COUNT(DISTINCT o.id) > 0
-                               THEN SUM(oi.quantity) / COUNT(DISTINCT o.id)
-                               ELSE 0
-                           END AS avg_items_per_order
-                    FROM order_items oi
-                    JOIN orders o ON o.id = oi.order_id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'new_vs_returning_customers' => [
-        'title' => 'New vs Returning Customers',
-        'description' => 'Sales split by new and returning.',
-        'columns' => [
-            ['key' => 'segment', 'label' => 'Segment', 'format' => 'text'],
-            ['key' => 'customers', 'label' => 'Customers', 'format' => 'number'],
-            ['key' => 'orders', 'label' => 'Orders', 'format' => 'number'],
-            ['key' => 'total_sales', 'label' => 'Total Sales', 'format' => 'currency', 'requires' => 'prices'],
-        ],
-        'run' => function($conn, $filters) {
-            $from = $filters['date_from'] !== '' ? $filters['date_from'] : date('Y-m-01');
-            $to = $filters['date_to'] !== '' ? $filters['date_to'] : date('Y-m-t');
-            $types = 'ss';
-            $params = [$from, $to];
-            $sql = "SELECT segment,
-                           COUNT(DISTINCT customer_id) AS customers,
-                           COUNT(*) AS orders,
-                           SUM(total_amount) AS total_sales
-                    FROM (
-                        SELECT o.customer_id,
-                               o.total_amount,
-                               CASE
-                                   WHEN first_order_date BETWEEN ? AND ? THEN 'New'
-                                   ELSE 'Returning'
-                               END AS segment
-                        FROM orders o
-                        JOIN (
-                            SELECT customer_id, MIN(order_date) AS first_order_date
-                            FROM orders
-                            GROUP BY customer_id
-                        ) f ON f.customer_id = o.customer_id
-                        WHERE o.order_date BETWEEN ? AND ?
-                    ) t
-                    GROUP BY segment";
-            $types .= 'ss';
-            $params[] = $from;
-            $params[] = $to;
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'inactive_customers' => [
-        'title' => 'Inactive Customers',
-        'description' => 'Customers without recent orders.',
-        'columns' => [
-            ['key' => 'customer_name', 'label' => 'Customer', 'format' => 'text'],
-            ['key' => 'last_order_date', 'label' => 'Last Order', 'format' => 'text'],
-            ['key' => 'days_since_last', 'label' => 'Days Since Last', 'format' => 'number'],
-        ],
-        'run' => function($conn, $filters) {
-            $referenceDate = $filters['date_to'] !== '' ? $filters['date_to'] : date('Y-m-d');
-            $types = 'ss';
-            $params = [$referenceDate, $referenceDate];
-            $sql = "SELECT c.name AS customer_name,
-                           MAX(o.order_date) AS last_order_date,
-                           DATEDIFF(?, MAX(o.order_date)) AS days_since_last
-                    FROM customers c
-                    LEFT JOIN orders o ON o.customer_id = c.id
-                    GROUP BY c.id
-                    HAVING last_order_date IS NULL OR last_order_date < DATE_SUB(?, INTERVAL 90 DAY)
-                    ORDER BY last_order_date IS NULL DESC, last_order_date ASC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'top_customers' => [
-        'title' => 'Top Customers',
-        'description' => 'Customers ranked by total sales.',
-        'columns' => [
-            ['key' => 'customer_name', 'label' => 'Customer', 'format' => 'text'],
-            ['key' => 'orders', 'label' => 'Orders', 'format' => 'number'],
-            ['key' => 'total_sales', 'label' => 'Total Sales', 'format' => 'currency', 'requires' => 'prices'],
-            ['key' => 'paid', 'label' => 'Paid', 'format' => 'currency', 'requires' => 'prices'],
-            ['key' => 'balance', 'label' => 'Balance', 'format' => 'currency', 'requires' => 'prices'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            addIntFilter($where, $types, $params, 'o.customer_id', $filters['customer_id']);
-            $sql = "SELECT c.name AS customer_name,
-                           COUNT(*) AS orders,
-                           SUM(o.total_amount) AS total_sales,
-                           SUM(o.paid_amount) AS paid,
-                           SUM(o.total_amount - o.paid_amount) AS balance
-                    FROM orders o
-                    JOIN customers c ON c.id = o.customer_id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY o.customer_id ORDER BY total_sales DESC LIMIT 50";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'cash_sales' => [
-        'title' => 'Cash Sales',
-        'description' => 'Sales paid by cash.',
-        'columns' => [
-            ['key' => 'period', 'label' => 'Period', 'format' => 'text'],
-            ['key' => 'transactions', 'label' => 'Transactions', 'format' => 'number'],
-            ['key' => 'total_amount', 'label' => 'Total Cash', 'format' => 'currency', 'requires' => 'prices'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = ["op.payment_method = 'cash'"];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            $sql = "SELECT DATE_FORMAT(o.order_date, '%Y-%m') AS period,
-                           COUNT(*) AS transactions,
-                           SUM(op.amount) AS total_amount
-                    FROM order_payments op
-                    JOIN orders o ON o.id = op.order_id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY DATE_FORMAT(o.order_date, '%Y-%m') ORDER BY period DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'credit_sales' => [
-        'title' => 'Credit Sales',
-        'description' => 'Sales on credit or unpaid balance.',
-        'columns' => [
-            ['key' => 'period', 'label' => 'Period', 'format' => 'text'],
-            ['key' => 'orders', 'label' => 'Orders', 'format' => 'number'],
-            ['key' => 'credit_amount', 'label' => 'Credit Amount', 'format' => 'currency', 'requires' => 'prices'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = ["(o.total_amount - o.paid_amount) > 0"];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            $sql = "SELECT DATE_FORMAT(o.order_date, '%Y-%m') AS period,
-                           COUNT(*) AS orders,
-                           SUM(o.total_amount - o.paid_amount) AS credit_amount
-                    FROM orders o";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY DATE_FORMAT(o.order_date, '%Y-%m') ORDER BY period DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'accounts_receivable' => [
-        'title' => 'Accounts Receivable',
-        'description' => 'Open customer balances.',
-        'columns' => [
-            ['key' => 'customer_name', 'label' => 'Customer', 'format' => 'text'],
-            ['key' => 'balance', 'label' => 'Balance', 'format' => 'currency', 'requires' => 'prices'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = ["(o.total_amount - o.paid_amount) > 0"];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            addIntFilter($where, $types, $params, 'o.customer_id', $filters['customer_id']);
-            $sql = "SELECT c.name AS customer_name,
-                           SUM(o.total_amount - o.paid_amount) AS balance
-                    FROM orders o
-                    JOIN customers c ON c.id = o.customer_id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY o.customer_id ORDER BY balance DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'accounts_payable' => [
-        'title' => 'Accounts Payable',
-        'description' => 'Open vendor balances.',
-        'columns' => [
-            ['key' => 'vendor_name', 'label' => 'Vendor', 'format' => 'text'],
-            ['key' => 'balance', 'label' => 'Balance', 'format' => 'currency'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = ["(po.total_amount - po.paid_amount) > 0"];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'po.order_date', $filters['date_from'], $filters['date_to']);
-            addIntFilter($where, $types, $params, 'po.vendor_id', $filters['vendor_id']);
-            $sql = "SELECT v.name AS vendor_name,
-                           SUM(po.total_amount - po.paid_amount) AS balance
-                    FROM purchase_orders po
-                    JOIN vendors v ON v.id = po.vendor_id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY po.vendor_id ORDER BY balance DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'customer_balances' => [
-        'title' => 'Customer Wallets',
-        'description' => 'Wallet balances by customer.',
-        'columns' => [
-            ['key' => 'customer_name', 'label' => 'Customer', 'format' => 'text'],
-            ['key' => 'wallet_balance', 'label' => 'Wallet Balance', 'format' => 'currency'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addIntFilter($where, $types, $params, 'c.id', $filters['customer_id']);
-            $sql = "SELECT c.name AS customer_name, c.wallet_balance
-                    FROM customers c";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " ORDER BY c.wallet_balance DESC, c.name";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'inventory_levels' => [
-        'title' => 'Inventory Levels',
-        'description' => 'Stock by inventory and product.',
-        'columns' => [
-            ['key' => 'inventory_name', 'label' => 'Inventory', 'format' => 'text'],
-            ['key' => 'product_name', 'label' => 'Product', 'format' => 'text'],
-            ['key' => 'sku', 'label' => 'SKU', 'format' => 'text'],
-            ['key' => 'category_name', 'label' => 'Category', 'format' => 'text'],
-            ['key' => 'quantity', 'label' => 'Quantity', 'format' => 'number'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addIntFilter($where, $types, $params, 'p.category_id', $filters['category_id']);
-            addTextFilter($where, $types, $params, 'p.type', $filters['product_type']);
-            $sql = "SELECT i.name AS inventory_name, p.name AS product_name, p.sku,
-                           c.name AS category_name, ip.quantity
-                    FROM inventory_products ip
-                    JOIN inventories i ON i.id = ip.inventory_id
-                    JOIN products p ON p.id = ip.product_id
-                    LEFT JOIN categories c ON c.id = p.category_id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " ORDER BY i.name, p.name";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'low_stock' => [
-        'title' => 'Low Stock',
-        'description' => 'Products below minimum stock.',
-        'columns' => [
-            ['key' => 'product_name', 'label' => 'Product', 'format' => 'text'],
-            ['key' => 'sku', 'label' => 'SKU', 'format' => 'text'],
-            ['key' => 'category_name', 'label' => 'Category', 'format' => 'text'],
-            ['key' => 'min_stock_level', 'label' => 'Min Stock', 'format' => 'number'],
-            ['key' => 'total_qty', 'label' => 'Total Qty', 'format' => 'number'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = ["p.min_stock_level > 0"];
-            $types = '';
-            $params = [];
-            addIntFilter($where, $types, $params, 'p.category_id', $filters['category_id']);
-            addTextFilter($where, $types, $params, 'p.type', $filters['product_type']);
-            $sql = "SELECT p.name AS product_name, p.sku, c.name AS category_name,
-                           p.min_stock_level,
-                           COALESCE(SUM(ip.quantity), 0) AS total_qty
-                    FROM products p
-                    LEFT JOIN inventory_products ip ON ip.product_id = p.id
-                    LEFT JOIN categories c ON c.id = p.category_id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY p.id HAVING COALESCE(SUM(ip.quantity), 0) < p.min_stock_level
-                      ORDER BY total_qty ASC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'purchase_summary' => [
-        'title' => 'Purchase Summary',
-        'description' => 'Monthly PO totals and balances.',
-        'columns' => [
-            ['key' => 'period', 'label' => 'Period', 'format' => 'text'],
-            ['key' => 'orders', 'label' => 'PO Count', 'format' => 'number'],
-            ['key' => 'total_amount', 'label' => 'Total', 'format' => 'currency'],
-            ['key' => 'paid', 'label' => 'Paid', 'format' => 'currency'],
-            ['key' => 'balance', 'label' => 'Balance', 'format' => 'currency'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'po.order_date', $filters['date_from'], $filters['date_to']);
-            addIntFilter($where, $types, $params, 'po.vendor_id', $filters['vendor_id']);
-            $sql = "SELECT DATE_FORMAT(po.order_date, '%Y-%m') AS period,
-                           COUNT(*) AS orders,
-                           SUM(po.total_amount) AS total_amount,
-                           SUM(po.paid_amount) AS paid,
-                           SUM(po.total_amount - po.paid_amount) AS balance
-                    FROM purchase_orders po";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY DATE_FORMAT(po.order_date, '%Y-%m') ORDER BY period DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'purchase_cost' => [
-        'title' => 'Purchase Cost',
-        'description' => 'Total cost of purchased goods.',
-        'columns' => [
-            ['key' => 'period', 'label' => 'Period', 'format' => 'text'],
-            ['key' => 'total_cost', 'label' => 'Total Cost', 'format' => 'currency'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'po.order_date', $filters['date_from'], $filters['date_to']);
-            addIntFilter($where, $types, $params, 'po.vendor_id', $filters['vendor_id']);
-            $sql = "SELECT DATE_FORMAT(po.order_date, '%Y-%m') AS period,
-                           SUM(poi.total_price) AS total_cost
-                    FROM purchase_order_items poi
-                    JOIN purchase_orders po ON po.id = poi.purchase_order_id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY DATE_FORMAT(po.order_date, '%Y-%m') ORDER BY period DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'purchase_volume' => [
-        'title' => 'Purchase Volume',
-        'description' => 'Quantity purchased over time.',
-        'columns' => [
-            ['key' => 'period', 'label' => 'Period', 'format' => 'text'],
-            ['key' => 'total_quantity', 'label' => 'Total Qty', 'format' => 'number'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'po.order_date', $filters['date_from'], $filters['date_to']);
-            addIntFilter($where, $types, $params, 'po.vendor_id', $filters['vendor_id']);
-            $sql = "SELECT DATE_FORMAT(po.order_date, '%Y-%m') AS period,
-                           SUM(poi.quantity) AS total_quantity
-                    FROM purchase_order_items poi
-                    JOIN purchase_orders po ON po.id = poi.purchase_order_id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY DATE_FORMAT(po.order_date, '%Y-%m') ORDER BY period DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'purchases_by_supplier' => [
-        'title' => 'Purchases by Supplier',
-        'description' => 'Purchases grouped by vendor.',
-        'columns' => [
-            ['key' => 'vendor_name', 'label' => 'Vendor', 'format' => 'text'],
-            ['key' => 'orders', 'label' => 'POs', 'format' => 'number'],
-            ['key' => 'total_amount', 'label' => 'Total', 'format' => 'currency'],
-            ['key' => 'total_quantity', 'label' => 'Total Qty', 'format' => 'number'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'po.order_date', $filters['date_from'], $filters['date_to']);
-            addIntFilter($where, $types, $params, 'po.vendor_id', $filters['vendor_id']);
-            $sql = "SELECT v.name AS vendor_name,
-                           COUNT(DISTINCT po.id) AS orders,
-                           SUM(po.total_amount) AS total_amount,
-                           SUM(poi.quantity) AS total_quantity
-                    FROM purchase_orders po
-                    JOIN vendors v ON v.id = po.vendor_id
-                    LEFT JOIN purchase_order_items poi ON poi.purchase_order_id = po.id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY po.vendor_id ORDER BY total_amount DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'outstanding_purchase_orders' => [
-        'title' => 'Outstanding Purchase Orders',
-        'description' => 'Open purchase orders and balances.',
-        'columns' => [
-            ['key' => 'po_id', 'label' => 'PO #', 'format' => 'number'],
-            ['key' => 'vendor_name', 'label' => 'Vendor', 'format' => 'text'],
-            ['key' => 'status', 'label' => 'Status', 'format' => 'text'],
-            ['key' => 'total_amount', 'label' => 'Total', 'format' => 'currency'],
-            ['key' => 'paid_amount', 'label' => 'Paid', 'format' => 'currency'],
-            ['key' => 'balance', 'label' => 'Balance', 'format' => 'currency'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = ["po.status IN ('new','ordered','partially-received')"];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'po.order_date', $filters['date_from'], $filters['date_to']);
-            addIntFilter($where, $types, $params, 'po.vendor_id', $filters['vendor_id']);
-            $sql = "SELECT po.id AS po_id,
-                           v.name AS vendor_name,
-                           po.status,
-                           po.total_amount,
-                           po.paid_amount,
-                           (po.total_amount - po.paid_amount) AS balance
-                    FROM purchase_orders po
-                    JOIN vendors v ON v.id = po.vendor_id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " ORDER BY po.order_date DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'vendor_balances' => [
-        'title' => 'Vendor Wallets',
-        'description' => 'Wallet balances by vendor.',
-        'columns' => [
-            ['key' => 'vendor_name', 'label' => 'Vendor', 'format' => 'text'],
-            ['key' => 'wallet_balance', 'label' => 'Wallet Balance', 'format' => 'currency'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addIntFilter($where, $types, $params, 'v.id', $filters['vendor_id']);
-            $sql = "SELECT v.name AS vendor_name, v.wallet_balance
-                    FROM vendors v";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " ORDER BY v.wallet_balance DESC, v.name";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'sales_per_employee' => [
-        'title' => 'Sales per Employee',
-        'description' => 'Sales attributed to each staff member.',
-        'columns' => [
-            ['key' => 'employee_name', 'label' => 'Employee', 'format' => 'text'],
-            ['key' => 'orders', 'label' => 'Orders', 'format' => 'number'],
-            ['key' => 'total_sales', 'label' => 'Total Sales', 'format' => 'currency', 'requires' => 'prices'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            $sql = "SELECT u.name AS employee_name,
-                           COUNT(*) AS orders,
-                           SUM(o.total_amount) AS total_sales
-                    FROM orders o
-                    JOIN users u ON u.id = o.created_by";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY o.created_by ORDER BY total_sales DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'returns_summary' => [
-        'title' => 'Returns Summary',
-        'description' => 'Returned quantities by product.',
-        'columns' => [
-            ['key' => 'product_name', 'label' => 'Product', 'format' => 'text'],
-            ['key' => 'sku', 'label' => 'SKU', 'format' => 'text'],
-            ['key' => 'returns_count', 'label' => 'Returns', 'format' => 'number'],
-            ['key' => 'returned_qty', 'label' => 'Returned Qty', 'format' => 'number'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            addIntFilter($where, $types, $params, 'p.category_id', $filters['category_id']);
-            addTextFilter($where, $types, $params, 'p.type', $filters['product_type']);
-            $sql = "SELECT p.name AS product_name, p.sku,
-                           COUNT(r.id) AS returns_count,
-                           SUM(r.returned_quantity) AS returned_qty
-                    FROM order_returns r
-                    JOIN orders o ON o.id = r.order_id
-                    JOIN products p ON p.id = r.product_id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY r.product_id ORDER BY returned_qty DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'product_margin' => [
-        'title' => 'Product Margin',
-        'description' => 'Revenue, estimated cost, and margin by product.',
-        'columns' => [
-            ['key' => 'sku', 'label' => 'SKU', 'format' => 'text'],
-            ['key' => 'product_name', 'label' => 'Product', 'format' => 'text'],
-            ['key' => 'category_name', 'label' => 'Category', 'format' => 'text'],
-            ['key' => 'quantity', 'label' => 'Qty Sold', 'format' => 'number'],
-            ['key' => 'revenue', 'label' => 'Revenue', 'format' => 'currency', 'requires' => 'prices_final'],
-            ['key' => 'estimated_cost', 'label' => 'Est. Cost', 'format' => 'currency', 'requires' => 'costs_final'],
-            ['key' => 'margin', 'label' => 'Margin', 'format' => 'currency', 'requires' => 'costs_final'],
-            ['key' => 'margin_pct', 'label' => 'Margin %', 'format' => 'number', 'requires' => 'costs_final'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = ["p.type = 'final'"];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            addIntFilter($where, $types, $params, 'p.category_id', $filters['category_id']);
-            $sql = "SELECT p.sku, p.name AS product_name, c.name AS category_name,
-                           SUM(oi.quantity) AS quantity,
-                           SUM(oi.total_price) AS revenue,
-                           SUM(oi.quantity * COALESCE(p.cost_price, 0)) AS estimated_cost,
-                           SUM(oi.total_price) - SUM(oi.quantity * COALESCE(p.cost_price, 0)) AS margin,
-                           CASE
-                               WHEN SUM(oi.total_price) > 0
-                               THEN ((SUM(oi.total_price) - SUM(oi.quantity * COALESCE(p.cost_price, 0))) / SUM(oi.total_price)) * 100
-                               ELSE 0
-                           END AS margin_pct
-                    FROM order_items oi
-                    JOIN orders o ON o.id = oi.order_id
-                    JOIN products p ON p.id = oi.product_id
-                    LEFT JOIN categories c ON c.id = p.category_id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY p.id ORDER BY margin DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'ar_aging' => [
-        'title' => 'Accounts Receivable Aging',
-        'description' => 'Outstanding balances grouped by aging buckets.',
-        'columns' => [
-            ['key' => 'customer_name', 'label' => 'Customer', 'format' => 'text'],
-            ['key' => 'current', 'label' => '0-30 Days', 'format' => 'currency', 'requires' => 'prices_final'],
-            ['key' => 'bucket_31_60', 'label' => '31-60 Days', 'format' => 'currency', 'requires' => 'prices_final'],
-            ['key' => 'bucket_61_90', 'label' => '61-90 Days', 'format' => 'currency', 'requires' => 'prices_final'],
-            ['key' => 'over_90', 'label' => '90+ Days', 'format' => 'currency', 'requires' => 'prices_final'],
-            ['key' => 'total_balance', 'label' => 'Total Balance', 'format' => 'currency', 'requires' => 'prices_final'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = ["(o.total_amount - o.paid_amount) > 0"];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            addIntFilter($where, $types, $params, 'o.customer_id', $filters['customer_id']);
-            $sql = "SELECT c.name AS customer_name,
-                           SUM(CASE WHEN DATEDIFF(CURDATE(), o.order_date) <= 30 THEN (o.total_amount - o.paid_amount) ELSE 0 END) AS current,
-                           SUM(CASE WHEN DATEDIFF(CURDATE(), o.order_date) BETWEEN 31 AND 60 THEN (o.total_amount - o.paid_amount) ELSE 0 END) AS bucket_31_60,
-                           SUM(CASE WHEN DATEDIFF(CURDATE(), o.order_date) BETWEEN 61 AND 90 THEN (o.total_amount - o.paid_amount) ELSE 0 END) AS bucket_61_90,
-                           SUM(CASE WHEN DATEDIFF(CURDATE(), o.order_date) > 90 THEN (o.total_amount - o.paid_amount) ELSE 0 END) AS over_90,
-                           SUM(o.total_amount - o.paid_amount) AS total_balance
-                    FROM orders o
-                    JOIN customers c ON c.id = o.customer_id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY o.customer_id ORDER BY total_balance DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'ap_aging' => [
-        'title' => 'Accounts Payable Aging',
-        'description' => 'Vendor balances grouped by aging buckets.',
-        'columns' => [
-            ['key' => 'vendor_name', 'label' => 'Vendor', 'format' => 'text'],
-            ['key' => 'current', 'label' => '0-30 Days', 'format' => 'currency'],
-            ['key' => 'bucket_31_60', 'label' => '31-60 Days', 'format' => 'currency'],
-            ['key' => 'bucket_61_90', 'label' => '61-90 Days', 'format' => 'currency'],
-            ['key' => 'over_90', 'label' => '90+ Days', 'format' => 'currency'],
-            ['key' => 'total_balance', 'label' => 'Total Balance', 'format' => 'currency'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = ["(po.total_amount - po.paid_amount) > 0"];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'po.order_date', $filters['date_from'], $filters['date_to']);
-            addIntFilter($where, $types, $params, 'po.vendor_id', $filters['vendor_id']);
-            $sql = "SELECT v.name AS vendor_name,
-                           SUM(CASE WHEN DATEDIFF(CURDATE(), po.order_date) <= 30 THEN (po.total_amount - po.paid_amount) ELSE 0 END) AS current,
-                           SUM(CASE WHEN DATEDIFF(CURDATE(), po.order_date) BETWEEN 31 AND 60 THEN (po.total_amount - po.paid_amount) ELSE 0 END) AS bucket_31_60,
-                           SUM(CASE WHEN DATEDIFF(CURDATE(), po.order_date) BETWEEN 61 AND 90 THEN (po.total_amount - po.paid_amount) ELSE 0 END) AS bucket_61_90,
-                           SUM(CASE WHEN DATEDIFF(CURDATE(), po.order_date) > 90 THEN (po.total_amount - po.paid_amount) ELSE 0 END) AS over_90,
-                           SUM(po.total_amount - po.paid_amount) AS total_balance
-                    FROM purchase_orders po
-                    JOIN vendors v ON v.id = po.vendor_id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY po.vendor_id ORDER BY total_balance DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'cashflow_summary' => [
-        'title' => 'Cashflow Transfers',
-        'description' => 'Transfers between safes, banks, and personal.',
-        'columns' => [
-            ['key' => 'period', 'label' => 'Period', 'format' => 'text'],
-            ['key' => 'from_type', 'label' => 'From', 'format' => 'text'],
-            ['key' => 'to_type', 'label' => 'To', 'format' => 'text'],
-            ['key' => 'transfers', 'label' => 'Transfers', 'format' => 'number'],
-            ['key' => 'total_amount', 'label' => 'Total Amount', 'format' => 'currency'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'ft.created_at', $filters['date_from'], $filters['date_to']);
-            $sql = "SELECT DATE_FORMAT(ft.created_at, '%Y-%m') AS period,
-                           ft.from_type,
-                           ft.to_type,
-                           COUNT(*) AS transfers,
-                           SUM(ft.amount) AS total_amount
-                    FROM finance_transfers ft";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY DATE_FORMAT(ft.created_at, '%Y-%m'), ft.from_type, ft.to_type
-                      ORDER BY period DESC, total_amount DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'payments_by_method' => [
-        'title' => 'Payments by Method',
-        'description' => 'Incoming and outgoing payments by method.',
-        'columns' => [
-            ['key' => 'period', 'label' => 'Period', 'format' => 'text'],
-            ['key' => 'flow_type', 'label' => 'Flow', 'format' => 'text'],
-            ['key' => 'method', 'label' => 'Method', 'format' => 'text'],
-            ['key' => 'payments', 'label' => 'Payments', 'format' => 'number'],
-            ['key' => 'total_amount', 'label' => 'Total Amount', 'format' => 'currency'],
-        ],
-        'run' => function($conn, $filters) {
-            $whereSales = [];
-            $wherePurch = [];
-            $types = '';
-            $params = [];
-            addDateFilters($whereSales, $types, $params, 'op.created_at', $filters['date_from'], $filters['date_to']);
-            addDateFilters($wherePurch, $types, $params, 'pop.created_at', $filters['date_from'], $filters['date_to']);
-            $salesWhere = !empty($whereSales) ? "WHERE " . implode(' AND ', $whereSales) : '';
-            $purchWhere = !empty($wherePurch) ? "WHERE " . implode(' AND ', $wherePurch) : '';
-            $sql = "SELECT DATE_FORMAT(op.created_at, '%Y-%m') AS period,
-                           'Sales' AS flow_type,
-                           op.payment_method AS method,
-                           COUNT(*) AS payments,
-                           SUM(op.amount) AS total_amount
-                    FROM order_payments op
-                    $salesWhere
-                    GROUP BY DATE_FORMAT(op.created_at, '%Y-%m'), op.payment_method
-                    UNION ALL
-                    SELECT DATE_FORMAT(pop.created_at, '%Y-%m') AS period,
-                           'Purchases' AS flow_type,
-                           pop.payment_method AS method,
-                           COUNT(*) AS payments,
-                           SUM(pop.amount) AS total_amount
-                    FROM purchase_order_payments pop
-                    $purchWhere
-                    GROUP BY DATE_FORMAT(pop.created_at, '%Y-%m'), pop.payment_method
-                    ORDER BY period DESC, flow_type";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'inventory_valuation' => [
-        'title' => 'Inventory Valuation',
-        'description' => 'Estimated stock value by inventory.',
-        'columns' => [
-            ['key' => 'inventory_name', 'label' => 'Inventory', 'format' => 'text'],
-            ['key' => 'sku_count', 'label' => 'SKU Count', 'format' => 'number'],
-            ['key' => 'total_qty', 'label' => 'Total Qty', 'format' => 'number'],
-            ['key' => 'total_value', 'label' => 'Est. Value', 'format' => 'currency', 'requires' => 'costs_all'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addIntFilter($where, $types, $params, 'p.category_id', $filters['category_id']);
-            addTextFilter($where, $types, $params, 'p.type', $filters['product_type']);
-            $sql = "SELECT i.name AS inventory_name,
-                           COUNT(DISTINCT p.id) AS sku_count,
-                           SUM(ip.quantity) AS total_qty,
-                           SUM(ip.quantity * COALESCE(p.cost_price, 0)) AS total_value
-                    FROM inventory_products ip
-                    JOIN inventories i ON i.id = ip.inventory_id
-                    JOIN products p ON p.id = ip.product_id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY i.id ORDER BY total_value DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'quotation_pipeline' => [
-        'title' => 'Quotation Pipeline',
-        'description' => 'Quotation totals grouped by status.',
-        'columns' => [
-            ['key' => 'status', 'label' => 'Status', 'format' => 'text'],
-            ['key' => 'count', 'label' => 'Count', 'format' => 'number'],
-            ['key' => 'total_amount', 'label' => 'Total Amount', 'format' => 'currency', 'requires' => 'prices_final'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'q.quotation_date', $filters['date_from'], $filters['date_to']);
-            addIntFilter($where, $types, $params, 'q.customer_id', $filters['customer_id']);
-            $sql = "SELECT q.status,
-                           COUNT(*) AS count,
-                           SUM(q.total_amount) AS total_amount
-                    FROM quotations q";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY q.status ORDER BY count DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'sales_by_category' => [
-        'title' => 'Sales by Category',
-        'description' => 'Revenue and volume grouped by category.',
-        'columns' => [
-            ['key' => 'category_name', 'label' => 'Category', 'format' => 'text'],
-            ['key' => 'quantity', 'label' => 'Qty Sold', 'format' => 'number'],
-            ['key' => 'revenue', 'label' => 'Revenue', 'format' => 'currency', 'requires' => 'prices_final'],
-            ['key' => 'avg_price', 'label' => 'Avg Price', 'format' => 'currency', 'requires' => 'prices_final'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = ["p.type = 'final'"];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            addIntFilter($where, $types, $params, 'p.category_id', $filters['category_id']);
-            $sql = "SELECT COALESCE(c.name, 'Uncategorized') AS category_name,
-                           SUM(oi.quantity) AS quantity,
-                           SUM(oi.total_price) AS revenue,
-                           AVG(oi.unit_price) AS avg_price
-                    FROM order_items oi
-                    JOIN orders o ON o.id = oi.order_id
-                    JOIN products p ON p.id = oi.product_id
-                    LEFT JOIN categories c ON c.id = p.category_id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY p.category_id ORDER BY revenue DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'sales_by_customer_type' => [
-        'title' => 'Sales by Customer Type',
-        'description' => 'Sales split by customer type.',
-        'columns' => [
-            ['key' => 'customer_type', 'label' => 'Customer Type', 'format' => 'text'],
-            ['key' => 'orders', 'label' => 'Orders', 'format' => 'number'],
-            ['key' => 'total_sales', 'label' => 'Total Sales', 'format' => 'currency', 'requires' => 'prices_final'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            $sql = "SELECT c.type AS customer_type,
-                           COUNT(*) AS orders,
-                           SUM(o.total_amount) AS total_sales
-                    FROM orders o
-                    JOIN customers c ON c.id = o.customer_id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY c.type ORDER BY total_sales DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'order_status_mix' => [
-        'title' => 'Order Status Mix',
-        'description' => 'Orders grouped by status.',
-        'columns' => [
-            ['key' => 'status', 'label' => 'Status', 'format' => 'text'],
-            ['key' => 'count', 'label' => 'Orders', 'format' => 'number'],
-            ['key' => 'total_amount', 'label' => 'Total Amount', 'format' => 'currency', 'requires' => 'prices_final'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'o.order_date', $filters['date_from'], $filters['date_to']);
-            $sql = "SELECT o.status,
-                           COUNT(*) AS count,
-                           SUM(o.total_amount) AS total_amount
-                    FROM orders o";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY o.status ORDER BY count DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'po_status_mix' => [
-        'title' => 'PO Status Mix',
-        'description' => 'Purchase orders grouped by status.',
-        'columns' => [
-            ['key' => 'status', 'label' => 'Status', 'format' => 'text'],
-            ['key' => 'count', 'label' => 'POs', 'format' => 'number'],
-            ['key' => 'total_amount', 'label' => 'Total Amount', 'format' => 'currency'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'po.order_date', $filters['date_from'], $filters['date_to']);
-            $sql = "SELECT po.status,
-                           COUNT(*) AS count,
-                           SUM(po.total_amount) AS total_amount
-                    FROM purchase_orders po";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY po.status ORDER BY count DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'inventory_transfers_summary' => [
-        'title' => 'Inventory Transfers',
-        'description' => 'Transfers volume by status and period.',
-        'columns' => [
-            ['key' => 'period', 'label' => 'Period', 'format' => 'text'],
-            ['key' => 'status', 'label' => 'Status', 'format' => 'text'],
-            ['key' => 'transfers', 'label' => 'Transfers', 'format' => 'number'],
-            ['key' => 'total_qty', 'label' => 'Total Qty', 'format' => 'number'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'it.created_at', $filters['date_from'], $filters['date_to']);
-            $sql = "SELECT DATE_FORMAT(it.created_at, '%Y-%m') AS period,
-                           it.status,
-                           COUNT(DISTINCT it.id) AS transfers,
-                           SUM(COALESCE(ti.quantity, 0)) AS total_qty
-                    FROM inventory_transfers it
-                    LEFT JOIN transfer_items ti ON ti.transfer_id = it.id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY DATE_FORMAT(it.created_at, '%Y-%m'), it.status
-                      ORDER BY period DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'inter_branch_transfers' => [
-        'title' => 'Inter-Branch Transfers',
-        'description' => 'Transfers volume by status and period.',
-        'columns' => [
-            ['key' => 'period', 'label' => 'Period', 'format' => 'text'],
-            ['key' => 'status', 'label' => 'Status', 'format' => 'text'],
-            ['key' => 'transfers', 'label' => 'Transfers', 'format' => 'number'],
-            ['key' => 'total_qty', 'label' => 'Total Qty', 'format' => 'number'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'it.created_at', $filters['date_from'], $filters['date_to']);
-            $sql = "SELECT DATE_FORMAT(it.created_at, '%Y-%m') AS period,
-                           it.status,
-                           COUNT(DISTINCT it.id) AS transfers,
-                           SUM(COALESCE(ti.quantity, 0)) AS total_qty
-                    FROM inventory_transfers it
-                    LEFT JOIN transfer_items ti ON ti.transfer_id = it.id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY DATE_FORMAT(it.created_at, '%Y-%m'), it.status
-                      ORDER BY period DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'cash_positions' => [
-        'title' => 'Cash Positions',
-        'description' => 'Balances across safes, banks, and personal.',
-        'columns' => [
-            ['key' => 'source_type', 'label' => 'Source', 'format' => 'text'],
-            ['key' => 'label', 'label' => 'Name', 'format' => 'text'],
-            ['key' => 'balance', 'label' => 'Balance', 'format' => 'currency'],
-        ],
-        'run' => function($conn) {
-            $rows = [];
-            $scopeClause = hasPermission('finance.expenses.all_accounts') ? '1=1' : getAccountScopeSql();
-            $safes = $conn->query("SELECT 'Safe' AS source_type, name AS label, balance FROM safes WHERE $scopeClause")->fetch_all(MYSQLI_ASSOC);
-            $banks = $conn->query("SELECT 'Bank' AS source_type, bank_name AS label, balance FROM bank_accounts WHERE $scopeClause")->fetch_all(MYSQLI_ASSOC);
-            $personal = $conn->query("SELECT 'Personal' AS source_type, name AS label, personal_balance AS balance FROM users WHERE is_active=1")->fetch_all(MYSQLI_ASSOC);
-            $rows = array_merge($safes, $banks, $personal);
-            usort($rows, function($a, $b) {
-                return (float)$b['balance'] <=> (float)$a['balance'];
-            });
-            return $rows;
-        }
-    ],
-    'customer_wallet_activity' => [
-        'title' => 'Customer Wallet Activity',
-        'description' => 'Wallet transactions by type and period.',
-        'columns' => [
-            ['key' => 'period', 'label' => 'Period', 'format' => 'text'],
-            ['key' => 'type', 'label' => 'Type', 'format' => 'text'],
-            ['key' => 'transactions', 'label' => 'Transactions', 'format' => 'number'],
-            ['key' => 'total_amount', 'label' => 'Total Amount', 'format' => 'currency'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'cwt.created_at', $filters['date_from'], $filters['date_to']);
-            addIntFilter($where, $types, $params, 'cwt.customer_id', $filters['customer_id']);
-            $sql = "SELECT DATE_FORMAT(cwt.created_at, '%Y-%m') AS period,
-                           cwt.type,
-                           COUNT(*) AS transactions,
-                           SUM(cwt.amount) AS total_amount
-                    FROM customer_wallet_transactions cwt";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY DATE_FORMAT(cwt.created_at, '%Y-%m'), cwt.type
-                      ORDER BY period DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'user_activity_log' => [
-        'title' => 'User Activity Log',
-        'description' => 'System actions by user and time.',
-        'columns' => [
-            ['key' => 'created_at', 'label' => 'Date', 'format' => 'text'],
-            ['key' => 'user_name', 'label' => 'User', 'format' => 'text'],
-            ['key' => 'action', 'label' => 'Action', 'format' => 'text'],
-            ['key' => 'details', 'label' => 'Details', 'format' => 'text'],
-            ['key' => 'ip_address', 'label' => 'IP', 'format' => 'text'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'al.created_at', $filters['date_from'], $filters['date_to']);
-            $sql = "SELECT al.created_at,
-                           u.name AS user_name,
-                           al.action,
-                           al.details,
-                           al.ip_address
-                    FROM activity_logs al
-                    LEFT JOIN users u ON u.id = al.user_id";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " ORDER BY al.created_at DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-    'vendor_wallet_activity' => [
-        'title' => 'Vendor Wallet Activity',
-        'description' => 'Vendor transactions by type and period.',
-        'columns' => [
-            ['key' => 'period', 'label' => 'Period', 'format' => 'text'],
-            ['key' => 'type', 'label' => 'Type', 'format' => 'text'],
-            ['key' => 'transactions', 'label' => 'Transactions', 'format' => 'number'],
-            ['key' => 'total_amount', 'label' => 'Total Amount', 'format' => 'currency'],
-        ],
-        'run' => function($conn, $filters) {
-            $where = [];
-            $types = '';
-            $params = [];
-            addDateFilters($where, $types, $params, 'vwt.created_at', $filters['date_from'], $filters['date_to']);
-            addIntFilter($where, $types, $params, 'vwt.vendor_id', $filters['vendor_id']);
-            $sql = "SELECT DATE_FORMAT(vwt.created_at, '%Y-%m') AS period,
-                           vwt.type,
-                           COUNT(*) AS transactions,
-                           SUM(vwt.amount) AS total_amount
-                    FROM vendor_wallet_transactions vwt";
-            if (!empty($where)) {
-                $sql .= " WHERE " . implode(' AND ', $where);
-            }
-            $sql .= " GROUP BY DATE_FORMAT(vwt.created_at, '%Y-%m'), vwt.type
-                      ORDER BY period DESC";
-            return runQuery($conn, $sql, $types, $params);
-        }
-    ],
-];
-
-$reportFilterMap = [
-    'sales_summary' => ['date','category','product_type','customer'],
-    'gross_sales' => ['date'],
-    'net_sales' => ['date'],
-    'sales_growth' => ['date'],
-    'average_transaction_value' => ['date'],
-    'items_per_transaction' => ['date'],
-    'revenue_per_hour' => ['date'],
-    'sales_per_day' => ['date'],
-    'sales_by_product' => ['date','category','product_type'],
-    'discount_rate' => ['date'],
-    'discount_impact' => ['date'],
-    'total_sales_today' => ['date'],
-    'total_sales_this_month' => ['date'],
-    'top_products_overview' => ['date'],
-    'top_categories_overview' => ['date'],
-    'customer_lifetime_value' => ['date','customer'],
-    'repeat_purchase_rate' => ['date'],
-    'customer_purchase_frequency' => ['date'],
-    'average_basket_size' => ['date'],
-    'new_vs_returning_customers' => ['date'],
-    'inactive_customers' => ['date'],
-    'top_customers' => ['date','customer'],
-    'cash_sales' => ['date'],
-    'credit_sales' => ['date'],
-    'accounts_receivable' => ['date','customer'],
-    'accounts_payable' => ['date','vendor'],
-    'customer_balances' => ['customer'],
-    'inventory_levels' => ['category','product_type'],
-    'low_stock' => ['category','product_type'],
-    'purchase_summary' => ['date','vendor'],
-    'purchase_cost' => ['date','vendor'],
-    'purchase_volume' => ['date','vendor'],
-    'purchases_by_supplier' => ['date','vendor'],
-    'outstanding_purchase_orders' => ['date','vendor'],
-    'vendor_balances' => ['vendor'],
-    'sales_per_employee' => ['date'],
-    'returns_summary' => ['date','category','product_type'],
-    'product_margin' => ['date','category'],
-    'ar_aging' => ['date','customer'],
-    'ap_aging' => ['date','vendor'],
-    'cashflow_summary' => ['date'],
-    'payments_by_method' => ['date'],
-    'inventory_valuation' => ['category','product_type'],
-    'quotation_pipeline' => ['date','customer'],
-    'sales_by_category' => ['date','category'],
-    'sales_by_customer_type' => ['date'],
-    'order_status_mix' => ['date'],
-    'po_status_mix' => ['date'],
-    'inventory_transfers_summary' => ['date'],
-    'inter_branch_transfers' => ['date'],
-    'cash_positions' => [],
-    'customer_wallet_activity' => ['date','customer'],
-    'vendor_wallet_activity' => ['date','vendor'],
-    'user_activity_log' => ['date'],
-];
-
-$reportViewMap = [
-    'sales_summary' => [
-        'table' => false,
-    ],
-    'gross_sales' => [
-        'table' => false,
-    ],
-    'net_sales' => [
-        'table' => false,
-    ],
-    'sales_growth' => [
-        'table' => false,
-    ],
-    'average_transaction_value' => [
-        'table' => false,
-    ],
-    'items_per_transaction' => [
-        'table' => false,
-    ],
-    'revenue_per_hour' => [
-        'table' => false,
-    ],
-    'sales_per_day' => [
-        'table' => false,
-    ],
-    'discount_rate' => [
-        'table' => false,
-    ],
-    'discount_impact' => [
-        'table' => false,
-    ],
-    'total_sales_today' => [
-        'table' => false,
-        'kpis' => [
-            ['label' => 'Total Sales', 'key' => 'total_sales', 'format' => 'currency'],
-            ['label' => 'Orders', 'key' => 'orders', 'format' => 'number'],
-        ],
-    ],
-    'total_sales_this_month' => [
-        'table' => false,
-        'kpis' => [
-            ['label' => 'Total Sales', 'key' => 'total_sales', 'format' => 'currency'],
-            ['label' => 'Orders', 'key' => 'orders', 'format' => 'number'],
-        ],
-    ],
-    'top_products_overview' => [
-        'table' => false,
-    ],
-    'top_categories_overview' => [
-        'table' => false,
-    ],
-    'customer_lifetime_value' => [
-        'table' => false,
-    ],
-    'repeat_purchase_rate' => [
-        'table' => false,
-        'chart' => false,
-        'kpis' => [
-            ['label' => 'Customers', 'key' => 'total_customers', 'format' => 'number'],
-            ['label' => 'Repeat Customers', 'key' => 'repeat_customers', 'format' => 'number'],
-            ['label' => 'Repeat Rate', 'key' => 'repeat_rate', 'format' => 'percent'],
-        ],
-    ],
-    'customer_purchase_frequency' => [
-        'table' => false,
-        'chart' => false,
-        'kpis' => [
-            ['label' => 'Customers', 'key' => 'total_customers', 'format' => 'number'],
-            ['label' => 'Orders', 'key' => 'total_orders', 'format' => 'number'],
-            ['label' => 'Avg Orders', 'key' => 'avg_orders_per_customer', 'format' => 'number'],
-        ],
-    ],
-    'average_basket_size' => [
-        'table' => false,
-        'chart' => false,
-        'kpis' => [
-            ['label' => 'Orders', 'key' => 'total_orders', 'format' => 'number'],
-            ['label' => 'Items', 'key' => 'total_items', 'format' => 'number'],
-            ['label' => 'Avg Items', 'key' => 'avg_items_per_order', 'format' => 'number'],
-        ],
-    ],
-    'new_vs_returning_customers' => [
-        'table' => false,
-    ],
-    'top_customers' => [
-        'table' => false,
-    ],
-    'cash_sales' => [
-        'table' => false,
-    ],
-    'credit_sales' => [
-        'table' => false,
-    ],
-    'purchase_summary' => [
-        'table' => false,
-    ],
-    'purchase_cost' => [
-        'table' => false,
-    ],
-    'purchase_volume' => [
-        'table' => false,
-    ],
-    'purchases_by_supplier' => [
-        'table' => false,
-    ],
-    'sales_per_employee' => [
-        'table' => false,
-    ],
-    'order_status_mix' => [
-        'table' => false,
-    ],
-    'po_status_mix' => [
-        'table' => false,
-    ],
-    'inventory_transfers_summary' => [
-        'table' => false,
-    ],
-    'inter_branch_transfers' => [
-        'table' => false,
-    ],
-    'cash_positions' => [
-        'table' => false,
-    ],
-    'customer_wallet_activity' => [
-        'table' => false,
-    ],
-    'vendor_wallet_activity' => [
-        'table' => false,
-    ],
-];
-
-if (!isset($reports[$reportKey])) {
-    setAlert('danger', 'Report not found.');
+if ($requestedKey === '' || !isset($catalog[$requestedKey])) {
+    setAlert('warning', 'Report unavailable.');
     redirect('index.php');
 }
 
-$report = $reports[$reportKey];
-$reportFilters = $reportFilterMap[$reportKey] ?? ['date'];
-$reportView = array_merge(
-    ['table' => true, 'chart' => true, 'kpis' => []],
-    $reportViewMap[$reportKey] ?? []
-);
-$rows = $report['run']($conn, $filters);
-
-$reportKpis = [];
-if (!empty($reportView['kpis'])) {
-    $kpiSource = $rows[0] ?? [];
-    foreach ($reportView['kpis'] as $kpi) {
-        $value = $kpiSource[$kpi['key']] ?? 0;
-        $reportKpis[] = [
-            'label' => $kpi['label'],
-            'value' => formatMetricValue($value, $kpi['format']),
-        ];
-    }
+$reportMeta = $catalog[$requestedKey];
+$groupMeta = getAnalysisReportGroups()[$reportMeta['group']] ?? null;
+if (!$groupMeta || !hasPermission($groupMeta['permission'])) {
+    setAlert('danger', 'You do not have permission to view that report group.');
+    redirect('index.php');
 }
-
-$columns = [];
-foreach ($report['columns'] as $col) {
-    if (!empty($col['requires']) && $col['requires'] === 'prices' && !$canViewFinalPrices) {
-        $columns[] = [
-            'key' => $col['key'],
-            'label' => $col['label'],
-            'format' => $col['format'],
-            'hidden' => true
-        ];
-        continue;
-    }
-    if (!empty($col['requires']) && $col['requires'] === 'prices_final' && !$canViewFinalPrices) {
-        $columns[] = [
-            'key' => $col['key'],
-            'label' => $col['label'],
-            'format' => $col['format'],
-            'hidden' => true
-        ];
-        continue;
-    }
-    if (!empty($col['requires']) && $col['requires'] === 'prices_material' && !$canViewMaterialPrices) {
-        $columns[] = [
-            'key' => $col['key'],
-            'label' => $col['label'],
-            'format' => $col['format'],
-            'hidden' => true
-        ];
-        continue;
-    }
-    if (!empty($col['requires']) && $col['requires'] === 'prices_all' && !$canViewAllPrices) {
-        $columns[] = [
-            'key' => $col['key'],
-            'label' => $col['label'],
-            'format' => $col['format'],
-            'hidden' => true
-        ];
-        continue;
-    }
-    if (!empty($col['requires']) && $col['requires'] === 'costs' && !$canViewMaterialCosts) {
-        $columns[] = [
-            'key' => $col['key'],
-            'label' => $col['label'],
-            'format' => $col['format'],
-            'hidden' => true
-        ];
-        continue;
-    }
-    if (!empty($col['requires']) && $col['requires'] === 'costs_final' && !$canViewFinalCosts) {
-        $columns[] = [
-            'key' => $col['key'],
-            'label' => $col['label'],
-            'format' => $col['format'],
-            'hidden' => true
-        ];
-        continue;
-    }
-    if (!empty($col['requires']) && $col['requires'] === 'costs_material' && !$canViewMaterialCosts) {
-        $columns[] = [
-            'key' => $col['key'],
-            'label' => $col['label'],
-            'format' => $col['format'],
-            'hidden' => true
-        ];
-        continue;
-    }
-    if (!empty($col['requires']) && $col['requires'] === 'costs_all' && !$canViewAllCosts) {
-        $columns[] = [
-            'key' => $col['key'],
-            'label' => $col['label'],
-            'format' => $col['format'],
-            'hidden' => true
-        ];
-        continue;
-    }
-    $columns[] = $col;
-}
-
-$rowCount = count($rows);
-$chartConfig = [
-    'type' => 'bar',
-    'label_key' => '',
-    'value_key' => ''
+$reportFilters = $reportMeta['filters'];
+$hasDateFilter = in_array('date', $reportFilters, true);
+$filters = [
+    'date_from' => analysisNormalizeDate(array_key_exists('date_from', $_GET) ? $_GET['date_from'] : ($hasDateFilter ? date('Y-m-01', strtotime('-11 months')) : '')),
+    'date_to' => analysisNormalizeDate(array_key_exists('date_to', $_GET) ? $_GET['date_to'] : ($hasDateFilter ? date('Y-m-d') : '')),
+    'customer_id' => max(0, (int)($_GET['customer_id'] ?? 0)),
+    'vendor_id' => max(0, (int)($_GET['vendor_id'] ?? 0)),
+    'category_id' => max(0, (int)($_GET['category_id'] ?? 0)),
+    'inventory_id' => max(0, (int)($_GET['inventory_id'] ?? 0)),
 ];
-$chartMap = [
-    'sales_summary' => ['type' => 'line', 'label_key' => 'period', 'value_key' => 'total_sales'],
-    'gross_sales' => ['type' => 'line', 'label_key' => 'period', 'value_key' => 'gross_sales'],
-    'net_sales' => ['type' => 'line', 'label_key' => 'period', 'value_key' => 'net_sales'],
-    'sales_growth' => ['type' => 'line', 'label_key' => 'period', 'value_key' => 'growth_pct'],
-    'average_transaction_value' => ['type' => 'line', 'label_key' => 'period', 'value_key' => 'avg_value'],
-    'items_per_transaction' => ['type' => 'line', 'label_key' => 'period', 'value_key' => 'avg_items'],
-    'revenue_per_hour' => ['type' => 'bar', 'label_key' => 'hour', 'value_key' => 'total_sales'],
-    'sales_per_day' => ['type' => 'line', 'label_key' => 'day', 'value_key' => 'total_sales'],
-    'sales_by_product' => ['type' => 'bar', 'label_key' => 'product_name', 'value_key' => 'revenue'],
-    'top_customers' => ['type' => 'bar', 'label_key' => 'customer_name', 'value_key' => 'total_sales'],
-    'purchase_summary' => ['type' => 'line', 'label_key' => 'period', 'value_key' => 'total_amount'],
-    'returns_summary' => ['type' => 'bar', 'label_key' => 'product_name', 'value_key' => 'returned_qty'],
-    'quotation_pipeline' => ['type' => 'doughnut', 'label_key' => 'status', 'value_key' => 'total_amount'],
-    'payments_by_method' => ['type' => 'bar', 'label_key' => 'method', 'value_key' => 'total_amount'],
-    'inventory_valuation' => ['type' => 'bar', 'label_key' => 'inventory_name', 'value_key' => 'total_value'],
-    'product_margin' => ['type' => 'bar', 'label_key' => 'product_name', 'value_key' => 'margin'],
-    'ar_aging' => ['type' => 'bar', 'label_key' => 'customer_name', 'value_key' => 'total_balance'],
-    'ap_aging' => ['type' => 'bar', 'label_key' => 'vendor_name', 'value_key' => 'total_balance'],
-    'cashflow_summary' => ['type' => 'line', 'label_key' => 'period', 'value_key' => 'total_amount'],
-    'sales_by_category' => ['type' => 'bar', 'label_key' => 'category_name', 'value_key' => 'revenue'],
-    'sales_by_customer_type' => ['type' => 'doughnut', 'label_key' => 'customer_type', 'value_key' => 'total_sales'],
-    'order_status_mix' => ['type' => 'doughnut', 'label_key' => 'status', 'value_key' => 'count'],
-    'po_status_mix' => ['type' => 'doughnut', 'label_key' => 'status', 'value_key' => 'count'],
-    'inventory_transfers_summary' => ['type' => 'line', 'label_key' => 'period', 'value_key' => 'total_qty'],
-    'inter_branch_transfers' => ['type' => 'line', 'label_key' => 'period', 'value_key' => 'total_qty'],
-    'cash_positions' => ['type' => 'bar', 'label_key' => 'label', 'value_key' => 'balance'],
-    'customer_wallet_activity' => ['type' => 'bar', 'label_key' => 'type', 'value_key' => 'total_amount'],
-    'vendor_wallet_activity' => ['type' => 'bar', 'label_key' => 'type', 'value_key' => 'total_amount'],
-    'discount_rate' => ['type' => 'line', 'label_key' => 'period', 'value_key' => 'avg_discount_pct'],
-    'discount_impact' => ['type' => 'line', 'label_key' => 'period', 'value_key' => 'total_discount'],
-    'total_sales_today' => ['type' => 'bar', 'label_key' => 'day', 'value_key' => 'total_sales'],
-    'total_sales_this_month' => ['type' => 'line', 'label_key' => 'period', 'value_key' => 'total_sales'],
-    'top_products_overview' => ['type' => 'bar', 'label_key' => 'product_name', 'value_key' => 'revenue'],
-    'top_categories_overview' => ['type' => 'bar', 'label_key' => 'category_name', 'value_key' => 'revenue'],
-    'customer_lifetime_value' => ['type' => 'bar', 'label_key' => 'customer_name', 'value_key' => 'total_sales'],
-    'new_vs_returning_customers' => ['type' => 'doughnut', 'label_key' => 'segment', 'value_key' => 'total_sales'],
-    'cash_sales' => ['type' => 'line', 'label_key' => 'period', 'value_key' => 'total_amount'],
-    'credit_sales' => ['type' => 'line', 'label_key' => 'period', 'value_key' => 'credit_amount'],
-    'accounts_receivable' => ['type' => 'bar', 'label_key' => 'customer_name', 'value_key' => 'balance'],
-    'accounts_payable' => ['type' => 'bar', 'label_key' => 'vendor_name', 'value_key' => 'balance'],
-    'purchase_cost' => ['type' => 'line', 'label_key' => 'period', 'value_key' => 'total_cost'],
-    'purchase_volume' => ['type' => 'line', 'label_key' => 'period', 'value_key' => 'total_quantity'],
-    'purchases_by_supplier' => ['type' => 'bar', 'label_key' => 'vendor_name', 'value_key' => 'total_amount'],
-    'sales_per_employee' => ['type' => 'bar', 'label_key' => 'employee_name', 'value_key' => 'total_sales'],
+$dateRangeError = $filters['date_from'] !== ''
+    && $filters['date_to'] !== ''
+    && $filters['date_from'] > $filters['date_to'];
+
+$customerScope = getCustomerChannelScopeSql('c', 'f');
+$inventoryScope = getInventoryChannelScopeSql('i');
+
+$definitions = [
+    'sales_overview' => [
+        'columns' => [
+            ['key' => 'period', 'label' => 'Month', 'format' => 'text'],
+            ['key' => 'currency', 'label' => 'Currency', 'format' => 'text'],
+            ['key' => 'orders', 'label' => 'Orders', 'format' => 'number'],
+            ['key' => 'final_units', 'label' => 'Final Units', 'format' => 'quantity'],
+            ['key' => 'free_samples', 'label' => 'Free Samples', 'format' => 'quantity'],
+            ['key' => 'gross_line_value', 'label' => 'Gross Line Value', 'format' => 'currency', 'requires' => 'final_prices'],
+            ['key' => 'discounts', 'label' => 'Discounts', 'format' => 'currency', 'requires' => 'final_prices'],
+            ['key' => 'shipping', 'label' => 'Shipping', 'format' => 'currency', 'requires' => 'final_prices'],
+            ['key' => 'invoiced_sales', 'label' => 'Invoiced Sales', 'format' => 'currency', 'requires' => 'final_prices'],
+            ['key' => 'paid', 'label' => 'Paid', 'format' => 'currency', 'requires' => 'final_prices'],
+            ['key' => 'open_balance', 'label' => 'Open Balance', 'format' => 'currency', 'requires' => 'final_prices'],
+        ],
+        'summaries' => [
+            ['key' => 'orders', 'label' => 'Orders', 'format' => 'number'],
+            ['key' => 'final_units', 'label' => 'Final units', 'format' => 'quantity'],
+            ['key' => 'invoiced_sales', 'label' => 'Invoiced', 'format' => 'currency', 'currency_key' => 'currency', 'requires' => 'final_prices'],
+            ['key' => 'open_balance', 'label' => 'Open balance', 'format' => 'currency', 'currency_key' => 'currency', 'requires' => 'final_prices'],
+        ],
+        'chart' => ['label_key' => 'period', 'value_key' => 'orders', 'label' => 'Orders'],
+        'run' => function (mysqli $conn, array $filters) use ($customerScope): array {
+            $where = [$customerScope];
+            $types = '';
+            $params = [];
+            analysisAddDateFilters($where, $types, $params, 'o.order_date', $filters);
+            analysisAddIdFilter($where, $types, $params, 'o.customer_id', $filters['customer_id']);
+            $sql = "SELECT DATE_FORMAT(o.order_date, '%Y-%m') AS period,
+                           o.currency,
+                           COUNT(*) AS orders,
+                           SUM(COALESCE(items.final_units, 0)) AS final_units,
+                           SUM(COALESCE(items.free_samples, 0)) AS free_samples,
+                           SUM(COALESCE(items.gross_line_value, 0)) AS gross_line_value,
+                           SUM(o.discount_amount) AS discounts,
+                           SUM(o.shipping_cost) AS shipping,
+                           SUM(o.total_amount) AS invoiced_sales,
+                           SUM(o.paid_amount) AS paid,
+                           SUM(GREATEST(o.total_amount - o.paid_amount, 0)) AS open_balance
+                    FROM orders o
+                    JOIN customers c ON c.id = o.customer_id
+                    LEFT JOIN factories f ON f.id = c.factory_id
+                    LEFT JOIN (
+                        SELECT oi.order_id,
+                               SUM(CASE WHEN p.type = 'final' THEN oi.quantity ELSE 0 END) AS final_units,
+                               SUM(CASE WHEN p.type = 'final' AND oi.is_free_sample = 1 THEN oi.quantity ELSE 0 END) AS free_samples,
+                               SUM(CASE WHEN p.type = 'final' THEN oi.total_price ELSE 0 END) AS gross_line_value
+                        FROM order_items oi
+                        JOIN products p ON p.id = oi.product_id
+                        GROUP BY oi.order_id
+                    ) items ON items.order_id = o.id
+                    WHERE " . implode(' AND ', $where) . "
+                    GROUP BY DATE_FORMAT(o.order_date, '%Y-%m'), o.currency
+                    ORDER BY period DESC, o.currency";
+            return analysisRunQuery($conn, $sql, $types, $params);
+        },
+    ],
+    'final_product_sales' => [
+        'columns' => [
+            ['key' => 'customer_name', 'label' => 'Customer', 'format' => 'text', 'link' => ['path' => 'modules/customers/view.php', 'id_key' => 'customer_link_id']],
+            ['key' => 'product_name', 'label' => 'Final Product', 'format' => 'text', 'link' => ['path' => 'modules/products/view.php', 'id_key' => 'product_link_id']],
+            ['key' => 'category_name', 'label' => 'Category', 'format' => 'text'],
+            ['key' => 'currency', 'label' => 'Currency', 'format' => 'text'],
+            ['key' => 'orders', 'label' => 'Orders', 'format' => 'number'],
+            ['key' => 'sold_qty', 'label' => 'Sold Qty', 'format' => 'quantity'],
+            ['key' => 'sample_qty', 'label' => 'Sample Qty', 'format' => 'quantity'],
+            ['key' => 'line_value', 'label' => 'Line Value', 'format' => 'currency', 'requires' => 'final_prices'],
+        ],
+        'summaries' => [
+            ['key' => 'orders', 'label' => 'Product-order links', 'format' => 'number'],
+            ['key' => 'sold_qty', 'label' => 'Sold quantity', 'format' => 'quantity'],
+            ['key' => 'line_value', 'label' => 'Line value', 'format' => 'currency', 'currency_key' => 'currency', 'requires' => 'final_prices'],
+        ],
+        'chart' => ['label_key' => 'product_name', 'value_key' => 'sold_qty', 'label' => 'Sold quantity'],
+        'run' => function (mysqli $conn, array $filters) use ($customerScope): array {
+            $where = ["p.type = 'final'", 'o.customer_id = p.customer_id', $customerScope];
+            $types = '';
+            $params = [];
+            analysisAddDateFilters($where, $types, $params, 'o.order_date', $filters);
+            analysisAddIdFilter($where, $types, $params, 'p.customer_id', $filters['customer_id']);
+            analysisAddIdFilter($where, $types, $params, 'p.category_id', $filters['category_id']);
+            $sql = "SELECT c.id AS customer_link_id,
+                           p.id AS product_link_id,
+                           c.name AS customer_name,
+                           p.name AS product_name,
+                           COALESCE(cat.name, 'Uncategorised') AS category_name,
+                           o.currency,
+                           COUNT(DISTINCT o.id) AS orders,
+                           SUM(CASE WHEN oi.is_free_sample = 0 THEN oi.quantity ELSE 0 END) AS sold_qty,
+                           SUM(CASE WHEN oi.is_free_sample = 1 THEN oi.quantity ELSE 0 END) AS sample_qty,
+                           SUM(oi.total_price) AS line_value
+                    FROM order_items oi
+                    JOIN orders o ON o.id = oi.order_id
+                    JOIN products p ON p.id = oi.product_id
+                    JOIN customers c ON c.id = p.customer_id
+                    LEFT JOIN factories f ON f.id = c.factory_id
+                    LEFT JOIN categories cat ON cat.id = p.category_id
+                    WHERE " . implode(' AND ', $where) . "
+                    GROUP BY p.id, c.id, cat.id, o.currency
+                    ORDER BY sold_qty DESC, p.name";
+            return analysisRunQuery($conn, $sql, $types, $params);
+        },
+    ],
+    'customer_sales' => [
+        'columns' => [
+            ['key' => 'customer_name', 'label' => 'Customer', 'format' => 'text', 'link' => ['path' => 'modules/customers/view.php', 'id_key' => 'customer_link_id']],
+            ['key' => 'currency', 'label' => 'Currency', 'format' => 'text'],
+            ['key' => 'orders', 'label' => 'Orders', 'format' => 'number'],
+            ['key' => 'latest_order', 'label' => 'Latest Order', 'format' => 'date'],
+            ['key' => 'invoiced_sales', 'label' => 'Invoiced Sales', 'format' => 'currency', 'requires' => 'final_prices'],
+            ['key' => 'paid', 'label' => 'Paid', 'format' => 'currency', 'requires' => 'final_prices'],
+            ['key' => 'open_balance', 'label' => 'Open Balance', 'format' => 'currency', 'requires' => 'final_prices'],
+        ],
+        'summaries' => [
+            ['key' => 'orders', 'label' => 'Orders', 'format' => 'number'],
+            ['key' => 'invoiced_sales', 'label' => 'Invoiced', 'format' => 'currency', 'currency_key' => 'currency', 'requires' => 'final_prices'],
+            ['key' => 'open_balance', 'label' => 'Open balance', 'format' => 'currency', 'currency_key' => 'currency', 'requires' => 'final_prices'],
+        ],
+        'chart' => ['label_key' => 'customer_name', 'value_key' => 'orders', 'label' => 'Orders'],
+        'run' => function (mysqli $conn, array $filters) use ($customerScope): array {
+            $where = [$customerScope];
+            $types = '';
+            $params = [];
+            analysisAddDateFilters($where, $types, $params, 'o.order_date', $filters);
+            analysisAddIdFilter($where, $types, $params, 'o.customer_id', $filters['customer_id']);
+            $sql = "SELECT c.id AS customer_link_id,
+                           c.name AS customer_name,
+                           o.currency,
+                           COUNT(*) AS orders,
+                           MAX(o.order_date) AS latest_order,
+                           SUM(o.total_amount) AS invoiced_sales,
+                           SUM(o.paid_amount) AS paid,
+                           SUM(GREATEST(o.total_amount - o.paid_amount, 0)) AS open_balance
+                    FROM orders o
+                    JOIN customers c ON c.id = o.customer_id
+                    LEFT JOIN factories f ON f.id = c.factory_id
+                    WHERE " . implode(' AND ', $where) . "
+                    GROUP BY c.id, o.currency
+                    ORDER BY invoiced_sales DESC, c.name";
+            return analysisRunQuery($conn, $sql, $types, $params);
+        },
+    ],
+    'open_receivables' => [
+        'columns' => [
+            ['key' => 'customer_name', 'label' => 'Customer', 'format' => 'text', 'link' => ['path' => 'modules/customers/view.php', 'id_key' => 'customer_link_id']],
+            ['key' => 'currency', 'label' => 'Currency', 'format' => 'text'],
+            ['key' => 'open_orders', 'label' => 'Open Orders', 'format' => 'number'],
+            ['key' => 'oldest_open_order', 'label' => 'Oldest Open Order', 'format' => 'date'],
+            ['key' => 'invoiced', 'label' => 'Invoiced', 'format' => 'currency', 'requires' => 'final_prices'],
+            ['key' => 'paid', 'label' => 'Paid', 'format' => 'currency', 'requires' => 'final_prices'],
+            ['key' => 'open_balance', 'label' => 'Open Balance', 'format' => 'currency', 'requires' => 'final_prices'],
+        ],
+        'summaries' => [
+            ['key' => 'open_orders', 'label' => 'Open orders', 'format' => 'number'],
+            ['key' => 'open_balance', 'label' => 'Receivable', 'format' => 'currency', 'currency_key' => 'currency', 'requires' => 'final_prices'],
+        ],
+        'run' => function (mysqli $conn, array $filters) use ($customerScope): array {
+            $where = [$customerScope, 'o.total_amount > o.paid_amount'];
+            $types = '';
+            $params = [];
+            analysisAddIdFilter($where, $types, $params, 'o.customer_id', $filters['customer_id']);
+            $sql = "SELECT c.id AS customer_link_id,
+                           c.name AS customer_name,
+                           o.currency,
+                           COUNT(*) AS open_orders,
+                           MIN(o.order_date) AS oldest_open_order,
+                           SUM(o.total_amount) AS invoiced,
+                           SUM(o.paid_amount) AS paid,
+                           SUM(o.total_amount - o.paid_amount) AS open_balance
+                    FROM orders o
+                    JOIN customers c ON c.id = o.customer_id
+                    LEFT JOIN factories f ON f.id = c.factory_id
+                    WHERE " . implode(' AND ', $where) . "
+                    GROUP BY c.id, o.currency
+                    ORDER BY open_balance DESC, c.name";
+            return analysisRunQuery($conn, $sql, $types, $params);
+        },
+    ],
+    'returns_by_product' => [
+        'columns' => [
+            ['key' => 'customer_name', 'label' => 'Customer', 'format' => 'text', 'link' => ['path' => 'modules/customers/view.php', 'id_key' => 'customer_link_id']],
+            ['key' => 'product_name', 'label' => 'Final Product', 'format' => 'text', 'link' => ['path' => 'modules/products/view.php', 'id_key' => 'product_link_id']],
+            ['key' => 'currency', 'label' => 'Currency', 'format' => 'text'],
+            ['key' => 'return_events', 'label' => 'Return Events', 'format' => 'number'],
+            ['key' => 'returned_qty', 'label' => 'Returned Qty', 'format' => 'quantity'],
+            ['key' => 'return_value', 'label' => 'Recorded Value', 'format' => 'currency', 'requires' => 'final_prices'],
+            ['key' => 'latest_return', 'label' => 'Latest Return', 'format' => 'date'],
+        ],
+        'summaries' => [
+            ['key' => 'return_events', 'label' => 'Return events', 'format' => 'number'],
+            ['key' => 'returned_qty', 'label' => 'Returned quantity', 'format' => 'quantity'],
+            ['key' => 'return_value', 'label' => 'Recorded value', 'format' => 'currency', 'currency_key' => 'currency', 'requires' => 'final_prices'],
+        ],
+        'chart' => ['label_key' => 'product_name', 'value_key' => 'returned_qty', 'label' => 'Returned quantity'],
+        'run' => function (mysqli $conn, array $filters) use ($customerScope): array {
+            $where = ["p.type = 'final'", 'o.customer_id = p.customer_id', $customerScope];
+            $types = '';
+            $params = [];
+            analysisAddDateFilters($where, $types, $params, 'DATE(r.created_at)', $filters);
+            analysisAddIdFilter($where, $types, $params, 'o.customer_id', $filters['customer_id']);
+            analysisAddIdFilter($where, $types, $params, 'p.category_id', $filters['category_id']);
+            $sql = "SELECT c.id AS customer_link_id,
+                           p.id AS product_link_id,
+                           c.name AS customer_name,
+                           p.name AS product_name,
+                           o.currency,
+                           COUNT(DISTINCT r.id) AS return_events,
+                           SUM(r.returned_quantity) AS returned_qty,
+                           SUM(r.returned_quantity * oi.unit_price) AS return_value,
+                           MAX(DATE(r.created_at)) AS latest_return
+                    FROM order_returns r
+                    JOIN orders o ON o.id = r.order_id
+                    JOIN order_items oi ON oi.id = r.order_item_id
+                    JOIN products p ON p.id = r.product_id
+                    JOIN customers c ON c.id = o.customer_id
+                    LEFT JOIN factories f ON f.id = c.factory_id
+                    WHERE " . implode(' AND ', $where) . "
+                    GROUP BY c.id, p.id, o.currency
+                    ORDER BY returned_qty DESC, p.name";
+            return analysisRunQuery($conn, $sql, $types, $params);
+        },
+    ],
+    'final_product_stock' => [
+        'columns' => [
+            ['key' => 'customer_name', 'label' => 'Customer', 'format' => 'text', 'link' => ['path' => 'modules/customers/view.php', 'id_key' => 'customer_link_id']],
+            ['key' => 'product_name', 'label' => 'Final Product', 'format' => 'text', 'link' => ['path' => 'modules/products/view.php', 'id_key' => 'product_link_id']],
+            ['key' => 'category_name', 'label' => 'Category', 'format' => 'text'],
+            ['key' => 'inventory_name', 'label' => 'Inventory', 'format' => 'text', 'link' => ['path' => 'modules/inventories/view.php', 'id_key' => 'inventory_link_id']],
+            ['key' => 'quantity', 'label' => 'Quantity', 'format' => 'quantity'],
+            ['key' => 'unit', 'label' => 'Unit', 'format' => 'text'],
+        ],
+        'run' => function (mysqli $conn, array $filters) use ($customerScope, $inventoryScope): array {
+            $where = ["p.type = 'final'", $customerScope, $inventoryScope];
+            $types = '';
+            $params = [];
+            analysisAddIdFilter($where, $types, $params, 'p.customer_id', $filters['customer_id']);
+            analysisAddIdFilter($where, $types, $params, 'p.category_id', $filters['category_id']);
+            analysisAddIdFilter($where, $types, $params, 'i.id', $filters['inventory_id']);
+            $sql = "SELECT c.id AS customer_link_id,
+                           p.id AS product_link_id,
+                           i.id AS inventory_link_id,
+                           c.name AS customer_name,
+                           p.name AS product_name,
+                           COALESCE(cat.name, 'Uncategorised') AS category_name,
+                           i.name AS inventory_name,
+                           ip.quantity,
+                           COALESCE(NULLIF(p.unit, ''), 'each') AS unit
+                    FROM inventory_products ip
+                    JOIN inventories i ON i.id = ip.inventory_id
+                    JOIN products p ON p.id = ip.product_id
+                    JOIN customers c ON c.id = p.customer_id
+                    LEFT JOIN factories f ON f.id = c.factory_id
+                    LEFT JOIN categories cat ON cat.id = p.category_id
+                    WHERE " . implode(' AND ', $where) . "
+                    ORDER BY c.name, p.name, i.name";
+            return analysisRunQuery($conn, $sql, $types, $params);
+        },
+    ],
+    'raw_material_stock' => [
+        'columns' => [
+            ['key' => 'material_name', 'label' => 'Raw Material', 'format' => 'text', 'link' => ['path' => 'modules/products/view.php', 'id_key' => 'product_link_id']],
+            ['key' => 'category_name', 'label' => 'Category', 'format' => 'text'],
+            ['key' => 'inventory_name', 'label' => 'Inventory', 'format' => 'text', 'link' => ['path' => 'modules/inventories/view.php', 'id_key' => 'inventory_link_id']],
+            ['key' => 'quantity', 'label' => 'Quantity', 'format' => 'quantity'],
+            ['key' => 'unit', 'label' => 'Unit', 'format' => 'text'],
+        ],
+        'run' => function (mysqli $conn, array $filters) use ($inventoryScope): array {
+            $where = ["p.type = 'material'", $inventoryScope];
+            $types = '';
+            $params = [];
+            analysisAddIdFilter($where, $types, $params, 'p.category_id', $filters['category_id']);
+            analysisAddIdFilter($where, $types, $params, 'i.id', $filters['inventory_id']);
+            $sql = "SELECT p.id AS product_link_id,
+                           i.id AS inventory_link_id,
+                           p.name AS material_name,
+                           COALESCE(cat.name, 'Uncategorised') AS category_name,
+                           i.name AS inventory_name,
+                           ip.quantity,
+                           COALESCE(NULLIF(p.unit, ''), 'unit') AS unit
+                    FROM inventory_products ip
+                    JOIN inventories i ON i.id = ip.inventory_id
+                    JOIN products p ON p.id = ip.product_id
+                    LEFT JOIN categories cat ON cat.id = p.category_id
+                    WHERE " . implode(' AND ', $where) . "
+                    ORDER BY p.name, i.name";
+            return analysisRunQuery($conn, $sql, $types, $params);
+        },
+    ],
+    'stock_alerts' => [
+        'columns' => [
+            ['key' => 'product_type', 'label' => 'Stock Type', 'format' => 'text'],
+            ['key' => 'customer_name', 'label' => 'Customer', 'format' => 'text', 'link' => ['path' => 'modules/customers/view.php', 'id_key' => 'customer_link_id']],
+            ['key' => 'product_name', 'label' => 'Product / Material', 'format' => 'text', 'link' => ['path' => 'modules/products/view.php', 'id_key' => 'product_link_id']],
+            ['key' => 'total_stock', 'label' => 'Current Stock', 'format' => 'quantity'],
+            ['key' => 'min_stock_level', 'label' => 'Minimum', 'format' => 'quantity'],
+            ['key' => 'shortage', 'label' => 'Shortage', 'format' => 'quantity'],
+            ['key' => 'unit', 'label' => 'Unit', 'format' => 'text'],
+        ],
+        'summaries' => [
+            ['key' => '__row_count', 'label' => 'Products needing attention', 'format' => 'number'],
+        ],
+        'run' => function (mysqli $conn, array $filters) use ($customerScope, $inventoryScope): array {
+            $where = [
+                "p.type IN ('final', 'material')",
+                'p.min_stock_level > 0',
+                "(p.type = 'material' OR (p.type = 'final' AND $customerScope))",
+            ];
+            $stockWhere = [$inventoryScope];
+            $types = '';
+            $params = [];
+            analysisAddIdFilter($stockWhere, $types, $params, 'i.id', $filters['inventory_id']);
+            $sql = "SELECT p.id AS product_link_id,
+                           c.id AS customer_link_id,
+                           CASE WHEN p.type = 'final' THEN 'Final product' ELSE 'Raw material' END AS product_type,
+                           CASE WHEN p.type = 'final' THEN c.name ELSE NULL END AS customer_name,
+                           p.name AS product_name,
+                           COALESCE(stock.total_stock, 0) AS total_stock,
+                           p.min_stock_level,
+                           GREATEST(p.min_stock_level - COALESCE(stock.total_stock, 0), 0) AS shortage,
+                           COALESCE(NULLIF(p.unit, ''), 'unit') AS unit
+                    FROM products p
+                    LEFT JOIN customers c ON c.id = p.customer_id
+                    LEFT JOIN factories f ON f.id = c.factory_id
+                    LEFT JOIN (
+                        SELECT ip.product_id, SUM(ip.quantity) AS total_stock
+                        FROM inventory_products ip
+                        JOIN inventories i ON i.id = ip.inventory_id
+                        WHERE " . implode(' AND ', $stockWhere) . "
+                        GROUP BY ip.product_id
+                    ) stock ON stock.product_id = p.id
+                    WHERE " . implode(' AND ', $where) . "
+                      AND COALESCE(stock.total_stock, 0) <= p.min_stock_level
+                    ORDER BY shortage DESC, p.name";
+            return analysisRunQuery($conn, $sql, $types, $params);
+        },
+    ],
+    'purchase_overview' => [
+        'columns' => [
+            ['key' => 'period', 'label' => 'Month', 'format' => 'text'],
+            ['key' => 'purchase_orders', 'label' => 'POs', 'format' => 'number'],
+            ['key' => 'material_lines', 'label' => 'Material Lines', 'format' => 'number'],
+            ['key' => 'received_lines', 'label' => 'Fully Received Lines', 'format' => 'number'],
+            ['key' => 'receipt_rate', 'label' => 'Receipt Rate', 'format' => 'percent'],
+            ['key' => 'total_amount', 'label' => 'PO Value', 'format' => 'money', 'requires' => 'purchase_prices'],
+            ['key' => 'paid_amount', 'label' => 'Paid', 'format' => 'money', 'requires' => 'purchase_prices'],
+            ['key' => 'open_balance', 'label' => 'Open Balance', 'format' => 'money', 'requires' => 'purchase_prices'],
+        ],
+        'summaries' => [
+            ['key' => 'purchase_orders', 'label' => 'Purchase orders', 'format' => 'number'],
+            ['key' => 'material_lines', 'label' => 'Material lines', 'format' => 'number'],
+            ['key' => 'total_amount', 'label' => 'PO value', 'format' => 'money', 'requires' => 'purchase_prices'],
+            ['key' => 'open_balance', 'label' => 'Open balance', 'format' => 'money', 'requires' => 'purchase_prices'],
+        ],
+        'chart' => ['label_key' => 'period', 'value_key' => 'purchase_orders', 'label' => 'Purchase orders'],
+        'run' => function (mysqli $conn, array $filters): array {
+            $where = ["po.status <> 'cancelled'"];
+            $types = '';
+            $params = [];
+            analysisAddDateFilters($where, $types, $params, 'po.order_date', $filters);
+            analysisAddIdFilter($where, $types, $params, 'po.vendor_id', $filters['vendor_id']);
+            $sql = "SELECT DATE_FORMAT(po.order_date, '%Y-%m') AS period,
+                           COUNT(*) AS purchase_orders,
+                           SUM(items.material_lines) AS material_lines,
+                           SUM(items.received_lines) AS received_lines,
+                           CASE WHEN SUM(items.material_lines) > 0
+                                THEN SUM(items.received_lines) * 100 / SUM(items.material_lines)
+                                ELSE 0 END AS receipt_rate,
+                           SUM(po.total_amount) AS total_amount,
+                           SUM(po.paid_amount) AS paid_amount,
+                           SUM(GREATEST(po.total_amount - po.paid_amount, 0)) AS open_balance
+                    FROM purchase_orders po
+                    JOIN (
+                        SELECT poi.purchase_order_id,
+                               COUNT(*) AS material_lines,
+                               SUM(CASE WHEN poi.received_quantity >= poi.quantity THEN 1 ELSE 0 END) AS received_lines
+                        FROM purchase_order_items poi
+                        JOIN products p ON p.id = poi.product_id AND p.type = 'material'
+                        GROUP BY poi.purchase_order_id
+                    ) items ON items.purchase_order_id = po.id
+                    WHERE " . implode(' AND ', $where) . "
+                    GROUP BY DATE_FORMAT(po.order_date, '%Y-%m')
+                    ORDER BY period DESC";
+            return analysisRunQuery($conn, $sql, $types, $params);
+        },
+    ],
+    'material_purchases' => [
+        'columns' => [
+            ['key' => 'vendor_name', 'label' => 'Vendor', 'format' => 'text', 'link' => ['path' => 'modules/vendors/view.php', 'id_key' => 'vendor_link_id']],
+            ['key' => 'material_name', 'label' => 'Raw Material', 'format' => 'text', 'link' => ['path' => 'modules/products/view.php', 'id_key' => 'product_link_id']],
+            ['key' => 'category_name', 'label' => 'Category', 'format' => 'text'],
+            ['key' => 'purchase_orders', 'label' => 'POs', 'format' => 'number'],
+            ['key' => 'ordered_qty', 'label' => 'Ordered Qty', 'format' => 'quantity'],
+            ['key' => 'received_qty', 'label' => 'Received Qty', 'format' => 'quantity'],
+            ['key' => 'unit', 'label' => 'Unit', 'format' => 'text'],
+            ['key' => 'total_value', 'label' => 'Total Value', 'format' => 'money', 'requires' => 'purchase_prices'],
+        ],
+        'summaries' => [
+            ['key' => 'purchase_orders', 'label' => 'Material-order links', 'format' => 'number'],
+            ['key' => 'total_value', 'label' => 'Purchase value', 'format' => 'money', 'requires' => 'purchase_prices'],
+        ],
+        'chart' => ['label_key' => 'material_name', 'value_key' => 'ordered_qty', 'label' => 'Ordered quantity'],
+        'run' => function (mysqli $conn, array $filters): array {
+            $where = ["p.type = 'material'", "po.status <> 'cancelled'"];
+            $types = '';
+            $params = [];
+            analysisAddDateFilters($where, $types, $params, 'po.order_date', $filters);
+            analysisAddIdFilter($where, $types, $params, 'po.vendor_id', $filters['vendor_id']);
+            analysisAddIdFilter($where, $types, $params, 'p.category_id', $filters['category_id']);
+            $sql = "SELECT v.id AS vendor_link_id,
+                           p.id AS product_link_id,
+                           v.name AS vendor_name,
+                           p.name AS material_name,
+                           COALESCE(cat.name, 'Uncategorised') AS category_name,
+                           COUNT(DISTINCT po.id) AS purchase_orders,
+                           SUM(poi.quantity) AS ordered_qty,
+                           SUM(poi.received_quantity) AS received_qty,
+                           COALESCE(NULLIF(p.unit, ''), 'unit') AS unit,
+                           SUM(poi.total_price) AS total_value
+                    FROM purchase_order_items poi
+                    JOIN purchase_orders po ON po.id = poi.purchase_order_id
+                    JOIN vendors v ON v.id = po.vendor_id
+                    JOIN products p ON p.id = poi.product_id
+                    LEFT JOIN categories cat ON cat.id = p.category_id
+                    WHERE " . implode(' AND ', $where) . "
+                    GROUP BY v.id, p.id, cat.id
+                    ORDER BY total_value DESC, v.name, p.name";
+            return analysisRunQuery($conn, $sql, $types, $params);
+        },
+    ],
+    'open_purchase_orders' => [
+        'columns' => [
+            ['key' => 'vendor_name', 'label' => 'Vendor', 'format' => 'text', 'link' => ['path' => 'modules/vendors/view.php', 'id_key' => 'vendor_link_id']],
+            ['key' => 'order_date', 'label' => 'Order Date', 'format' => 'date'],
+            ['key' => 'status', 'label' => 'Status', 'format' => 'status'],
+            ['key' => 'material_lines', 'label' => 'Material Lines', 'format' => 'number'],
+            ['key' => 'received_lines', 'label' => 'Fully Received', 'format' => 'number'],
+            ['key' => 'total_amount', 'label' => 'PO Value', 'format' => 'money', 'requires' => 'purchase_prices'],
+            ['key' => 'open_balance', 'label' => 'Open Balance', 'format' => 'money', 'requires' => 'purchase_prices'],
+            ['key' => 'details_label', 'label' => '', 'format' => 'text', 'link' => ['path' => 'modules/purchases/po_details.php', 'id_key' => 'purchase_order_link_id']],
+        ],
+        'summaries' => [
+            ['key' => '__row_count', 'label' => 'Open purchase orders', 'format' => 'number'],
+            ['key' => 'open_balance', 'label' => 'Open balance', 'format' => 'money', 'requires' => 'purchase_prices'],
+        ],
+        'run' => function (mysqli $conn, array $filters): array {
+            $where = ["po.status IN ('new', 'ordered', 'partially-received')"];
+            $types = '';
+            $params = [];
+            analysisAddIdFilter($where, $types, $params, 'po.vendor_id', $filters['vendor_id']);
+            $sql = "SELECT po.id AS purchase_order_link_id,
+                           v.id AS vendor_link_id,
+                           v.name AS vendor_name,
+                           'View' AS details_label,
+                           po.order_date,
+                           po.status,
+                           items.material_lines,
+                           items.received_lines,
+                           po.total_amount,
+                           GREATEST(po.total_amount - po.paid_amount, 0) AS open_balance
+                    FROM purchase_orders po
+                    JOIN vendors v ON v.id = po.vendor_id
+                    JOIN (
+                        SELECT poi.purchase_order_id,
+                               COUNT(*) AS material_lines,
+                               SUM(CASE WHEN poi.received_quantity >= poi.quantity THEN 1 ELSE 0 END) AS received_lines
+                        FROM purchase_order_items poi
+                        JOIN products p ON p.id = poi.product_id AND p.type = 'material'
+                        GROUP BY poi.purchase_order_id
+                    ) items ON items.purchase_order_id = po.id
+                    WHERE " . implode(' AND ', $where) . "
+                    ORDER BY po.order_date ASC, po.id";
+            return analysisRunQuery($conn, $sql, $types, $params);
+        },
+    ],
+    'vendor_payables' => [
+        'columns' => [
+            ['key' => 'vendor_name', 'label' => 'Vendor', 'format' => 'text', 'link' => ['path' => 'modules/vendors/view.php', 'id_key' => 'vendor_link_id']],
+            ['key' => 'open_orders', 'label' => 'Unpaid POs', 'format' => 'number'],
+            ['key' => 'oldest_open_order', 'label' => 'Oldest Open PO', 'format' => 'date'],
+            ['key' => 'po_value', 'label' => 'PO Value', 'format' => 'money', 'requires' => 'purchase_prices'],
+            ['key' => 'paid', 'label' => 'Paid', 'format' => 'money', 'requires' => 'purchase_prices'],
+            ['key' => 'open_balance', 'label' => 'Open Balance', 'format' => 'money', 'requires' => 'purchase_prices'],
+        ],
+        'summaries' => [
+            ['key' => 'open_orders', 'label' => 'Unpaid POs', 'format' => 'number'],
+            ['key' => 'open_balance', 'label' => 'Vendor payable', 'format' => 'money', 'requires' => 'purchase_prices'],
+        ],
+        'run' => function (mysqli $conn, array $filters): array {
+            $where = ["po.status <> 'cancelled'", 'po.total_amount > po.paid_amount'];
+            $types = '';
+            $params = [];
+            analysisAddIdFilter($where, $types, $params, 'po.vendor_id', $filters['vendor_id']);
+            $sql = "SELECT v.id AS vendor_link_id,
+                           v.name AS vendor_name,
+                           COUNT(*) AS open_orders,
+                           MIN(po.order_date) AS oldest_open_order,
+                           SUM(po.total_amount) AS po_value,
+                           SUM(po.paid_amount) AS paid,
+                           SUM(po.total_amount - po.paid_amount) AS open_balance
+                    FROM purchase_orders po
+                    JOIN vendors v ON v.id = po.vendor_id
+                    WHERE " . implode(' AND ', $where) . "
+                    GROUP BY v.id
+                    ORDER BY open_balance DESC, v.name";
+            return analysisRunQuery($conn, $sql, $types, $params);
+        },
+    ],
+    'payments_by_method' => [
+        'columns' => [
+            ['key' => 'period', 'label' => 'Month', 'format' => 'text'],
+            ['key' => 'direction', 'label' => 'Direction', 'format' => 'text'],
+            ['key' => 'method', 'label' => 'Method', 'format' => 'text'],
+            ['key' => 'currency', 'label' => 'Currency', 'format' => 'text'],
+            ['key' => 'transactions', 'label' => 'Transactions', 'format' => 'number'],
+            ['key' => 'total_amount', 'label' => 'Amount', 'format' => 'currency'],
+        ],
+        'summaries' => [
+            ['key' => 'transactions', 'label' => 'Payment transactions', 'format' => 'number'],
+            ['key' => 'total_amount', 'label' => 'Recorded amount', 'format' => 'currency', 'currency_key' => 'currency'],
+        ],
+        'run' => function (mysqli $conn, array $filters) use ($customerScope): array {
+            $salesWhere = [$customerScope];
+            $salesTypes = '';
+            $salesParams = [];
+            analysisAddDateFilters($salesWhere, $salesTypes, $salesParams, 'DATE(op.created_at)', $filters);
+
+            $purchaseWhere = [];
+            $purchaseTypes = '';
+            $purchaseParams = [];
+            analysisAddDateFilters($purchaseWhere, $purchaseTypes, $purchaseParams, 'DATE(pop.created_at)', $filters);
+
+            $sql = "SELECT DATE_FORMAT(op.created_at, '%Y-%m') AS period,
+                           'Customer receipt' AS direction,
+                           op.payment_method AS method,
+                           o.currency,
+                           COUNT(*) AS transactions,
+                           SUM(op.amount) AS total_amount
+                    FROM order_payments op
+                    JOIN orders o ON o.id = op.order_id
+                    JOIN customers c ON c.id = o.customer_id
+                    LEFT JOIN factories f ON f.id = c.factory_id
+                    WHERE " . implode(' AND ', $salesWhere) . "
+                    GROUP BY DATE_FORMAT(op.created_at, '%Y-%m'), op.payment_method, o.currency
+                    UNION ALL
+                    SELECT DATE_FORMAT(pop.created_at, '%Y-%m') AS period,
+                           'Vendor payment' AS direction,
+                           pop.payment_method AS method,
+                           'EGP' AS currency,
+                           COUNT(*) AS transactions,
+                           SUM(pop.amount) AS total_amount
+                    FROM purchase_order_payments pop";
+            if ($purchaseWhere) {
+                $sql .= ' WHERE ' . implode(' AND ', $purchaseWhere);
+            }
+            $sql .= " GROUP BY DATE_FORMAT(pop.created_at, '%Y-%m'), pop.payment_method
+                      ORDER BY period DESC, direction, method";
+            return analysisRunQuery(
+                $conn,
+                $sql,
+                $salesTypes . $purchaseTypes,
+                array_merge($salesParams, $purchaseParams)
+            );
+        },
+    ],
+    'cash_positions' => [
+        'columns' => [
+            ['key' => 'source_type', 'label' => 'Account Type', 'format' => 'text'],
+            ['key' => 'account_name', 'label' => 'Account', 'format' => 'text'],
+            ['key' => 'balance', 'label' => 'Current Balance', 'format' => 'money'],
+        ],
+        'run' => function (mysqli $conn): array {
+            $supportsAccountScope = analysisTableHasColumn($conn, 'safes', 'account_id')
+                && analysisTableHasColumn($conn, 'bank_accounts', 'account_id');
+            $scope = hasPermission('finance.expenses.all_accounts') || !$supportsAccountScope
+                ? '1=1'
+                : getAccountScopeSql();
+            $rows = [];
+            foreach ([
+                "SELECT 'Safe' AS source_type, name AS account_name, balance FROM safes WHERE $scope",
+                "SELECT 'Bank' AS source_type, bank_name AS account_name, balance FROM bank_accounts WHERE $scope",
+                "SELECT 'Personal' AS source_type, name AS account_name, personal_balance AS balance FROM users WHERE is_active = 1",
+            ] as $sql) {
+                $result = $conn->query($sql);
+                if (!$result) {
+                    throw new RuntimeException('Could not load current account balances.');
+                }
+                $rows = array_merge($rows, $result->fetch_all(MYSQLI_ASSOC));
+            }
+            usort($rows, static fn(array $a, array $b): int => (float)$b['balance'] <=> (float)$a['balance']);
+            return $rows;
+        },
+    ],
 ];
-if (isset($chartMap[$reportKey])) {
-    $chartConfig = $chartMap[$reportKey];
-}
-$aggregateKey = null;
-$aggregateLabel = null;
-$aggregateValue = 0;
-$aggregateCandidates = ['total_sales','revenue','total_amount','paid','balance','wallet_balance','quantity','returned_qty','avg_price'];
-foreach ($aggregateCandidates as $candidate) {
-    foreach ($columns as $col) {
-        if ($col['key'] === $candidate && empty($col['hidden'])) {
-            $aggregateKey = $candidate;
-            $aggregateLabel = $col['label'];
-            break 2;
-        }
-    }
-}
-if ($aggregateKey !== null) {
-    foreach ($rows as $row) {
-        $aggregateValue += (float)($row[$aggregateKey] ?? 0);
+
+$report = array_merge($reportMeta, $definitions[$requestedKey]);
+$queryError = '';
+$rows = [];
+if (!$dateRangeError) {
+    try {
+        $rows = $report['run']($conn, $filters);
+    } catch (Throwable $exception) {
+        error_log('Analysis report failed [' . $requestedKey . ']: ' . $exception->getMessage());
+        $queryError = 'The report could not be loaded. Please try again or contact an administrator.';
     }
 }
 
-$format = $_GET['format'] ?? '';
+$visibleColumns = array_values(array_filter(
+    $report['columns'],
+    static fn(array $column): bool => analysisRequirementAllowed($column['requires'] ?? null)
+));
+
+$format = (string)($_GET['format'] ?? '');
+if (in_array($format, ['csv', 'pdf'], true) && ($dateRangeError || $queryError !== '')) {
+    setAlert('danger', $dateRangeError ? 'The start date must be before the end date.' : $queryError);
+    redirect('report.php?key=' . urlencode($requestedKey));
+}
+
 if ($format === 'csv') {
-    header('Content-Type: text/csv');
-    header('Content-Disposition: attachment; filename="analysis_' . $reportKey . '.csv"');
-    $out = fopen('php://output', 'w');
-    $header = [];
-    foreach ($columns as $col) {
-        $header[] = $col['label'];
-    }
-    fputcsv($out, $header);
+    header('Content-Type: text/csv; charset=UTF-8');
+    header('Content-Disposition: attachment; filename="analysis_' . $requestedKey . '_' . date('Y-m-d') . '.csv"');
+    $output = fopen('php://output', 'w');
+    fwrite($output, "\xEF\xBB\xBF");
+    fputcsv($output, array_column($visibleColumns, 'label'));
     foreach ($rows as $row) {
         $line = [];
-        foreach ($columns as $col) {
-            $value = $row[$col['key']] ?? '';
-            if (!empty($col['hidden'])) {
-                $value = 'Hidden';
-            }
-            $line[] = $value;
+        foreach ($visibleColumns as $column) {
+            $line[] = $row[$column['key']] ?? '';
         }
-        fputcsv($out, $line);
+        fputcsv($output, $line);
     }
-    fclose($out);
+    fclose($output);
     exit;
 }
 
 if ($format === 'pdf') {
     require_once '../../tcpdf/tcpdf.php';
     $pdf = new TCPDF(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
-    $pdf->SetCreator(PDF_CREATOR);
+    $pdf->SetCreator('GammaVet');
     $pdf->SetAuthor('GammaVet');
     $pdf->SetTitle($report['title']);
     $pdf->SetMargins(10, 15, 10);
-    $pdf->AddPage();
-    $pdf->SetFont('helvetica', 'B', 14);
-    $pdf->Cell(0, 10, $report['title'], 0, 1, 'L');
-    $pdf->SetFont('helvetica', '', 9);
-
-    $tbl = '<table border="1" cellpadding="4">';
-    $tbl .= '<tr style="font-weight:bold;">';
-    foreach ($columns as $col) {
-        $tbl .= '<th>' . htmlspecialchars($col['label']) . '</th>';
+    $pdf->AddPage('L');
+    $pdf->SetFont('dejavusans', 'B', 14);
+    $pdf->Cell(0, 9, $report['title'], 0, 1, 'L');
+    $pdf->SetFont('dejavusans', '', 8);
+    $table = '<table border="1" cellpadding="4"><thead><tr style="font-weight:bold;background-color:#f1f3f5;">';
+    foreach ($visibleColumns as $column) {
+        $table .= '<th>' . htmlspecialchars($column['label']) . '</th>';
     }
-    $tbl .= '</tr>';
+    $table .= '</tr></thead><tbody>';
     foreach ($rows as $row) {
-        $tbl .= '<tr>';
-        foreach ($columns as $col) {
-            $value = $row[$col['key']] ?? '';
-            if (!empty($col['hidden'])) {
-                $value = 'Hidden';
-            }
-            $tbl .= '<td>' . htmlspecialchars((string)$value) . '</td>';
+        $table .= '<tr>';
+        foreach ($visibleColumns as $column) {
+            $table .= '<td>' . htmlspecialchars((string)($row[$column['key']] ?? '')) . '</td>';
         }
-        $tbl .= '</tr>';
+        $table .= '</tr>';
     }
-    $tbl .= '</table>';
-    $pdf->writeHTML($tbl, true, false, false, false, '');
-    $pdf->Output('analysis_' . $reportKey . '.pdf', 'D');
+    $table .= '</tbody></table>';
+    $pdf->writeHTML($table, true, false, false, false, '');
+    $pdf->Output('analysis_' . $requestedKey . '_' . date('Y-m-d') . '.pdf', 'D');
     exit;
 }
 
-$categories = [];
 $customers = [];
-$vendors = [];
-if (in_array('category', $reportFilters, true)) {
-    $categories = $conn->query("SELECT id, name FROM categories WHERE parent_id IS NULL ORDER BY name")->fetch_all(MYSQLI_ASSOC);
-}
 if (in_array('customer', $reportFilters, true)) {
-    $customers = $conn->query("SELECT id, name FROM customers ORDER BY name")->fetch_all(MYSQLI_ASSOC);
-}
-if (in_array('vendor', $reportFilters, true)) {
-    $vendors = $conn->query("SELECT id, name FROM vendors ORDER BY name")->fetch_all(MYSQLI_ASSOC);
+    $source = $reportMeta['customer_source'] ?? 'orders';
+    $joins = '';
+    $extraWhere = '';
+    if ($source === 'final_products') {
+        $joins = "JOIN products source_product ON source_product.customer_id = c.id AND source_product.type = 'final'";
+    } elseif ($source === 'open_orders') {
+        $joins = 'JOIN orders source_order ON source_order.customer_id = c.id';
+        $extraWhere = ' AND source_order.total_amount > source_order.paid_amount';
+    } elseif ($source === 'returns') {
+        $joins = 'JOIN orders source_order ON source_order.customer_id = c.id JOIN order_returns source_return ON source_return.order_id = source_order.id';
+    } else {
+        $joins = 'JOIN orders source_order ON source_order.customer_id = c.id';
+    }
+    $sql = "SELECT DISTINCT c.id, c.name
+            FROM customers c
+            LEFT JOIN factories f ON f.id = c.factory_id
+            $joins
+            WHERE $customerScope $extraWhere
+            ORDER BY c.name";
+    $result = $conn->query($sql);
+    $customers = $result ? $result->fetch_all(MYSQLI_ASSOC) : [];
 }
 
-$categoryMap = [];
-foreach ($categories as $cat) {
-    $categoryMap[(int)$cat['id']] = $cat['name'];
+$vendors = [];
+if (in_array('vendor', $reportFilters, true)) {
+    $result = $conn->query("SELECT DISTINCT v.id, v.name
+                            FROM vendors v
+                            JOIN purchase_orders po ON po.vendor_id = v.id
+                            ORDER BY v.name");
+    $vendors = $result ? $result->fetch_all(MYSQLI_ASSOC) : [];
 }
-$customerMap = [];
-foreach ($customers as $customer) {
-    $customerMap[(int)$customer['id']] = $customer['name'];
+
+$categories = [];
+$categoryType = in_array('category_final', $reportFilters, true)
+    ? 'final'
+    : (in_array('category_material', $reportFilters, true) ? 'material' : '');
+if ($categoryType !== '') {
+    $categories = analysisRunQuery(
+        $conn,
+        'SELECT DISTINCT cat.id, cat.name FROM categories cat JOIN products p ON p.category_id = cat.id WHERE p.type = ? ORDER BY cat.name',
+        's',
+        [$categoryType]
+    );
 }
-$vendorMap = [];
-foreach ($vendors as $vendor) {
-    $vendorMap[(int)$vendor['id']] = $vendor['name'];
+
+$inventories = [];
+if (in_array('inventory', $reportFilters, true)) {
+    $result = $conn->query("SELECT i.id, i.name FROM inventories i WHERE i.is_active = 1 AND $inventoryScope ORDER BY i.name");
+    $inventories = $result ? $result->fetch_all(MYSQLI_ASSOC) : [];
 }
+
+$optionNames = [
+    'customer' => array_column($customers, 'name', 'id'),
+    'vendor' => array_column($vendors, 'name', 'id'),
+    'category' => array_column($categories, 'name', 'id'),
+    'inventory' => array_column($inventories, 'name', 'id'),
+];
 $activeFilters = [];
-if (in_array('date', $reportFilters, true)) {
+if ($hasDateFilter) {
     if ($filters['date_from'] !== '') {
         $activeFilters[] = 'From ' . $filters['date_from'];
     }
@@ -2067,334 +929,268 @@ if (in_array('date', $reportFilters, true)) {
         $activeFilters[] = 'To ' . $filters['date_to'];
     }
 }
-if (in_array('category', $reportFilters, true) && $filters['category_id'] > 0) {
-    $activeFilters[] = 'Category: ' . ($categoryMap[$filters['category_id']] ?? 'Selected');
-}
-if (in_array('product_type', $reportFilters, true) && $filters['product_type'] !== '') {
-    $activeFilters[] = 'Type: ' . ucfirst($filters['product_type']);
-}
-if (in_array('customer', $reportFilters, true) && $filters['customer_id'] > 0) {
-    $activeFilters[] = 'Customer: ' . ($customerMap[$filters['customer_id']] ?? 'Selected');
-}
-if (in_array('vendor', $reportFilters, true) && $filters['vendor_id'] > 0) {
-    $activeFilters[] = 'Vendor: ' . ($vendorMap[$filters['vendor_id']] ?? 'Selected');
+foreach (['customer', 'vendor', 'category', 'inventory'] as $filterName) {
+    $value = $filters[$filterName . '_id'];
+    if ($value > 0) {
+        $activeFilters[] = ucfirst($filterName) . ': ' . ($optionNames[$filterName][$value] ?? 'Selected');
+    }
 }
 
-$page_title = 'Analysis - ' . $report['title'];
+$summaries = [];
+foreach ($report['summaries'] ?? [] as $summary) {
+    if (!analysisRequirementAllowed($summary['requires'] ?? null)) {
+        continue;
+    }
+    if ($summary['key'] === '__row_count') {
+        $summaries[] = [
+            'label' => $summary['label'],
+            'value' => analysisFormatValue(count($rows), $summary['format']),
+        ];
+        continue;
+    }
+    if (isset($summary['currency_key'])) {
+        $totals = [];
+        foreach ($rows as $row) {
+            $currency = (string)($row[$summary['currency_key']] ?? 'EGP');
+            $totals[$currency] = ($totals[$currency] ?? 0) + (float)($row[$summary['key']] ?? 0);
+        }
+        foreach ($totals as $currency => $total) {
+            $summaries[] = [
+                'label' => $summary['label'] . ' (' . $currency . ')',
+                'value' => analysisFormatValue($total, $summary['format'], ['currency' => $currency]),
+            ];
+        }
+        continue;
+    }
+    $total = 0;
+    foreach ($rows as $row) {
+        $total += (float)($row[$summary['key']] ?? 0);
+    }
+    $summaries[] = [
+        'label' => $summary['label'],
+        'value' => analysisFormatValue($total, $summary['format']),
+    ];
+}
+
+$chart = $report['chart'] ?? null;
+$chartLabels = [];
+$chartValues = [];
+if ($chart && analysisRequirementAllowed($chart['requires'] ?? null)) {
+    foreach (array_slice($rows, 0, 20) as $row) {
+        $label = (string)($row[$chart['label_key']] ?? '');
+        if (isset($row['currency']) && $chart['label_key'] === 'period') {
+            $label .= ' (' . $row['currency'] . ')';
+        }
+        $chartLabels[] = $label;
+        $chartValues[] = (float)($row[$chart['value_key']] ?? 0);
+    }
+}
+
+$page_title = 'Reports - ' . $report['title'];
 require_once '../../includes/header.php';
 ?>
 
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
-    :root{
-        --analysis-ink:#0f172a;
-        --analysis-slate:#475569;
-        --analysis-soft:#e2e8f0;
-        --analysis-brand:#0ea5e9;
-        --analysis-bg1:#f8fafc;
-        --analysis-bg2:#ecfeff;
-    }
-    .analysis-shell{
-        font-family:'Space Grotesk', system-ui, sans-serif;
-        color:var(--analysis-ink);
-    }
-    .analysis-header{
-        background:linear-gradient(135deg, var(--analysis-bg2), var(--analysis-bg1));
-        border:1px solid var(--analysis-soft);
-        border-radius:18px;
-        padding:22px;
-        margin-bottom:18px;
-    }
-    .analysis-header h2{font-size:26px;font-weight:700;margin-bottom:6px;}
-    .analysis-header p{color:var(--analysis-slate);margin:0;}
-    .analysis-actions .btn{border-radius:10px;}
-    .analysis-kpis{display:flex;gap:12px;flex-wrap:wrap;margin-top:16px;}
-    .analysis-kpi{
-        background:#fff;border:1px solid var(--analysis-soft);
-        border-radius:14px;padding:10px 14px;min-width:160px;
-        box-shadow:0 6px 16px rgba(15,23,42,0.06);
-    }
-    .analysis-kpi .label{font-size:11px;letter-spacing:.08em;color:var(--analysis-slate);text-transform:uppercase;}
-    .analysis-kpi .value{font-size:18px;font-weight:600;margin-top:4px;}
-    .analysis-filter-card{
-        border:1px solid var(--analysis-soft);
-        border-radius:16px;
-        box-shadow:0 8px 20px rgba(15,23,42,0.06);
-    }
-    .analysis-filter-card .form-label{font-size:12px;color:var(--analysis-slate);text-transform:uppercase;letter-spacing:.08em;}
-    .analysis-chip{
-        display:inline-flex;align-items:center;gap:6px;
-        padding:4px 10px;border-radius:999px;
-        background:rgba(15,23,42,0.06);color:var(--analysis-slate);
-        font-size:12px;
-    }
-    .analysis-table-card{
-        border-radius:16px;
-        border:1px solid var(--analysis-soft);
-        box-shadow:0 10px 24px rgba(15,23,42,0.06);
-    }
+    .report-summary-card { border-left: .25rem solid var(--bs-primary); }
+    .report-chart-wrap { height: 320px; }
 </style>
 
-<div class="analysis-shell">
-    <div class="analysis-header">
-        <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
-            <div>
-                <div class="text-uppercase small text-muted">Analysis Report</div>
-                <h2><?= htmlspecialchars($report['title']) ?></h2>
-                <p><?= htmlspecialchars($report['description']) ?></p>
+<main class="container mt-4 mb-5">
+    <nav aria-label="breadcrumb" class="mb-3">
+        <ol class="breadcrumb small mb-0">
+            <li class="breadcrumb-item"><a href="index.php">Reports & Analytics</a></li>
+            <li class="breadcrumb-item active" aria-current="page"><?= htmlspecialchars($report['title']) ?></li>
+        </ol>
+    </nav>
+
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+        <div>
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                <h2 class="mb-0"><?= htmlspecialchars($report['title']) ?></h2>
+                <span class="badge text-bg-light border fw-normal"><?= htmlspecialchars($report['scope']) ?></span>
             </div>
-            <div class="analysis-actions d-flex gap-2">
-                <a class="btn btn-outline-secondary" href="index.php">Back</a>
-                <a class="btn btn-outline-primary" href="?<?= http_build_query(array_merge($_GET, ['format' => 'csv'])) ?>">Download CSV</a>
-                <a class="btn btn-outline-primary" href="?<?= http_build_query(array_merge($_GET, ['format' => 'pdf'])) ?>">Download PDF</a>
-            </div>
+            <p class="text-muted mb-0"><?= htmlspecialchars($report['description']) ?></p>
         </div>
-        <div class="analysis-kpis">
-            <div class="analysis-kpi">
-                <div class="label">Rows</div>
-                <div class="value"><?= number_format($rowCount) ?></div>
+        <div class="btn-group" role="group" aria-label="Report exports">
+            <a class="btn btn-outline-secondary" href="index.php"><i class="fas fa-arrow-left me-1"></i>Back</a>
+            <a class="btn btn-outline-primary" href="?<?= htmlspecialchars(http_build_query(array_merge($_GET, ['key' => $requestedKey, 'format' => 'csv']))) ?>">CSV</a>
+            <a class="btn btn-outline-primary" href="?<?= htmlspecialchars(http_build_query(array_merge($_GET, ['key' => $requestedKey, 'format' => 'pdf']))) ?>">PDF</a>
+        </div>
+    </div>
+
+    <?php if ($reportFilters): ?>
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span class="fw-semibold"><i class="fas fa-filter me-2"></i>Filters</span>
+                <a class="btn btn-link btn-sm text-decoration-none" href="report.php?key=<?= urlencode($requestedKey) ?>">Reset</a>
             </div>
-            <div class="analysis-kpi">
-                <div class="label">Filters</div>
-                <div class="value"><?= count($activeFilters) > 0 ? count($activeFilters) : 'All' ?></div>
-            </div>
-            <div class="analysis-kpi">
-                <div class="label">Aggregate</div>
-                <div class="value">
-                    <?php if ($aggregateKey !== null): ?>
-                        <?= number_format($aggregateValue, 2) ?>
-                    <?php else: ?>
-                        N/A
+            <div class="card-body">
+                <form method="get" class="row g-3 align-items-end">
+                    <input type="hidden" name="key" value="<?= htmlspecialchars($requestedKey) ?>">
+                    <?php if ($hasDateFilter): ?>
+                        <div class="col-sm-6 col-lg-3">
+                            <label class="form-label" for="date_from">From</label>
+                            <input class="form-control" type="date" id="date_from" name="date_from" value="<?= htmlspecialchars($filters['date_from']) ?>">
+                        </div>
+                        <div class="col-sm-6 col-lg-3">
+                            <label class="form-label" for="date_to">To</label>
+                            <input class="form-control" type="date" id="date_to" name="date_to" value="<?= htmlspecialchars($filters['date_to']) ?>">
+                        </div>
                     <?php endif; ?>
-                </div>
+                    <?php if (in_array('customer', $reportFilters, true)): ?>
+                        <div class="col-sm-6 col-lg-3">
+                            <label class="form-label" for="customer_id">Customer</label>
+                            <select class="form-select" id="customer_id" name="customer_id">
+                                <option value="">All relevant customers</option>
+                                <?php foreach ($customers as $customer): ?>
+                                    <option value="<?= (int)$customer['id'] ?>" <?= $filters['customer_id'] === (int)$customer['id'] ? 'selected' : '' ?>><?= htmlspecialchars($customer['name']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    <?php endif; ?>
+                    <?php if (in_array('vendor', $reportFilters, true)): ?>
+                        <div class="col-sm-6 col-lg-3">
+                            <label class="form-label" for="vendor_id">Vendor</label>
+                            <select class="form-select" id="vendor_id" name="vendor_id">
+                                <option value="">All vendors with POs</option>
+                                <?php foreach ($vendors as $vendor): ?>
+                                    <option value="<?= (int)$vendor['id'] ?>" <?= $filters['vendor_id'] === (int)$vendor['id'] ? 'selected' : '' ?>><?= htmlspecialchars($vendor['name']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    <?php endif; ?>
+                    <?php if ($categoryType !== ''): ?>
+                        <div class="col-sm-6 col-lg-3">
+                            <label class="form-label" for="category_id"><?= $categoryType === 'final' ? 'Final-product category' : 'Raw-material category' ?></label>
+                            <select class="form-select" id="category_id" name="category_id">
+                                <option value="">All relevant categories</option>
+                                <?php foreach ($categories as $category): ?>
+                                    <option value="<?= (int)$category['id'] ?>" <?= $filters['category_id'] === (int)$category['id'] ? 'selected' : '' ?>><?= htmlspecialchars($category['name']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    <?php endif; ?>
+                    <?php if (in_array('inventory', $reportFilters, true)): ?>
+                        <div class="col-sm-6 col-lg-3">
+                            <label class="form-label" for="inventory_id">Inventory</label>
+                            <select class="form-select" id="inventory_id" name="inventory_id">
+                                <option value="">All active inventories</option>
+                                <?php foreach ($inventories as $inventory): ?>
+                                    <option value="<?= (int)$inventory['id'] ?>" <?= $filters['inventory_id'] === (int)$inventory['id'] ? 'selected' : '' ?>><?= htmlspecialchars($inventory['name']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    <?php endif; ?>
+                    <div class="col-sm-6 col-lg-3">
+                        <button class="btn btn-primary w-100" type="submit">Apply filters</button>
+                    </div>
+                </form>
             </div>
         </div>
-        <?php if (!empty($reportKpis)): ?>
-            <div class="analysis-kpis">
-                <?php foreach ($reportKpis as $kpi): ?>
-                    <div class="analysis-kpi">
-                        <div class="label"><?= htmlspecialchars($kpi['label']) ?></div>
-                        <div class="value"><?= htmlspecialchars($kpi['value']) ?></div>
+    <?php endif; ?>
+
+    <?php if ($dateRangeError): ?>
+        <div class="alert alert-danger">The start date must be before the end date.</div>
+    <?php elseif ($queryError !== ''): ?>
+        <div class="alert alert-danger"><?= htmlspecialchars($queryError) ?></div>
+    <?php else: ?>
+        <?php if ($activeFilters): ?>
+            <div class="d-flex flex-wrap gap-2 mb-3" aria-label="Active filters">
+                <?php foreach ($activeFilters as $activeFilter): ?>
+                    <span class="badge rounded-pill text-bg-light border fw-normal"><?= htmlspecialchars($activeFilter) ?></span>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
+
+        <?php if ($summaries): ?>
+            <div class="row g-3 mb-4">
+                <?php foreach ($summaries as $summary): ?>
+                    <div class="col-6 col-lg-3">
+                        <div class="card report-summary-card h-100">
+                            <div class="card-body py-3">
+                                <div class="small text-muted mb-1"><?= htmlspecialchars($summary['label']) ?></div>
+                                <div class="h5 mb-0"><?= $summary['value'] ?></div>
+                            </div>
+                        </div>
                     </div>
                 <?php endforeach; ?>
             </div>
         <?php endif; ?>
-        <?php if (!empty($activeFilters)): ?>
-            <div class="d-flex flex-wrap gap-2 mt-3">
-                <?php foreach ($activeFilters as $filter): ?>
-                    <span class="analysis-chip"><?= htmlspecialchars($filter) ?></span>
-                <?php endforeach; ?>
-            </div>
-        <?php endif; ?>
-    </div>
 
-    <?php if (!empty($reportFilters)): ?>
-    <div class="card mb-3 analysis-filter-card">
-        <div class="card-body">
-            <form method="get" class="row g-3">
-            <input type="hidden" name="key" value="<?= htmlspecialchars($reportKey) ?>">
-            <?php if (in_array('date', $reportFilters, true)): ?>
-            <div class="col-md-3">
-                <label class="form-label">Date From</label>
-                <input type="date" name="date_from" class="form-control" value="<?= htmlspecialchars($filters['date_from']) ?>">
-            </div>
-            <div class="col-md-3">
-                <label class="form-label">Date To</label>
-                <input type="date" name="date_to" class="form-control" value="<?= htmlspecialchars($filters['date_to']) ?>">
-            </div>
-            <?php endif; ?>
-            <?php if (in_array('category', $reportFilters, true)): ?>
-            <div class="col-md-3">
-                <label class="form-label">Category</label>
-                <select name="category_id" class="form-select">
-                    <option value="">All</option>
-                    <?php foreach ($categories as $cat): ?>
-                        <option value="<?= (int)$cat['id'] ?>" <?= $filters['category_id'] === (int)$cat['id'] ? 'selected' : '' ?>>
-                            <?= htmlspecialchars($cat['name']) ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-            <?php endif; ?>
-            <?php if (in_array('product_type', $reportFilters, true)): ?>
-            <div class="col-md-3">
-                <label class="form-label">Product Type</label>
-                <select name="product_type" class="form-select">
-                    <option value="">All</option>
-                    <option value="final" <?= $filters['product_type'] === 'final' ? 'selected' : '' ?>>Final</option>
-                    <option value="material" <?= $filters['product_type'] === 'material' ? 'selected' : '' ?>>Material</option>
-                    <option value="primary" <?= $filters['product_type'] === 'primary' ? 'selected' : '' ?>>Primary</option>
-                </select>
-            </div>
-            <?php endif; ?>
-            <?php if (in_array('customer', $reportFilters, true)): ?>
-            <div class="col-md-4">
-                <label class="form-label">Customer</label>
-                <select name="customer_id" class="form-select">
-                    <option value="">All</option>
-                    <?php foreach ($customers as $customer): ?>
-                        <option value="<?= (int)$customer['id'] ?>" <?= $filters['customer_id'] === (int)$customer['id'] ? 'selected' : '' ?>>
-                            <?= htmlspecialchars($customer['name']) ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-            <?php endif; ?>
-            <?php if (in_array('vendor', $reportFilters, true)): ?>
-            <div class="col-md-4">
-                <label class="form-label">Vendor</label>
-                <select name="vendor_id" class="form-select">
-                    <option value="">All</option>
-                    <?php foreach ($vendors as $vendor): ?>
-                        <option value="<?= (int)$vendor['id'] ?>" <?= $filters['vendor_id'] === (int)$vendor['id'] ? 'selected' : '' ?>>
-                            <?= htmlspecialchars($vendor['name']) ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-            <?php endif; ?>
-            <div class="col-md-4 d-flex align-items-end">
-                <button type="submit" class="btn btn-primary w-100">Apply Filters</button>
-            </div>
-            </form>
-        </div>
-    </div>
-    <?php endif; ?>
-
-    <?php
-$chartLabels = [];
-$chartValues = [];
-$hasChartPermission = true;
-$chartValueKey = $chartConfig['value_key'] ?? '';
-if (!$reportView['chart']) {
-    $hasChartPermission = false;
-}
-foreach ($columns as $col) {
-        if ($col['key'] === $chartValueKey && !empty($col['hidden'])) {
-            $hasChartPermission = false;
-            break;
-        }
-    }
-    if (!empty($chartValueKey) && $hasChartPermission) {
-        foreach ($rows as $row) {
-            $chartLabels[] = $row[$chartConfig['label_key']] ?? '';
-            $chartValues[] = (float)($row[$chartValueKey] ?? 0);
-        }
-    }
-    ?>
-
-    <?php if (!empty($chartLabels) && !empty($chartValues) && $hasChartPermission): ?>
-        <div class="card analysis-table-card mb-3">
-            <div class="card-body">
-                <div style="min-height:280px;">
-                    <canvas id="analysisChart" height="110"></canvas>
+        <?php if ($chartLabels): ?>
+            <div class="card mb-4">
+                <div class="card-header fw-semibold"><?= htmlspecialchars($chart['label']) ?></div>
+                <div class="card-body report-chart-wrap">
+                    <canvas id="analysisChart"></canvas>
                 </div>
             </div>
-        </div>
-    <?php elseif ($reportView['chart']): ?>
-        <div class="card analysis-table-card mb-3">
-            <div class="card-body text-center text-muted py-4">
-                No data available for chart visualization.
-            </div>
-        </div>
-    <?php endif; ?>
+        <?php endif; ?>
 
-    <?php if (!$reportView['table'] && !$reportView['chart'] && empty($rows)): ?>
-        <div class="card analysis-table-card">
-            <div class="card-body text-center text-muted py-4">
-                No data available for this report.
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span class="fw-semibold">Report details</span>
+                <span class="text-muted small"><?= number_format(count($rows)) ?> result<?= count($rows) === 1 ? '' : 's' ?></span>
             </div>
-        </div>
-    <?php endif; ?>
-
-    <?php if ($reportView['table']): ?>
-    <div class="card analysis-table-card">
-        <div class="table-responsive">
-            <table class="table js-datatable table-hover align-middle mb-0">
-                <thead class="table-light">
-                    <tr>
-                        <?php foreach ($columns as $col): ?>
-                            <th><?= htmlspecialchars($col['label']) ?></th>
-                        <?php endforeach; ?>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php if (empty($rows)): ?>
-                        <tr>
-                            <?php foreach ($columns as $index => $col): ?>
-                                <td class="<?= $index === 0 ? 'text-center text-muted py-4' : '' ?>">
-                                    <?= $index === 0 ? 'No data for this report.' : '' ?>
-                                </td>
-                            <?php endforeach; ?>
-                        </tr>
-                    <?php else: ?>
-                        <?php foreach ($rows as $row): ?>
+            <?php if (!$rows): ?>
+                <div class="card-body text-center py-5">
+                    <i class="fas fa-table-list fa-2x text-muted mb-3"></i>
+                    <h5>No matching data</h5>
+                    <p class="text-muted mb-0">Try a wider date range or clear the selected filter.</p>
+                </div>
+            <?php else: ?>
+                <div class="table-responsive">
+                    <table class="table js-datatable table-striped table-hover align-middle mb-0">
+                        <thead class="table-light">
                             <tr>
-                                <?php foreach ($columns as $col): ?>
-                                    <?php
-                                    $value = $row[$col['key']] ?? '';
-                                    if (!empty($col['hidden'])) {
-                                        $display = '<span class="text-muted">Hidden</span>';
-                                    } else {
-                                        if ($col['format'] === 'currency') {
-                                            $display = number_format((float)$value, 2);
-                                        } elseif ($col['format'] === 'number') {
-                                            $display = is_numeric($value) ? number_format((float)$value, 0) : $value;
-                                        } else {
-                                            $display = htmlspecialchars((string)$value);
-                                        }
-                                    }
-                                    ?>
-                                    <td><?= $display ?></td>
+                                <?php foreach ($visibleColumns as $column): ?>
+                                    <th><?= htmlspecialchars($column['label']) ?></th>
                                 <?php endforeach; ?>
                             </tr>
-                        <?php endforeach; ?>
-                    <?php endif; ?>
-                </tbody>
-            </table>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($rows as $row): ?>
+                                <tr>
+                                    <?php foreach ($visibleColumns as $column): ?>
+                                        <td><?= analysisFormatCell($column, $row) ?></td>
+                                    <?php endforeach; ?>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            <?php endif; ?>
         </div>
-    </div>
     <?php endif; ?>
-</div>
+</main>
 
-<?php if (!empty($chartLabels) && !empty($chartValues) && $hasChartPermission): ?>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<script>
-    (function() {
-        const ctx = document.getElementById('analysisChart');
-        if (!ctx) return;
-        const labels = <?= json_encode($chartLabels) ?>;
-        const values = <?= json_encode($chartValues) ?>;
-        const type = <?= json_encode($chartConfig['type']) ?>;
-        const data = {
-            labels,
-            datasets: [{
-                label: <?= json_encode($report['title']) ?>,
-                data: values,
-                borderColor: '#0ea5e9',
-                backgroundColor: type === 'line' ? 'rgba(14,165,233,0.15)' : 'rgba(14,165,233,0.6)',
-                borderWidth: 2,
-                fill: type === 'line'
-            }]
-        };
-        new Chart(ctx, {
-            type,
-            data,
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                scales: type === 'doughnut' ? {} : {
-                    x: { ticks: { color: '#475569' } },
-                    y: { ticks: { color: '#475569' } }
+<?php if ($chartLabels): ?>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script>
+        (function () {
+            const canvas = document.getElementById('analysisChart');
+            if (!canvas) return;
+            new Chart(canvas, {
+                type: 'bar',
+                data: {
+                    labels: <?= json_encode($chartLabels, JSON_UNESCAPED_UNICODE) ?>,
+                    datasets: [{
+                        label: <?= json_encode($chart['label'], JSON_UNESCAPED_UNICODE) ?>,
+                        data: <?= json_encode($chartValues) ?>,
+                        backgroundColor: 'rgba(13, 110, 253, .65)',
+                        borderColor: '#0d6efd',
+                        borderWidth: 1,
+                        borderRadius: 4
+                    }]
                 },
-                plugins: {
-                    legend: { display: type === 'doughnut' },
-                    tooltip: { enabled: true }
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: { y: { beginAtZero: true } }
                 }
-            }
-        });
-    })();
-</script>
+            });
+        })();
+    </script>
 <?php endif; ?>
 
 <?php require_once '../../includes/footer.php'; ?>

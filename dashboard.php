@@ -215,7 +215,7 @@ $dashboardInventoryScope = getInventoryChannelScopeSql('i');
     </div>
     <?php endif; ?>
 
-    <?php if (hasPermission('tickets.manage') || hasPermission('tickets.create')): ?>
+    <?php if (hasPermission('tickets.manage') || hasPermission('tickets.create') || hasPermission('tickets.view') || hasPermission('tickets.update_status')): ?>
     <div class="col-md-6 col-lg-3 mb-4">
         <a href="<?= BASE_URL ?>modules/tickets/" class="text-decoration-none">
             <div class="card bg-light border">

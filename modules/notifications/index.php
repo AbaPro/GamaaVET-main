@@ -33,7 +33,11 @@ if (isset($_GET['mark']) && is_numeric($_GET['mark'])) {
 if (isset($_GET['ticket']) && is_numeric($_GET['ticket']) && hasPermission('tickets.create')) {
     $nid = (int)$_GET['ticket'];
     // Load notification
-    $n = $conn->query("SELECT * FROM notifications WHERE id=".$nid)->fetch_assoc();
+    $nStmt = $conn->prepare("SELECT * FROM notifications WHERE id = ?");
+    $nStmt->bind_param('i', $nid);
+    $nStmt->execute();
+    $n = $nStmt->get_result()->fetch_assoc();
+    $nStmt->close();
     if ($n) {
         // Assign to purchasing supervisor if exists; else to admin
         $assignRoleId = $conn->query("SELECT id FROM roles WHERE slug='purchasing_supervisor'")->fetch_assoc()['id'] ?? null;
