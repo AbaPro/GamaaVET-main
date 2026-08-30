@@ -38,6 +38,8 @@ if (!$order) {
     exit();
 }
 
+$isDelivered = $order['status'] === 'delivered';
+
 // Fetch order items
 $stmt = $pdo->prepare("
     SELECT oi.*, p.name AS product_name, p.sku, p.barcode, p.type,
@@ -49,10 +51,13 @@ $stmt = $pdo->prepare("
 $stmt->execute([$order_id]);
 $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Track which product_ids already have a manufacturing order for this sales order
-$mfgStmt = $pdo->prepare("SELECT product_id FROM manufacturing_orders WHERE sales_order_id = ?");
-$mfgStmt->execute([$order_id]);
-$manufacturedProductIds = array_flip($mfgStmt->fetchAll(PDO::FETCH_COLUMN));
+$manufacturedProductIds = [];
+if (($_SESSION['login_region'] ?? 'factory') === 'factory') {
+    // Manufacturing data belongs exclusively to the Factory channel.
+    $mfgStmt = $pdo->prepare("SELECT product_id FROM manufacturing_orders WHERE sales_order_id = ?");
+    $mfgStmt->execute([$order_id]);
+    $manufacturedProductIds = array_flip($mfgStmt->fetchAll(PDO::FETCH_COLUMN));
+}
 
 $canViewOrderPrices = hasPermission('sales.orders.price.view');
 $canViewFinalPrices = $canViewOrderPrices;
@@ -268,7 +273,9 @@ require_once '../../includes/header.php';
                     <?php if ($canViewPhoneNumbers): ?>
                         <p><strong>Contact Phone:</strong> <?= htmlspecialchars($order['contact_phone']) ?></p>
                     <?php endif; ?>
-                    <p><strong>Factory:</strong> <?= $order['factory_name'] ? htmlspecialchars($order['factory_name']) : 'Not assigned' ?></p>
+                    <?php if (($_SESSION['login_region'] ?? 'factory') === 'factory'): ?>
+                        <p><strong>Factory:</strong> <?= $order['factory_name'] ? htmlspecialchars($order['factory_name']) : 'Not assigned' ?></p>
+                    <?php endif; ?>
                 </div>
                 <div class="col-md-6">
                     <h5>Order Information</h5>
@@ -404,9 +411,17 @@ require_once '../../includes/header.php';
 	                                    <td><?= number_format($item['total_price'], 2) ?></td>
                                         <?php endif; ?>
                                     <td>
-                                        <?php if ($item['type'] === 'final' && hasPermission('manufacturing.orders.create')) : ?>
+                                        <?php if (($_SESSION['login_region'] ?? 'factory') === 'factory' && $item['type'] === 'final' && hasPermission('manufacturing.orders.create')) : ?>
                                             <?php if (isset($manufacturedProductIds[$item['product_id']])): ?>
                                                 <span class="badge bg-success"><i class="fas fa-check me-1"></i> Manufactured</span>
+                                            <?php elseif ($isDelivered): ?>
+                                                <button type="button"
+                                                        class="btn btn-sm btn-outline-secondary"
+                                                        disabled
+                                                        aria-disabled="true"
+                                                        title="Manufacturing cannot be started for a delivered order.">
+                                                    <i class="fas fa-hammer me-1"></i> Manufacture
+                                                </button>
                                             <?php else: ?>
                                                 <a class="btn btn-sm btn-outline-primary"
                                                    href="../manufacturing/create.php?sales_order_id=<?= (int)$order_id ?>&amp;sales_order_item_id=<?= (int)$item['id'] ?>">
@@ -457,7 +472,7 @@ require_once '../../includes/header.php';
                             <tr>
                                 <td colspan="5" class="text-end"><strong>Balance:</strong></td>
                                 <td class="<?= $balance > 0 ? 'text-danger' : 'text-success' ?>">
-	                                    <?= number_format($balance * -1, 2) ?>
+	                                    <?= number_format($balance, 2) ?>
                                 </td>
                                 <td></td>
                             </tr>

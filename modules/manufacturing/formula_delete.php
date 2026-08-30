@@ -11,6 +11,15 @@ $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 
 if ($id > 0) {
     try {
+        $formulaStmt = $conn->prepare("SELECT customer_id FROM manufacturing_formulas WHERE id = ?");
+        $formulaStmt->bind_param('i', $id);
+        $formulaStmt->execute();
+        $formulaRow = $formulaStmt->get_result()->fetch_assoc();
+        $formulaStmt->close();
+        if (!$formulaRow || !canAccessCustomer((int)$formulaRow['customer_id'])) {
+            throw new Exception('Formula not found in Factory.');
+        }
+
         // Check if formula is used in any orders
         $checkStmt = $conn->prepare("SELECT COUNT(*) as count FROM manufacturing_orders WHERE formula_id = ?");
         $checkStmt->bind_param("i", $id);

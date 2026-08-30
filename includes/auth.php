@@ -89,4 +89,29 @@ if (in_array($current_page, $protected_pages) || strpos($_SERVER['REQUEST_URI'],
         redirect(defined('BASE_URL') ? BASE_URL . 'index.php' : 'index.php');
     }
 }
+
+// Reject direct URL and POST access to Factory-only operations; hiding their
+// navigation links alone would not enforce the channel boundary.
+if (isLoggedIn() && ($_SESSION['login_region'] ?? 'factory') !== 'factory') {
+    $requestPath = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?: '';
+    $requestBasename = basename($requestPath);
+    $isCustomerTypeRoute = strpos($requestPath, '/modules/customers/') !== false
+        && in_array($requestBasename, ['types.php', 'types_create.php', 'types_edit.php'], true);
+    $isFactoryFinanceRoute = strpos($requestPath, '/modules/finance/') !== false
+        && in_array($requestBasename, ['po.php', 'vendors.php'], true);
+    $isFactoryOnlyRoute = strpos($requestPath, '/modules/manufacturing/') !== false
+        || strpos($requestPath, '/modules/purchases/') !== false
+        || strpos($requestPath, '/modules/vendors/') !== false
+        || strpos($requestPath, '/modules/categories/') !== false
+        || strpos($requestPath, '/modules/analysis/') !== false
+        || strpos($requestPath, '/modules/tickets/') !== false
+        || strpos($requestPath, '/modules/roles/') !== false
+        || $isCustomerTypeRoute
+        || $isFactoryFinanceRoute
+        || (strpos($requestPath, '/modules/users/') !== false && $requestBasename !== 'profile.php');
+    if ($isFactoryOnlyRoute) {
+        setAlert('danger', 'This operation is available only in the Factory channel.');
+        redirect(defined('BASE_URL') ? BASE_URL . 'modules/sales/' : '../sales/');
+    }
+}
 ?>

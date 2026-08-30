@@ -17,6 +17,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $product_id = sanitize($_POST['product_id']);
     $quantity = sanitize($_POST['quantity']);
+    if (!canAddProductToInventory($inventory_id, $product_id)) {
+        setAlert('danger', 'This product is not available in the selected channel.');
+        redirect("view.php?id=$inventory_id");
+    }
     $quantity_before = getInventoryProductQuantity($inventory_id, $product_id);
     
     // Update product quantity in inventory

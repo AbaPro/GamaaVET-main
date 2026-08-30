@@ -33,13 +33,16 @@ if ($inventory_result->num_rows === 0) {
 
 $inventory = $inventory_result->fetch_assoc();
 $inventory_stmt->close();
+$productScope = getProductChannelScopeSql('p', 'c', 'f');
 
 // Get inventory products
 $products_sql = "SELECT p.id, p.name, p.sku, p.barcode, ip.quantity, p.min_stock_level, c.name AS customer_name 
                  FROM inventory_products ip 
                  JOIN products p ON ip.product_id = p.id 
                  LEFT JOIN customers c ON p.customer_id = c.id
-                 WHERE ip.inventory_id = ? 
+                 LEFT JOIN factories f ON f.id = c.factory_id
+                 WHERE ip.inventory_id = ?
+                   AND $productScope
                  ORDER BY p.name";
 $products_stmt = $conn->prepare($products_sql);
 $products_stmt->bind_param("i", $inventory_id);

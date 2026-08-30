@@ -52,7 +52,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             header('Location: quotation_details.php?id=' . (int)$quotation_id);
             exit();
         }
+
     }
+
+    $orderFactoryId = ($_SESSION['login_region'] ?? 'factory') === 'factory'
+        ? $quotation['factory_id']
+        : null;
     
     try {
         $pdo->beginTransaction();
@@ -73,7 +78,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $stmt->execute([
             $internal_id,
             $quotation['customer_id'],
-            $quotation['factory_id'],
+            $orderFactoryId,
             $quotation['contact_id'],
             date('Y-m-d'),
             'new',

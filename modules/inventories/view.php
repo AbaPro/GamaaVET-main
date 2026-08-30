@@ -38,6 +38,7 @@ $inventory = $inventory_result->fetch_assoc();
 $inventory_stmt->close();
 
 $customerScope = getCustomerChannelScopeSql('c', 'f');
+$productScope = getProductChannelScopeSql('p', 'c', 'f');
 
 // Filter parameters
 $customerFilters = [];
@@ -86,7 +87,9 @@ $products_sql = "SELECT p.id, p.name, p.sku, p.barcode, p.type, ip.quantity, p.m
                  FROM inventory_products ip 
                  JOIN products p ON ip.product_id = p.id 
                  LEFT JOIN customers c ON p.customer_id = c.id
-                 WHERE ip.inventory_id = ?";
+                 LEFT JOIN factories f ON f.id = c.factory_id
+                 WHERE ip.inventory_id = ?
+                   AND $productScope";
 
 if (!empty($customerFilters)) {
     $placeholders = implode(',', array_fill(0, count($customerFilters), '?'));
@@ -261,8 +264,10 @@ $ariaSort = static function (string $column) use ($sortBy, $sortDir): string {
                     <select class="form-select form-select-sm" id="item_type" name="item_type">
                         <option value="">All types</option>
                         <option value="final" <?= $itemType === 'final' ? 'selected' : '' ?>>Final products</option>
-                        <option value="material" <?= $itemType === 'material' ? 'selected' : '' ?>>Raw materials</option>
-                        <option value="primary" <?= $itemType === 'primary' ? 'selected' : '' ?>>Primary products</option>
+                        <?php if (($_SESSION['login_region'] ?? 'factory') === 'factory' && !isSalesPersonUser()): ?>
+                            <option value="material" <?= $itemType === 'material' ? 'selected' : '' ?>>Raw materials</option>
+                            <option value="primary" <?= $itemType === 'primary' ? 'selected' : '' ?>>Primary products</option>
+                        <?php endif; ?>
                     </select>
                 </div>
                 <div class="col-lg-2 col-md-4">
@@ -384,7 +389,7 @@ $ariaSort = static function (string $column) use ($sortBy, $sortDir): string {
                                 <select class="form-select form-select-sm" id="filter_type">
                                     <option value="" selected>All item types</option>
                                     <option value="final">Final products</option>
-                                    <?php if (!isSalesPersonUser()): ?>
+                                    <?php if (($_SESSION['login_region'] ?? 'factory') === 'factory' && !isSalesPersonUser()): ?>
                                         <option value="material">Raw materials</option>
                                     <?php endif; ?>
                                 </select>
@@ -423,9 +428,7 @@ $ariaSort = static function (string $column) use ($sortBy, $sortDir): string {
                         <select class="form-select" id="product_id" name="product_id" required size="5" style="height: auto;">
                             <option value="">-- Select Product --</option>
                             <?php
-                            $eligibleProductScope = isSalesPersonUser()
-                                ? "p.type = 'final' AND $customerScope"
-                                : "(p.type = 'material' OR (p.type = 'final' AND $customerScope))";
+                            $eligibleProductScope = getProductChannelScopeSql('p', 'c', 'f');
                             $all_products = $conn->query("SELECT p.id, p.name, p.sku, p.type, p.customer_id
                                                           FROM products p
                                                           LEFT JOIN customers c ON c.id = p.customer_id

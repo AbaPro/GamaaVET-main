@@ -13,6 +13,16 @@ if ($id <= 0) {
     redirect('packaging_options.php');
 }
 
+$optionStmt = $conn->prepare("SELECT customer_id FROM packaging_options WHERE id = ?");
+$optionStmt->bind_param('i', $id);
+$optionStmt->execute();
+$optionRow = $optionStmt->get_result()->fetch_assoc();
+$optionStmt->close();
+if (!$optionRow || !canAccessCustomer((int)$optionRow['customer_id'])) {
+    setAlert('danger', 'Packaging option not found in Factory.');
+    redirect('packaging_options.php');
+}
+
 // Guard: refuse if any order references this option
 $checkStmt = $conn->prepare("SELECT COUNT(*) FROM manufacturing_orders WHERE packaging_option_id = ?");
 $checkStmt->bind_param("i", $id);

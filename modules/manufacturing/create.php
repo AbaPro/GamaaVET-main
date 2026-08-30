@@ -23,7 +23,7 @@ if ($salesOrderId > 0 || $salesOrderItemId > 0) {
         $salesOrderLinkError = 'The linked sales order item is invalid or inaccessible.';
     } else {
         $sourceStmt = $pdo->prepare("
-            SELECT o.id, o.internal_id, o.customer_id,
+            SELECT o.id, o.internal_id, o.customer_id, o.status,
                    oi.id AS order_item_id, oi.product_id, oi.quantity,
                    COALESCE((
                        SELECT SUM(ip.quantity)
@@ -41,6 +41,9 @@ if ($salesOrderId > 0 || $salesOrderItemId > 0) {
 
         if (!$sourceSalesOrder) {
             $salesOrderLinkError = 'The linked sales order item could not be found.';
+        } elseif ($sourceSalesOrder['status'] === 'delivered') {
+            setAlert('danger', 'Manufacturing cannot be started for a delivered sales order.');
+            redirect('../sales/order_details.php?id=' . (int)$sourceSalesOrder['id']);
         } elseif ($_SERVER['REQUEST_METHOD'] !== 'POST') {
             $requiredQuantity = (float)$sourceSalesOrder['quantity'];
             $currentStock = (float)$sourceSalesOrder['current_stock'];
@@ -61,16 +64,6 @@ if ($productResult) {
     while ($productRow = $productResult->fetch_assoc()) {
         $products[] = $productRow;
         $productMap[$productRow['id']] = $productRow['name'];
-    }
-}
-
-// Full product map (all types) for resolving saved names on existing components
-$allProductMapResult = $conn->query("SELECT id, name FROM products");
-if ($allProductMapResult) {
-    while ($row = $allProductMapResult->fetch_assoc()) {
-        if (!isset($productMap[$row['id']])) {
-            $productMap[$row['id']] = $row['name'];
-        }
     }
 }
 
@@ -110,6 +103,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $priority = 'normal';
     }
 
+    $productIsValid = false;
+    if ($productId > 0 && canAccessProduct($productId)) {
+        $productCheckStmt = $pdo->prepare("SELECT COUNT(*) FROM products WHERE id = ? AND customer_id = ? AND type = 'final'");
+        $productCheckStmt->execute([$productId, $customerId]);
+        $productIsValid = (int)$productCheckStmt->fetchColumn() === 1;
+    }
+
+    $formulaIsValid = false;
+    if ($selectedFormulaId > 0) {
+        $formulaCheckStmt = $pdo->prepare("SELECT COUNT(*) FROM manufacturing_formulas WHERE id = ? AND customer_id = ? AND is_active = 1");
+        $formulaCheckStmt->execute([$selectedFormulaId, $customerId]);
+        $formulaIsValid = (int)$formulaCheckStmt->fetchColumn() === 1;
+    }
+
     if ($salesOrderLinkError !== null) {
         setAlert('danger', $salesOrderLinkError);
     } elseif ($sourceSalesOrder && (
@@ -117,13 +124,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         || $productId !== (int)$sourceSalesOrder['product_id']
     )) {
         setAlert('danger', 'The customer and final product must match the linked sales order item.');
-    } elseif ($customerId <= 0) {
+    } elseif ($customerId <= 0 || !canAccessCustomer($customerId)) {
         setAlert('danger', 'Please select the customer for this manufacturing order.');
-    } elseif ($productId <= 0) {
+    } elseif (!$productIsValid) {
         setAlert('danger', 'Please select the final product for this manufacturing order.');
     } elseif ($locationId <= 0) {
         setAlert('danger', 'Please select a location for this manufacturing order.');
-    } elseif (!$selectedFormulaId) {
+    } elseif (!$formulaIsValid) {
         setAlert('danger', 'Please select a formula for this manufacturing order.');
     } elseif ($bottleSizeId === null) {
         setAlert('danger', 'Please select a bottle size.');
@@ -274,7 +281,8 @@ $page_title = 'Create Manufacturing Order';
 require_once '../../includes/header.php';
 
 $customers = [];
-$customerResult = $conn->query("SELECT id, name FROM customers ORDER BY name");
+$customerScope = getCustomerChannelScopeSql('c', 'f');
+$customerResult = $conn->query("SELECT c.id, c.name FROM customers c LEFT JOIN factories f ON f.id = c.factory_id WHERE $customerScope ORDER BY c.name");
 if ($customerResult) {
     while ($row = $customerResult->fetch_assoc()) {
         $customers[] = $row;

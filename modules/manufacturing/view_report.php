@@ -16,13 +16,13 @@ if ($orderId <= 0) {
 }
 
 // Check if order exists
-$orderStmt = $conn->prepare("SELECT id, order_number, status FROM manufacturing_orders WHERE id = ?");
+$orderStmt = $conn->prepare("SELECT id, order_number, status, customer_id FROM manufacturing_orders WHERE id = ?");
 $orderStmt->bind_param('i', $orderId);
 $orderStmt->execute();
 $order = $orderStmt->get_result()->fetch_assoc();
 $orderStmt->close();
 
-if (!$order) {
+if (!$order || !canAccessCustomer((int)$order['customer_id'])) {
     setAlert('danger', 'Manufacturing order not found.');
     redirect('index.php');
 }

@@ -25,14 +25,15 @@ if ($id > 0) {
     $stmt->execute();
     $result = $stmt->get_result();
     $formula = $result->fetch_assoc();
-    if (!$formula) {
+    if (!$formula || !canAccessCustomer((int)$formula['customer_id'])) {
         setAlert('danger', 'Formula not found.');
         redirect('formulas.php');
     }
 }
 
 $customers = [];
-$customerResult = $conn->query("SELECT id, name FROM customers ORDER BY name");
+$customerScope = getCustomerChannelScopeSql('c', 'f');
+$customerResult = $conn->query("SELECT c.id, c.name FROM customers c LEFT JOIN factories f ON f.id = c.factory_id WHERE $customerScope ORDER BY c.name");
 if ($customerResult) {
     while ($customerRow = $customerResult->fetch_assoc()) {
         $customers[] = $customerRow;
@@ -42,14 +43,15 @@ if ($customerResult) {
 $products = [];
 $productMap = [];
 // Show material products; fall back to all products if none are typed yet
-$productResult = $conn->query("SELECT id, name, sku FROM products WHERE type = 'material' ORDER BY name");
+$productScope = getProductChannelScopeSql('p', 'c', 'f');
+$productResult = $conn->query("SELECT p.id, p.name, p.sku FROM products p LEFT JOIN customers c ON c.id = p.customer_id LEFT JOIN factories f ON f.id = c.factory_id WHERE p.type = 'material' AND $productScope ORDER BY p.name");
 if ($productResult && $productResult->num_rows > 0) {
     while ($productRow = $productResult->fetch_assoc()) {
         $products[] = $productRow;
         $productMap[$productRow['id']] = $productRow['name'];
     }
 } else {
-    $productResult = $conn->query("SELECT id, name, sku FROM products ORDER BY name");
+    $productResult = $conn->query("SELECT p.id, p.name, p.sku FROM products p LEFT JOIN customers c ON c.id = p.customer_id LEFT JOIN factories f ON f.id = c.factory_id WHERE $productScope ORDER BY p.name");
     if ($productResult) {
         while ($productRow = $productResult->fetch_assoc()) {
             $products[] = $productRow;
@@ -120,10 +122,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $rawComponents = $_POST['components'] ?? [];
     $components = [];
     $componentsMissingUnit = [];
+    $hasInvalidComponent = false;
     if (!empty($rawComponents) && is_array($rawComponents)) {
         foreach ($rawComponents as $componentRow) {
             $componentProductId = isset($componentRow['product_id']) ? (int)$componentRow['product_id'] : 0;
             $componentName = '';
+            if ($componentProductId > 0 && !isset($productMap[$componentProductId])) {
+                $hasInvalidComponent = true;
+                continue;
+            }
             if ($componentProductId > 0 && isset($productMap[$componentProductId])) {
                 $componentName = $productMap[$componentProductId];
             } else {
@@ -149,14 +156,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    if ($customerId <= 0) {
+    $formulaProduct = $productId !== null ? getProductById($productId) : null;
+    $formulaProductIsValid = $productId === null
+        || ($formulaProduct
+            && canAccessProduct($productId)
+            && $formulaProduct['type'] === 'final'
+            && (int)$formulaProduct['customer_id'] === $customerId);
+
+    if ($customerId <= 0 || !canAccessCustomer($customerId)) {
         setAlert('danger', 'Please select a customer.');
+    } elseif (!$formulaProductIsValid) {
+        setAlert('danger', 'Selected final product is outside this customer and Factory channel.');
     } elseif ($name === '') {
         setAlert('danger', 'Please enter a formula name.');
     } elseif (empty($components)) {
         setAlert('danger', 'Please add at least one component.');
     } elseif (!empty($componentsMissingUnit)) {
         setAlert('danger', 'Please select a unit for every component: ' . implode(', ', $componentsMissingUnit));
+    } elseif ($hasInvalidComponent) {
+        setAlert('danger', 'One or more components are outside the Factory channel.');
     } else {
         $componentsJson = json_encode($components, JSON_UNESCAPED_UNICODE);
 

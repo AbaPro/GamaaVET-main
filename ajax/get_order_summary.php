@@ -74,7 +74,7 @@ echo json_encode([
     ] + ($canViewPrices ? [
         'total_amount' => number_format((float)$order['total_amount'], 2),
         'paid_amount' => number_format((float)$order['paid_amount'], 2),
-        'balance' => number_format($balance * -1, 2)
+        'balance' => number_format($balance, 2)
     ] : []),
     'items' => array_map(function ($item) use ($canViewPrices) {
         $payload = [

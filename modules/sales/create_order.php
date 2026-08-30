@@ -28,6 +28,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $customerStmt->execute([$customerId]);
         $factoryId = $customerStmt->fetchColumn();
         $factoryId = $factoryId !== false && $factoryId !== null ? (int)$factoryId : null;
+        if (($_SESSION['login_region'] ?? 'factory') !== 'factory') {
+            $factoryId = null;
+        }
 
         $contactStmt = $pdo->prepare("SELECT id FROM customer_contacts WHERE id = ? AND customer_id = ?");
         $contactStmt->execute([$contactId, $customerId]);
@@ -269,15 +272,15 @@ $productSql = "
     WHERE p.type = 'final'
 ";
 $productParams = [];
+$productSql .= $loginRegion === 'factory'
+    ? " AND customer.direct_sale IS NULL"
+    : " AND customer.direct_sale = ?";
+if ($loginRegion !== 'factory') {
+    $productParams[] = $loginRegion;
+}
 if (isSalesPersonUser()) {
     $productSql .= " AND COALESCE(customer.sales_person_id, customer_factory.sales_person_id) = ?";
     $productParams[] = (int)$_SESSION['user_id'];
-    if ($loginRegion === 'factory') {
-        $productSql .= " AND customer.direct_sale IS NULL";
-    } else {
-        $productSql .= " AND customer.direct_sale = ?";
-        $productParams[] = $loginRegion;
-    }
 }
 $productSql .= " ORDER BY p.name";
 $productListStmt = $pdo->prepare($productSql);

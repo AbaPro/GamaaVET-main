@@ -7,19 +7,31 @@ if (!hasPermission('finance.customer_wallet.view')) {
     redirect('../../dashboard.php');
 }
 
-$page_title = 'Customer Wallets';
+$page_title = 'Customer Accounts';
 $canViewPhoneNumbers = hasPermission('contacts.phone.view');
 require_once '../../includes/header.php';
 
-$sql = "SELECT c.* FROM customers c
+$sql = "SELECT c.*,
+               COALESCE(order_totals.outstanding_orders, 0) AS outstanding_orders,
+               GREATEST(
+                   COALESCE(order_totals.outstanding_orders, 0),
+                   GREATEST(-COALESCE(c.wallet_balance, 0), 0)
+               ) AS receivable
+        FROM customers c
         LEFT JOIN factories f ON f.id = c.factory_id
+        LEFT JOIN (
+            SELECT customer_id,
+                   SUM(GREATEST(total_amount - paid_amount, 0)) AS outstanding_orders
+            FROM orders
+            GROUP BY customer_id
+        ) order_totals ON order_totals.customer_id = c.id
         WHERE " . getCustomerChannelScopeSql('c', 'f') . "
         ORDER BY c.name";
 $result = $conn->query($sql);
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h2>Customer Wallets</h2>
+    <h2>Customer Accounts</h2>
 </div>
 
 <div class="card">
@@ -34,7 +46,9 @@ $result = $conn->query($sql);
                         <?php if ($canViewPhoneNumbers): ?>
                             <th>Phone</th>
                         <?php endif; ?>
-                        <th>Wallet Balance</th>
+                        <th>Wallet / Manual Balance</th>
+                        <th>Outstanding Orders</th>
+                        <th>Accounts Receivable</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -47,10 +61,18 @@ $result = $conn->query($sql);
                             <?php if ($canViewPhoneNumbers): ?>
                                 <td><?= htmlspecialchars($row['phone']); ?></td>
                             <?php endif; ?>
-                            <td><?= number_format($row['wallet_balance'], 2); ?></td>
+                            <td class="<?= (float)$row['wallet_balance'] < 0 ? 'text-danger' : 'text-success'; ?>">
+                                <?= number_format($row['wallet_balance'], 2); ?>
+                            </td>
+                            <td class="<?= (float)$row['outstanding_orders'] > 0 ? 'text-danger' : ''; ?>">
+                                <?= number_format($row['outstanding_orders'], 2); ?>
+                            </td>
+                            <td class="fw-bold <?= (float)$row['receivable'] > 0 ? 'text-danger' : 'text-success'; ?>">
+                                <?= number_format($row['receivable'], 2); ?>
+                            </td>
                             <td>
                                 <a href="../../modules/customers/wallet.php?id=<?= $row['id']; ?>" class="btn btn-sm btn-primary">
-                                    <i class="fas fa-wallet"></i> View Wallet
+                                    <i class="fas fa-wallet"></i> View Account
                                 </a>
                             </td>
                         </tr>

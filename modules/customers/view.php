@@ -19,7 +19,10 @@ if (!canAccessCustomer($customer_id) || !isCustomerInCurrentChannel($customer_id
 }
 $page_title = 'Customer Details';
 $canViewPhoneNumbers = hasPermission('contacts.phone.view');
-$canViewCustomerWallet = hasPermission('customers.wallet.view') || hasPermission('customers.wallet') || hasPermission('finance.customer_wallet.view');
+$canViewCustomerWallet = hasPermission('customers.wallet.view')
+    || hasPermission('customers.wallet')
+    || hasPermission('customers.wallet.balance.edit')
+    || hasPermission('finance.customer_wallet.view');
 require_once '../../includes/header.php';
 
 // Get customer info
@@ -88,7 +91,7 @@ $customer_products_sql = "SELECT p.id, p.name, p.sku, p.type,
                           LEFT JOIN inventory_products ip ON p.id = ip.product_id
                           LEFT JOIN inventories i ON ip.inventory_id = i.id
                           LEFT JOIN locations l ON i.location_id = l.id
-                          WHERE p.customer_id = ?" . (isSalesPersonUser() ? " AND p.type = 'final'" : "") . "
+                          WHERE p.customer_id = ?" . ((isSalesPersonUser() || ($_SESSION['login_region'] ?? 'factory') !== 'factory') ? " AND p.type = 'final'" : "") . "
                           ORDER BY p.name ASC, i.name ASC";
 $cp_stmt = $conn->prepare($customer_products_sql);
 $cp_stmt->bind_param("i", $customer_id);
@@ -96,14 +99,16 @@ $cp_stmt->execute();
 $customer_products_result = $cp_stmt->get_result();
 
 $factories_data = [];
-$factoriesSql = "SELECT id, name FROM factories";
-if (isSalesPersonUser()) {
-    $factoriesSql .= " WHERE sales_person_id = " . (int)$_SESSION['user_id'];
-}
-$factories_result = $conn->query($factoriesSql . " ORDER BY name");
-if ($factories_result) {
-    while ($factory = $factories_result->fetch_assoc()) {
-        $factories_data[] = $factory;
+if (($_SESSION['login_region'] ?? 'factory') === 'factory') {
+    $factoriesSql = "SELECT id, name FROM factories";
+    if (isSalesPersonUser()) {
+        $factoriesSql .= " WHERE sales_person_id = " . (int)$_SESSION['user_id'];
+    }
+    $factories_result = $conn->query($factoriesSql . " ORDER BY name");
+    if ($factories_result) {
+        while ($factory = $factories_result->fetch_assoc()) {
+            $factories_data[] = $factory;
+        }
     }
 }
 ?>
@@ -373,6 +378,7 @@ if ($factories_result) {
                                 </div>
                             </div>
                             <div class="row">
+                                <?php if (($_SESSION['login_region'] ?? 'factory') === 'factory'): ?>
                                 <div class="col-md-6 mb-3">
                                     <label for="edit_factory_id" class="form-label">Factory</label>
                                     <select class="form-select" id="edit_factory_id" name="factory_id">
@@ -382,6 +388,7 @@ if ($factories_result) {
                                         <?php endforeach; ?>
                                     </select>
                                 </div>
+                                <?php endif; ?>
                                 <div class="col-md-6 mb-3">
                                     <label for="edit_whatsapp_phone" class="form-label">WhatsApp Number</label>
                                     <input type="text" class="form-control" id="edit_whatsapp_phone" name="whatsapp_phone">
@@ -413,10 +420,8 @@ if ($factories_result) {
                                 </div>
                                 <?php endif; ?>
                                 <div class="col-md-6 mb-3">
-                                    <label for="edit_direct_sale" class="form-label">Direct Sale</label>
-                                    <select class="form-select" id="edit_direct_sale" name="direct_sale">
-                                        <?= getDirectSaleOptions() ?>
-                                    </select>
+                                    <label class="form-label">Sales Channel</label>
+                                    <input type="text" class="form-control" value="<?= e(($_SESSION['login_region'] ?? 'factory') === 'factory' ? 'Factory' : $_SESSION['login_region']) ?>" readonly>
                                 </div>
                             </div>
                             <div class="row">
@@ -465,7 +470,6 @@ $(document).ready(function() {
                     $('#edit_tax_number').val(response.customer.tax_number);
                     $('#edit_wallet_balance').val(response.customer.wallet_balance);
                     $('#edit_region').val(response.customer.region);
-                    $('#edit_direct_sale').val(response.customer.direct_sale);
                     
                     $('#editCustomerModal').modal('show');
                 } else {

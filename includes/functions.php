@@ -618,9 +618,10 @@ function isSalesPersonUser() {
 }
 
 /**
- * SQL condition for data that belongs to the currently selected login channel.
- * Factory data has a NULL direct_sale value; direct-sales data stores its region slug.
- * Salespeople are additionally restricted to their effective customer assignment.
+ * SQL condition for data visible in the currently selected login channel.
+ * Factory customers have no direct_sale slug; direct-sales customers must match
+ * the selected region. Salespeople are additionally restricted to their
+ * effective customer assignment.
  */
 function getCustomerChannelScopeSql($customerAlias = 'c', $factoryAlias = 'f') {
     global $conn;
@@ -636,6 +637,65 @@ function getCustomerChannelScopeSql($customerAlias = 'c', $factoryAlias = 'f') {
     }
 
     return $condition;
+}
+
+/**
+ * SQL condition for products visible in the selected channel.
+ * Factory owns raw/primary products and final products for Factory customers;
+ * Direct Sale owns only final products for customers in its selected region.
+ */
+function getProductChannelScopeSql($productAlias = 'p', $customerAlias = 'c', $factoryAlias = 'f') {
+    $loginRegion = $_SESSION['login_region'] ?? 'factory';
+    $customerScope = getCustomerChannelScopeSql($customerAlias, $factoryAlias);
+
+    if ($loginRegion === 'factory' && !isSalesPersonUser()) {
+        return "($productAlias.type IN ('primary', 'material') OR "
+            . "($productAlias.type = 'final' AND $customerScope))";
+    }
+
+    return "$productAlias.type = 'final' AND $customerScope";
+}
+
+/**
+ * Customer receivables from both supported sources:
+ *  - unpaid order balances; and
+ *  - legacy/manual negative customer wallet balances.
+ *
+ * Negative wallets have historically been used as customer debt. Taking the
+ * larger value per customer prevents the same debt being counted twice when a
+ * negative wallet mirrors that customer's open orders.
+ */
+function getCustomerReceivablesSummary() {
+    global $conn;
+
+    $scope = getCustomerChannelScopeSql('receivable_customer', 'receivable_factory');
+    $sql = "
+        SELECT
+            COALESCE(SUM(GREATEST(customer_orders_due, wallet_debt)), 0) AS total,
+            COALESCE(SUM(GREATEST(customer_orders_due, wallet_debt) > 0), 0) AS customer_count,
+            COALESCE(SUM(customer_orders_due), 0) AS order_balances,
+            COALESCE(SUM(wallet_debt), 0) AS wallet_debt
+        FROM (
+            SELECT
+                receivable_customer.id,
+                COALESCE(SUM(GREATEST(COALESCE(receivable_order.total_amount, 0) - COALESCE(receivable_order.paid_amount, 0), 0)), 0) AS customer_orders_due,
+                GREATEST(-COALESCE(receivable_customer.wallet_balance, 0), 0) AS wallet_debt
+            FROM customers receivable_customer
+            LEFT JOIN factories receivable_factory ON receivable_factory.id = receivable_customer.factory_id
+            LEFT JOIN orders receivable_order ON receivable_order.customer_id = receivable_customer.id
+            WHERE $scope
+            GROUP BY receivable_customer.id, receivable_customer.wallet_balance
+        ) customer_receivables
+    ";
+    $result = $conn->query($sql);
+    $summary = $result ? $result->fetch_assoc() : [];
+
+    return [
+        'total' => (float)($summary['total'] ?? 0),
+        'customer_count' => (int)($summary['customer_count'] ?? 0),
+        'order_balances' => (float)($summary['order_balances'] ?? 0),
+        'wallet_debt' => (float)($summary['wallet_debt'] ?? 0),
+    ];
 }
 
 function getInventoryChannelScopeSql($inventoryAlias = 'i') {
@@ -661,9 +721,9 @@ function getInventoryChannelScopeSql($inventoryAlias = 'i') {
 }
 
 /**
- * Row-level check for the Customers area. Factory is the all-customers view;
- * direct-sales logins may only open customers from their selected channel.
- * Salesperson ownership is enforced separately by canAccessCustomer().
+ * Row-level check for the Customers area. Factory and every direct-sales region
+ * are isolated from one another. Salesperson ownership is enforced separately
+ * by canAccessCustomer().
  */
 function isCustomerInCurrentChannel($customerId) {
     global $conn;
@@ -673,7 +733,7 @@ function isCustomerInCurrentChannel($customerId) {
 
     $loginRegion = $_SESSION['login_region'] ?? 'factory';
     $cond = $loginRegion === 'factory'
-        ? "1 = 1"
+        ? "direct_sale IS NULL"
         : "direct_sale = '" . $conn->real_escape_string($loginRegion) . "'";
 
     $stmt = $conn->prepare("SELECT id FROM customers WHERE id = ? AND $cond LIMIT 1");
@@ -792,9 +852,9 @@ function canAccessInventory($inventoryId) {
 }
 
 /**
- * Inventory additions may contain raw materials or final products. Final
- * products remain limited to customers in the selected channel; raw materials
- * are shared operational items and are available to non-sales inventory users.
+ * Inventory additions follow the same strict product channel boundary:
+ * Factory may use its internal/raw products and Factory final products, while
+ * Direct Sale may use only final products for its own customers.
  */
 function canAddProductToInventory($inventoryId, $productId) {
     global $conn;
@@ -804,10 +864,7 @@ function canAddProductToInventory($inventoryId, $productId) {
     if ($inventoryId <= 0 || $productId <= 0 || !isLoggedIn()) return false;
 
     $inventoryScope = getInventoryChannelScopeSql('i');
-    $customerScope = getCustomerChannelScopeSql('c', 'f');
-    $productScope = isSalesPersonUser()
-        ? "p.type = 'final' AND $customerScope"
-        : "(p.type = 'material' OR (p.type = 'final' AND $customerScope))";
+    $productScope = getProductChannelScopeSql('p', 'c', 'f');
     $sql = "SELECT p.id
             FROM products p
             LEFT JOIN customers c ON c.id = p.customer_id
@@ -815,7 +872,7 @@ function canAddProductToInventory($inventoryId, $productId) {
             JOIN inventories i ON i.id = ?
             WHERE p.id = ?
               AND $inventoryScope
-              AND ($productScope)
+              AND $productScope
             LIMIT 1";
     $stmt = $conn->prepare($sql);
     $stmt->bind_param('ii', $inventoryId, $productId);
@@ -1004,6 +1061,14 @@ function applyTransferStockMovement($transfer, $direction = 'out') {
     $items = $itemsStmt->get_result()->fetch_all(MYSQLI_ASSOC);
     $itemsStmt->close();
 
+    foreach ($items as $item) {
+        $productId = (int)$item['product_id'];
+        if (!canAddProductToInventory($sourceId, $productId)
+            || !canAddProductToInventory($destinationId, $productId)) {
+            throw new Exception('Transfer contains a product outside the current channel.');
+        }
+    }
+
     // Collect every shortage first so the error names all short products at once.
     $shortages = [];
     foreach ($items as $item) {
@@ -1100,28 +1165,25 @@ function writeTransferStockLogs($stockLogs, $sourceType, $transferId) {
 }
 
 /**
- * Salespeople are restricted to customers explicitly assigned to them, or
- * inherited from the customer's factory. Admins and non-sales operational
- * roles retain their permission-based access.
+ * All roles are restricted to the selected channel. Salespeople are further
+ * restricted to customers explicitly assigned to them, or inherited from the
+ * customer's factory.
  */
 function canAccessCustomer($customerId) {
     global $conn;
 
     $customerId = (int)$customerId;
     if ($customerId <= 0 || !isLoggedIn()) return false;
-    if (!isSalesPersonUser()) return true;
 
-    $userId = (int)$_SESSION['user_id'];
-    $loginRegion = $_SESSION['login_region'] ?? 'factory';
+    $channelScope = getCustomerChannelScopeSql('c', 'f');
     $sql = "SELECT c.id
             FROM customers c
             LEFT JOIN factories f ON f.id = c.factory_id
             WHERE c.id = ?
-              AND COALESCE(c.sales_person_id, f.sales_person_id) = ?
-              AND ((? = 'factory' AND c.direct_sale IS NULL) OR c.direct_sale = ?)
-            LIMIT 1";
+              AND $channelScope";
+    $sql .= " LIMIT 1";
     $stmt = $conn->prepare($sql);
-    $stmt->bind_param('iiss', $customerId, $userId, $loginRegion, $loginRegion);
+    $stmt->bind_param('i', $customerId);
     $stmt->execute();
     $allowed = $stmt->get_result()->num_rows === 1;
     $stmt->close();
@@ -1134,6 +1196,7 @@ function canAccessFactory($factoryId) {
 
     $factoryId = (int)$factoryId;
     if ($factoryId <= 0 || !isLoggedIn()) return false;
+    if (($_SESSION['login_region'] ?? 'factory') !== 'factory') return false;
     if (!isSalesPersonUser()) return true;
 
     $userId = (int)$_SESSION['user_id'];
@@ -1151,21 +1214,17 @@ function canAccessProduct($productId) {
 
     $productId = (int)$productId;
     if ($productId <= 0 || !isLoggedIn()) return false;
-    if (!isSalesPersonUser()) return true;
 
-    $userId = (int)$_SESSION['user_id'];
-    $loginRegion = $_SESSION['login_region'] ?? 'factory';
+    $channelScope = getProductChannelScopeSql('p', 'c', 'f');
     $sql = "SELECT p.id
             FROM products p
-            JOIN customers c ON c.id = p.customer_id
+            LEFT JOIN customers c ON c.id = p.customer_id
             LEFT JOIN factories f ON f.id = c.factory_id
             WHERE p.id = ?
-              AND p.type = 'final'
-              AND COALESCE(c.sales_person_id, f.sales_person_id) = ?
-              AND ((? = 'factory' AND c.direct_sale IS NULL) OR c.direct_sale = ?)
-            LIMIT 1";
+              AND $channelScope";
+    $sql .= " LIMIT 1";
     $stmt = $conn->prepare($sql);
-    $stmt->bind_param('iiss', $productId, $userId, $loginRegion, $loginRegion);
+    $stmt->bind_param('i', $productId);
     $stmt->execute();
     $allowed = $stmt->get_result()->num_rows === 1;
     $stmt->close();
@@ -1178,20 +1237,17 @@ function canAccessOrder($orderId) {
 
     $orderId = (int)$orderId;
     if ($orderId <= 0 || !isLoggedIn()) return false;
-    if (!isSalesPersonUser()) return true;
 
-    $userId = (int)$_SESSION['user_id'];
-    $loginRegion = $_SESSION['login_region'] ?? 'factory';
+    $channelScope = getCustomerChannelScopeSql('c', 'f');
     $sql = "SELECT o.id
             FROM orders o
             JOIN customers c ON c.id = o.customer_id
             LEFT JOIN factories f ON f.id = c.factory_id
             WHERE o.id = ?
-              AND COALESCE(c.sales_person_id, f.sales_person_id) = ?
-              AND ((? = 'factory' AND c.direct_sale IS NULL) OR c.direct_sale = ?)
-            LIMIT 1";
+              AND $channelScope";
+    $sql .= " LIMIT 1";
     $stmt = $conn->prepare($sql);
-    $stmt->bind_param('iiss', $orderId, $userId, $loginRegion, $loginRegion);
+    $stmt->bind_param('i', $orderId);
     $stmt->execute();
     $allowed = $stmt->get_result()->num_rows === 1;
     $stmt->close();
@@ -1204,20 +1260,17 @@ function canAccessQuotation($quotationId) {
 
     $quotationId = (int)$quotationId;
     if ($quotationId <= 0 || !isLoggedIn()) return false;
-    if (!isSalesPersonUser()) return true;
 
-    $userId = (int)$_SESSION['user_id'];
-    $loginRegion = $_SESSION['login_region'] ?? 'factory';
+    $channelScope = getCustomerChannelScopeSql('c', 'f');
     $sql = "SELECT q.id
             FROM quotations q
             JOIN customers c ON c.id = q.customer_id
             LEFT JOIN factories f ON f.id = c.factory_id
             WHERE q.id = ?
-              AND COALESCE(c.sales_person_id, f.sales_person_id) = ?
-              AND ((? = 'factory' AND c.direct_sale IS NULL) OR c.direct_sale = ?)
-            LIMIT 1";
+              AND $channelScope";
+    $sql .= " LIMIT 1";
     $stmt = $conn->prepare($sql);
-    $stmt->bind_param('iiss', $quotationId, $userId, $loginRegion, $loginRegion);
+    $stmt->bind_param('i', $quotationId);
     $stmt->execute();
     $allowed = $stmt->get_result()->num_rows === 1;
     $stmt->close();

@@ -224,7 +224,7 @@ $canDeleteOrders = hasPermission('sales.orders.delete');
                                 <td><?= number_format($order['total_amount'], 2) ?></td>
                                 <td><?= number_format($order['paid_amount'], 2) ?></td>
                                 <td class="<?= $balance > 0 ? 'text-danger' : 'text-success' ?>">
-                                    <?= number_format($balance * -1, 2) ?>
+                                    <?= number_format($balance, 2) ?>
                                 </td>
                                 <?php endif; ?>
                                 <td>

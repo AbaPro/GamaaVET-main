@@ -8,9 +8,9 @@ if (!hasPermission('products.view')) {
     echo json_encode(['success' => false, 'message' => 'Unauthorized']);
     exit;
 }
-if (isSalesPersonUser()) {
+if (isSalesPersonUser() || ($_SESSION['login_region'] ?? 'factory') !== 'factory') {
     http_response_code(403);
-    echo json_encode(['success' => false, 'message' => 'Component details are not available to sales users']);
+    echo json_encode(['success' => false, 'message' => 'Component details are available only in Factory']);
     exit;
 }
 

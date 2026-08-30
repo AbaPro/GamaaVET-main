@@ -38,6 +38,7 @@ if (isset($_GET['search']) && !empty(trim($_GET['search']))) {
 $whereClauses = [];
 $paramTypes = '';
 $paramValues = [];
+$whereClauses[] = getProductChannelScopeSql('p', 'cust', 'customer_factory');
 
 if ($filterType !== null) {
     $whereClauses[] = 'p.type = ?';
@@ -73,20 +74,6 @@ if ($searchFilter !== null) {
     $paramValues[] = $likeSearch;
 }
 
-if (isSalesPersonUser()) {
-    $whereClauses[] = 'COALESCE(cust.sales_person_id, customer_factory.sales_person_id) = ?';
-    $paramTypes .= 'i';
-    $paramValues[] = (int)$_SESSION['user_id'];
-    $loginRegion = $_SESSION['login_region'] ?? 'factory';
-    if ($loginRegion === 'factory') {
-        $whereClauses[] = 'cust.direct_sale IS NULL';
-    } else {
-        $whereClauses[] = 'cust.direct_sale = ?';
-        $paramTypes .= 's';
-        $paramValues[] = $loginRegion;
-    }
-}
-
 $sql = "SELECT p.*, c1.name as category_name, c2.name as subcategory_name, cust.name as customer_name,
                COALESCE((SELECT SUM(ip.quantity) FROM inventory_products ip JOIN inventories inv ON ip.inventory_id = inv.id WHERE ip.product_id = p.id AND inv.is_active = 1), 0) AS total_quantity
         FROM products p
@@ -101,7 +88,7 @@ if (!empty($whereClauses)) {
 
 $sql .= " ORDER BY p.name";
 
-if (!empty($whereClauses)) {
+if ($paramTypes !== '') {
     $stmt = $conn->prepare($sql);
     $bindParams = array_merge([$paramTypes], $paramValues);
     $bindRefs = [];

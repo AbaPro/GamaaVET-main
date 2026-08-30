@@ -20,7 +20,9 @@ $orderStmt = $conn->prepare("
     SELECT mo.*, c.name AS customer_name
     FROM manufacturing_orders mo
     JOIN customers c ON c.id = mo.customer_id
+    LEFT JOIN factories f ON f.id = c.factory_id
     WHERE mo.id = ?
+      AND " . getCustomerChannelScopeSql('c', 'f') . "
 ");
 $orderStmt->bind_param("i", $orderId);
 $orderStmt->execute();
@@ -87,8 +89,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $status = 'getting';
     }
 
+    $productIsValid = false;
+    if ($productId > 0 && canAccessProduct($productId)) {
+        $orderCustomerId = (int)$order['customer_id'];
+        $productCheckStmt = $conn->prepare("SELECT COUNT(*) FROM products WHERE id = ? AND customer_id = ? AND type = 'final'");
+        $productCheckStmt->bind_param('ii', $productId, $orderCustomerId);
+        $productCheckStmt->execute();
+        $productCheckStmt->bind_result($productMatchCount);
+        $productCheckStmt->fetch();
+        $productCheckStmt->close();
+        $productIsValid = (int)$productMatchCount === 1;
+    }
+
     if ($locationId <= 0) {
         setAlert('danger', 'Please select a location for this manufacturing order.');
+    } elseif (!$productIsValid) {
+        setAlert('danger', 'Please select a final product for this Factory customer.');
     } else {
         try {
             $dueDateValue = $dueDate ?: null;
@@ -231,7 +247,8 @@ $page_title = 'Edit Manufacturing Order';
 require_once '../../includes/header.php';
 
 $customers = [];
-$customerResult = $conn->query("SELECT id, name FROM customers ORDER BY name");
+$customerScope = getCustomerChannelScopeSql('c', 'f');
+$customerResult = $conn->query("SELECT c.id, c.name FROM customers c LEFT JOIN factories f ON f.id = c.factory_id WHERE $customerScope ORDER BY c.name");
 if ($customerResult) {
     while ($row = $customerResult->fetch_assoc()) {
         $customers[] = $row;

@@ -14,9 +14,11 @@ $customerFilter = isset($_GET['customer_id']) ? (int)$_GET['customer_id'] : 0;
 $productFilter = isset($_GET['product_id']) ? (int)$_GET['product_id'] : 0;
 $search = sanitize($_GET['search'] ?? '');
 $hasPackagingProductColumn = $conn->query("SHOW COLUMNS FROM packaging_options LIKE 'product_id'")->num_rows > 0;
+$customerScope = getCustomerChannelScopeSql('c', 'customer_factory');
+$productScope = getProductChannelScopeSql('p', 'product_customer', 'product_factory');
 
 $customers = [];
-$customerResult = $conn->query("SELECT id, name FROM customers ORDER BY name");
+$customerResult = $conn->query("SELECT c.id, c.name FROM customers c LEFT JOIN factories customer_factory ON customer_factory.id = c.factory_id WHERE $customerScope ORDER BY c.name");
 if ($customerResult) {
     while ($row = $customerResult->fetch_assoc()) {
         $customers[] = $row;
@@ -24,14 +26,14 @@ if ($customerResult) {
 }
 
 $finalProducts = [];
-$finalProductResult = $conn->query("SELECT id, customer_id, name, sku FROM products WHERE type = 'final' ORDER BY name");
+$finalProductResult = $conn->query("SELECT p.id, p.customer_id, p.name, p.sku FROM products p LEFT JOIN customers product_customer ON product_customer.id = p.customer_id LEFT JOIN factories product_factory ON product_factory.id = product_customer.factory_id WHERE p.type = 'final' AND $productScope ORDER BY p.name");
 if ($finalProductResult) {
     while ($row = $finalProductResult->fetch_assoc()) {
         $finalProducts[] = $row;
     }
 }
 
-$whereClauses = ['1=1'];
+$whereClauses = [$customerScope];
 if ($customerFilter > 0) {
     $whereClauses[] = "po.customer_id = " . (int)$customerFilter;
 }
@@ -50,6 +52,7 @@ $query = "
            COUNT(poi.id) AS item_count
     FROM packaging_options po
     JOIN customers c ON c.id = po.customer_id
+    LEFT JOIN factories customer_factory ON customer_factory.id = c.factory_id
     {$productJoin}
     LEFT JOIN packaging_option_items poi ON poi.packaging_option_id = po.id
     WHERE " . implode(' AND ', $whereClauses) . "

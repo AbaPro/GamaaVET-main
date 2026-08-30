@@ -94,6 +94,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $quantity = (float)sanitize($_POST['quantity'][$key]);
 
             if ($quantity > 0) {
+                if (!canAddProductToInventory($from_inventory_id, $product_id)
+                    || !canAddProductToInventory($to_inventory_id, $product_id)) {
+                    throw new Exception('A selected product is outside the current channel.');
+                }
                 $item_sql = "INSERT INTO transfer_items (transfer_id, product_id, quantity) VALUES (?, ?, ?)";
                 $item_stmt = $conn->prepare($item_sql);
                 $item_stmt->bind_param("iid", $transfer_id, $product_id, $quantity);

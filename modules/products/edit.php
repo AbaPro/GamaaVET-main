@@ -33,10 +33,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $customer_id = isset($_POST['customer_id']) && $_POST['customer_id'] !== '' ? (int)$_POST['customer_id'] : null;
     if (isSalesPersonUser()) {
         $type = 'final';
+    }
+    $loginRegion = $_SESSION['login_region'] ?? 'factory';
+    if ($type === 'final') {
         if ($customer_id === null || !canAccessCustomer($customer_id)) {
-            setAlert('danger', 'A final product must remain linked to one of your assigned customers.');
+            setAlert('danger', 'A final product must remain linked to a customer in the current sales channel.');
             redirect('index.php?type=final');
         }
+    } elseif (in_array($type, ['primary', 'material'], true)) {
+        if ($loginRegion !== 'factory' || isSalesPersonUser()) {
+            setAlert('danger', 'Raw and primary products are available only in Factory.');
+            redirect('index.php?type=final');
+        }
+        $customer_id = null;
+    } else {
+        setAlert('danger', 'Invalid product type.');
+        redirect('index.php');
     }
     $unit_price = sanitize($_POST['unit_price']);
     $cost_price = isset($_POST['cost_price']) && $_POST['cost_price'] !== '' ? sanitize($_POST['cost_price']) : null;
@@ -169,7 +181,12 @@ if ($catResult) {
 }
 
 $customers = [];
-$customerResult = $conn->query("SELECT id, name FROM customers ORDER BY name");
+$customerSql = "SELECT c.id, c.name
+                FROM customers c
+                LEFT JOIN factories f ON f.id = c.factory_id
+                WHERE " . getCustomerChannelScopeSql('c', 'f') . "
+                ORDER BY c.name";
+$customerResult = $conn->query($customerSql);
 if ($customerResult) {
     while ($customerRow = $customerResult->fetch_assoc()) {
         $customers[] = $customerRow;
@@ -217,9 +234,13 @@ require_once '../../includes/header.php';
             <div class="col-md-6 mb-3">
                 <label class="form-label">Type</label>
                 <select class="form-select js-product-type" name="type" required>
+                    <?php if (($_SESSION['login_region'] ?? 'factory') === 'factory' && !isSalesPersonUser()): ?>
                     <option value="primary" <?= $product['type'] === 'primary' ? 'selected' : '' ?>>Primary</option>
+                    <?php endif; ?>
                     <option value="final" <?= $product['type'] === 'final' ? 'selected' : '' ?>>Final</option>
+                    <?php if (($_SESSION['login_region'] ?? 'factory') === 'factory' && !isSalesPersonUser()): ?>
                     <option value="material" <?= $product['type'] === 'material' ? 'selected' : '' ?>>Material</option>
+                    <?php endif; ?>
                 </select>
             </div>
         </div>

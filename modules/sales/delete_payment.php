@@ -26,6 +26,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['payment_id'])) {
         }
 
         $order_id = $payment['order_id'];
+        if (!canAccessOrder($order_id)) {
+            throw new Exception('You do not have access to the order for this payment.');
+        }
         $amount = (float)$payment['amount'];
         $method = $payment['payment_method'];
 

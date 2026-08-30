@@ -181,8 +181,11 @@
                         <?php endif; ?>
 
                         <!-- Products -->
-                        <?php $canProducts = hasPermission('products.view') || hasPermission('products.create') || hasPermission('products.bulk_upload') || hasPermission('categories.manage'); ?>
-                        <?php if ($canProducts && $login_region === 'factory'): ?>
+                        <?php $canProducts = hasPermission('products.view')
+                            || hasPermission('products.create')
+                            || hasPermission('products.bulk_upload')
+                            || ($login_region === 'factory' && hasPermission('categories.manage')); ?>
+                        <?php if ($canProducts): ?>
                             <li class="nav-item dropdown">
                                 <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
                                     <i class="fas fa-boxes-stacked me-1"></i> Products
@@ -194,11 +197,13 @@
                                                 <i class="fas fa-box me-2"></i> Final Products
                                             </a>
                                         </li>
+                                        <?php if ($login_region === 'factory'): ?>
                                         <li>
                                             <a class="dropdown-item" href="<?= BASE_URL ?>modules/products/?type=material">
                                                 <i class="fas fa-layer-group me-2"></i> Raw Materials
                                             </a>
                                         </li>
+                                        <?php endif; ?>
                                         <li>
                                             <hr class="dropdown-divider">
                                         </li>
@@ -221,7 +226,7 @@
                                     <li>
                                         <hr class="dropdown-divider">
                                     </li>
-                                    <?php if (hasPermission('categories.manage')): ?>
+                                    <?php if ($login_region === 'factory' && hasPermission('categories.manage')): ?>
                                         <li>
                                             <a class="dropdown-item" href="<?= BASE_URL ?>modules/categories/">
                                                 <i class="fas fa-tags me-2"></i> Categories
@@ -349,8 +354,10 @@
                         || hasPermission('finance.bank_accounts.create')
                         || hasPermission('finance.personal_accounts.create')
                         || hasPermission('finance.transfers.create')
-                        || hasPermission('finance.po_payment.process')
-                        || hasPermission('finance.vendor_wallet.view');
+                        || ($login_region === 'factory' && (
+                            hasPermission('finance.po_payment.process')
+                            || hasPermission('finance.vendor_wallet.view')
+                        ));
                     ?>
                     <?php if ($canFinance): ?>
                         <li class="nav-item dropdown">
@@ -359,7 +366,7 @@
                             </a>
                             <ul class="dropdown-menu">
                                 <?php if (hasPermission('finance.customer_wallet.view')): ?>
-                                    <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/customers.php"><i class="fas fa-wallet me-2"></i> Customer Wallets</a></li>
+                                    <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/customers.php"><i class="fas fa-wallet me-2"></i> Customer Accounts</a></li>
                                 <?php endif; ?>
                                 <?php if (hasPermission('finance.customer_payment.process')): ?>
                                     <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/bills.php"><i class="fas fa-file-invoice-dollar me-2"></i> Bills & Payments</a></li>
@@ -376,16 +383,16 @@
                                 <?php if (hasPermission('finance.transfers.create')): ?>
                                     <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/transfers.php"><i class="fas fa-right-left me-2"></i> Transfers</a></li>
                                 <?php endif; ?>
-                                <?php if (hasPermission('finance.po_payment.process')): ?>
+                                <?php if ($login_region === 'factory' && hasPermission('finance.po_payment.process')): ?>
                                     <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/po.php"><i class="fas fa-file-contract me-2"></i> PO Payments</a></li>
                                 <?php endif; ?>
                                 <?php if (hasPermission('finance.expenses.view')): ?>
                                     <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/expenses/"><i class="fas fa-money-bill-wave me-2"></i> Expenses Tracking</a></li>
                                 <?php endif; ?>
-                                <?php if (hasPermission('finance.vendor_wallet.view')): ?>
+                                <?php if ($login_region === 'factory' && hasPermission('finance.vendor_wallet.view')): ?>
                                     <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/vendors.php"><i class="fas fa-truck-field me-2"></i> Vendor Wallets</a></li>
                                 <?php endif; ?>
-                                <?php if (hasPermission('analysis.view_reports')): ?>
+                                <?php if ($login_region === 'factory' && hasPermission('analysis.view_reports')): ?>
                                     <li><hr class="dropdown-divider"></li>
                                     <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/analysis/financial_workbook.php"><i class="fas fa-file-excel me-2"></i> Financial Workbook Export</a></li>
                                 <?php endif; ?>

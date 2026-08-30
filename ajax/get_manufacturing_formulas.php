@@ -6,12 +6,24 @@ $providerId = isset($_GET['provider_id']) ? (int)$_GET['provider_id'] : 0;
 
 header('Content-Type: application/json');
 
+if (($_SESSION['login_region'] ?? 'factory') !== 'factory'
+    || (!hasPermission('manufacturing.view') && !hasPermission('manufacturing.orders.create'))) {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'message' => 'Factory access required.', 'formulas' => []]);
+    exit;
+}
+
 if ($providerId <= 0) {
     echo json_encode([
         'success' => false,
         'message' => 'Invalid provider selected',
         'formulas' => [],
     ]);
+    exit;
+}
+if (!canAccessCustomer($providerId)) {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'message' => 'Customer is outside Factory.', 'formulas' => []]);
     exit;
 }
 

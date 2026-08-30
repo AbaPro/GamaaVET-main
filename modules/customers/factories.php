@@ -7,6 +7,11 @@ if (!hasPermission('customers.factories.manage')) {
     redirect('../../dashboard.php');
 }
 
+if (($_SESSION['login_region'] ?? 'factory') !== 'factory') {
+    setAlert('danger', 'Factory information is available only in the Factory channel.');
+    redirect('../sales/index.php');
+}
+
 $isAdmin = isAdminUser();
 $isSalesPerson = isSalesPersonUser();
 $salesPersons = $isAdmin ? getActiveSalesPersons() : [];

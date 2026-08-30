@@ -48,7 +48,7 @@ $inventoryQuantities = getInventoryQuantitiesForProduct($product_id);
 
 // Fetch product components if this is a final product
 $components = [];
-if ($product['type'] == 'final' && !isSalesPersonUser()) {
+if ($product['type'] == 'final' && !isSalesPersonUser() && ($_SESSION['login_region'] ?? 'factory') === 'factory') {
     $components = getProductComponents($product_id);
 }
 

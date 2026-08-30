@@ -20,11 +20,11 @@ if ($order_id <= 0) {
 
 try {
     // Check if order exists
-    $stmt = $pdo->prepare("SELECT order_number FROM manufacturing_orders WHERE id = ?");
+    $stmt = $pdo->prepare("SELECT order_number, customer_id FROM manufacturing_orders WHERE id = ?");
     $stmt->execute([$order_id]);
     $order = $stmt->fetch();
 
-    if (!$order) {
+    if (!$order || !canAccessCustomer((int)$order['customer_id'])) {
         $_SESSION['error'] = "Manufacturing order not found.";
         header("Location: index.php");
         exit();

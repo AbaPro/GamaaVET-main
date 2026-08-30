@@ -125,11 +125,15 @@ $productSql = "
     WHERE p.type = 'final'
 ";
 $productParams = [];
+$productSql .= $loginRegion === 'factory'
+    ? " AND customer.direct_sale IS NULL"
+    : " AND customer.direct_sale = ?";
+if ($loginRegion !== 'factory') {
+    $productParams[] = $loginRegion;
+}
 if (isSalesPersonUser()) {
     $productSql .= " AND COALESCE(customer.sales_person_id, customer_factory.sales_person_id) = ?";
     $productParams[] = (int)$_SESSION['user_id'];
-    $productSql .= $loginRegion === 'factory' ? " AND customer.direct_sale IS NULL" : " AND customer.direct_sale = ?";
-    if ($loginRegion !== 'factory') $productParams[] = $loginRegion;
 }
 $productSql .= " ORDER BY p.name";
 $productStmt = $pdo->prepare($productSql);
@@ -426,7 +430,6 @@ $(document).ready(function() {
 </script>
 
 <?php require_once '../../../includes/footer.php'; ?>
-
 
 
 

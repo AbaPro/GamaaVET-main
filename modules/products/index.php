@@ -43,13 +43,7 @@ if (isset($_GET['search']) && !empty(trim($_GET['search']))) {
 
 $customers = [];
 $customerSql = "SELECT c.id, c.name FROM customers c LEFT JOIN factories f ON f.id = c.factory_id";
-if (isSalesPersonUser()) {
-    $loginRegion = $_SESSION['login_region'] ?? 'factory';
-    $customerSql .= " WHERE COALESCE(c.sales_person_id, f.sales_person_id) = " . (int)$_SESSION['user_id'];
-    $customerSql .= $loginRegion === 'factory'
-        ? " AND c.direct_sale IS NULL"
-        : " AND c.direct_sale = '" . $conn->real_escape_string($loginRegion) . "'";
-}
+$customerSql .= " WHERE " . getCustomerChannelScopeSql('c', 'f');
 $customerResult = $conn->query($customerSql . " ORDER BY c.name");
 if ($customerResult) {
     while ($customerRow = $customerResult->fetch_assoc()) {
@@ -135,6 +129,8 @@ if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
 $whereClauses = [];
 $paramTypes = '';
 $paramValues = [];
+$loginRegion = $_SESSION['login_region'] ?? 'factory';
+$whereClauses[] = getProductChannelScopeSql('p', 'cust', 'customer_factory');
 
 if ($filterType !== null) {
     $whereClauses[] = 'p.type = ?';
@@ -173,20 +169,6 @@ if ($searchFilter !== null) {
     $paramValues[] = $likeSearch;
 }
 
-if (isSalesPersonUser()) {
-    $whereClauses[] = 'COALESCE(cust.sales_person_id, customer_factory.sales_person_id) = ?';
-    $paramTypes .= 'i';
-    $paramValues[] = (int)$_SESSION['user_id'];
-    $loginRegion = $_SESSION['login_region'] ?? 'factory';
-    if ($loginRegion === 'factory') {
-        $whereClauses[] = 'cust.direct_sale IS NULL';
-    } else {
-        $whereClauses[] = 'cust.direct_sale = ?';
-        $paramTypes .= 's';
-        $paramValues[] = $loginRegion;
-    }
-}
-
 $sql = "SELECT p.*, c1.name as category_name, c2.name as subcategory_name, cust.name as customer_name
         FROM products p
         LEFT JOIN categories c1 ON p.category_id = c1.id
@@ -200,7 +182,7 @@ if (!empty($whereClauses)) {
 
 $sql .= " ORDER BY p.name";
 
-if (!empty($whereClauses)) {
+if ($paramTypes !== '') {
     $stmt = $conn->prepare($sql);
     $bindParams = array_merge([$paramTypes], $paramValues);
     $bindRefs = [];
@@ -518,7 +500,9 @@ $productsTableColspan += 1;
                                 <option value="">-- Select Type --</option>
                                 <!-- <option value="primary">Primary Product</option> -->
                                 <option value="final">Final Product</option>
+                                <?php if ($loginRegion === 'factory' && !isSalesPersonUser()): ?>
                                 <option value="material">Material</option>
+                                <?php endif; ?>
                             </select>
                         </div>
                     </div>
@@ -622,7 +606,9 @@ $productsTableColspan += 1;
                             <select class="form-select js-product-type" id="edit_type" name="type" required>
                                 <!-- <option value="primary">Primary Product</option> -->
                                 <option value="final">Final Product</option>
+                                <?php if ($loginRegion === 'factory' && !isSalesPersonUser()): ?>
                                 <option value="material">Material</option>
+                                <?php endif; ?>
                             </select>
                         </div>
                     </div>

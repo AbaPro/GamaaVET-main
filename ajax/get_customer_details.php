@@ -49,6 +49,10 @@ $custStmt->bind_param("i", $customer_id);
 $custStmt->execute();
 $customer = $custStmt->get_result()->fetch_assoc();
 $custStmt->close();
+if (($_SESSION['login_region'] ?? 'factory') !== 'factory') {
+    $customer['factory_id'] = null;
+    $customer['factory_name'] = null;
+}
 
 // fetch contacts
 $stmt = $conn->prepare("SELECT id, name, phone, is_primary
@@ -72,5 +76,4 @@ echo json_encode([
     'contacts' => $contacts
 ], JSON_UNESCAPED_UNICODE);
 exit;
-
 

@@ -41,11 +41,13 @@ $orderStmt = $conn->prepare("
            bs.name AS bottle_size_name, bs.size AS bottle_size_value, bs.unit AS bottle_size_unit, bs.type AS bottle_size_type
     FROM manufacturing_orders mo
     JOIN customers c ON c.id = mo.customer_id
+    LEFT JOIN factories customer_factory ON customer_factory.id = c.factory_id
     JOIN manufacturing_formulas f ON f.id = mo.formula_id
     LEFT JOIN locations l ON l.id = mo.location_id
     LEFT JOIN products p ON p.id = mo.product_id
     LEFT JOIN bottle_sizes bs ON bs.id = mo.bottle_size_id
     WHERE mo.id = ?
+      AND " . getCustomerChannelScopeSql('c', 'customer_factory') . "
     LIMIT 1
 ");
 $orderStmt->bind_param('i', $orderId);

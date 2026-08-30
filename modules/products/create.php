@@ -44,9 +44,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $customer_id = isset($_POST['customer_id']) && $_POST['customer_id'] !== '' ? (int)$_POST['customer_id'] : NULL;
         if (isSalesPersonUser()) {
             $type = 'final';
+        }
+        $loginRegion = $_SESSION['login_region'] ?? 'factory';
+        if ($type === 'final') {
             if ($customer_id === NULL || !canAccessCustomer($customer_id)) {
-                throw new Exception('A final product must be linked to one of your assigned customers.');
+                throw new Exception('A final product must be linked to a customer in the current sales channel.');
             }
+        } elseif (in_array($type, ['primary', 'material'], true)) {
+            if ($loginRegion !== 'factory' || isSalesPersonUser()) {
+                throw new Exception('Raw and primary products are available only in Factory.');
+            }
+            $customer_id = NULL;
+        } else {
+            throw new Exception('Invalid product type.');
         }
         $unit_price = isset($_POST['unit_price']) && $_POST['unit_price'] !== '' ? (float)$_POST['unit_price'] : NULL;
         $cost_price = !empty($_POST['cost_price']) ? (float)$_POST['cost_price'] : NULL;

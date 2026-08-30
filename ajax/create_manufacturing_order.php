@@ -5,7 +5,9 @@ require_once __DIR__ . '/../modules/manufacturing/lib.php';
 
 header('Content-Type: application/json');
 
-if (!hasPermission('manufacturing.view') && !hasPermission('manufacturing.orders.create')) {
+if (($_SESSION['login_region'] ?? 'factory') !== 'factory'
+    || !hasPermission('manufacturing.orders.create')) {
+    http_response_code(403);
     echo json_encode(['success' => false, 'message' => 'Permission denied.']);
     exit;
 }
@@ -28,6 +30,37 @@ try {
 
     if ($customerId <= 0 || $productId <= 0 || $formulaId <= 0 || $locationId <= 0 || $batchSize <= 0) {
         throw new Exception('Please fill in all required fields with valid values.');
+    }
+    if (!canAccessCustomer($customerId) || !canAccessProduct($productId)) {
+        throw new Exception('Customer or product is outside the Factory channel.');
+    }
+
+    $productStmt = $pdo->prepare("SELECT COUNT(*) FROM products WHERE id = ? AND customer_id = ? AND type = 'final'");
+    $productStmt->execute([$productId, $customerId]);
+    if ((int)$productStmt->fetchColumn() !== 1) {
+        throw new Exception('Selected final product does not belong to this Factory customer.');
+    }
+
+    $formulaStmt = $pdo->prepare("SELECT COUNT(*) FROM manufacturing_formulas WHERE id = ? AND customer_id = ? AND is_active = 1");
+    $formulaStmt->execute([$formulaId, $customerId]);
+    if ((int)$formulaStmt->fetchColumn() !== 1) {
+        throw new Exception('Selected formula does not belong to this Factory customer.');
+    }
+
+    if ($salesOrderId) {
+        if (!canAccessOrder($salesOrderId)) {
+            throw new Exception('Linked sales order is outside the Factory channel.');
+        }
+        $salesOrderStmt = $pdo->prepare("
+            SELECT COUNT(*)
+            FROM orders o
+            JOIN order_items oi ON oi.order_id = o.id
+            WHERE o.id = ? AND o.customer_id = ? AND oi.product_id = ? AND o.status <> 'delivered'
+        ");
+        $salesOrderStmt->execute([$salesOrderId, $customerId, $productId]);
+        if ((int)$salesOrderStmt->fetchColumn() === 0) {
+            throw new Exception('Delivered or mismatched sales orders cannot start manufacturing.');
+        }
     }
 
     $orderNumber = generateUniqueId('MAN');

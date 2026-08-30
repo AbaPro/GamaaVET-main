@@ -200,7 +200,7 @@ require_once '../../includes/header.php';
                 </div>
                 <div class="col-md-6">
                     <p><strong>Paid Amount:</strong> <?= number_format($order['paid_amount'], 2) ?></p>
-                    <p><strong>Balance:</strong> <span class="text-danger"><?= number_format($balance * -1, 2) ?></span></p>
+                    <p><strong>Balance:</strong> <span class="text-danger"><?= number_format($balance, 2) ?></span></p>
                     <?php if ($selectedPaymentMethod === 'wallet') : ?>
                         <p><strong>Wallet Balance:</strong> <?= number_format($order['wallet_balance'], 2) ?></p>
                     <?php endif; ?>

@@ -18,7 +18,7 @@ if ($id > 0) {
     $stmt->execute();
     $option = $stmt->get_result()->fetch_assoc();
     $stmt->close();
-    if (!$option) {
+    if (!$option || !canAccessCustomer((int)$option['customer_id'])) {
         setAlert('danger', 'Packaging option not found.');
         redirect('packaging_options.php');
     }
@@ -40,7 +40,8 @@ if ($id > 0) {
 }
 
 $customers = [];
-$customerResult = $conn->query("SELECT id, name FROM customers ORDER BY name");
+$customerScope = getCustomerChannelScopeSql('c', 'f');
+$customerResult = $conn->query("SELECT c.id, c.name FROM customers c LEFT JOIN factories f ON f.id = c.factory_id WHERE $customerScope ORDER BY c.name");
 if ($customerResult) {
     while ($row = $customerResult->fetch_assoc()) {
         $customers[] = $row;
@@ -48,7 +49,8 @@ if ($customerResult) {
 }
 
 $finalProducts = [];
-$finalProductResult = $conn->query("SELECT id, customer_id, name, sku FROM products WHERE type = 'final' ORDER BY name");
+$productScope = getProductChannelScopeSql('p', 'c', 'f');
+$finalProductResult = $conn->query("SELECT p.id, p.customer_id, p.name, p.sku FROM products p LEFT JOIN customers c ON c.id = p.customer_id LEFT JOIN factories f ON f.id = c.factory_id WHERE p.type = 'final' AND $productScope ORDER BY p.name");
 if ($finalProductResult) {
     while ($row = $finalProductResult->fetch_assoc()) {
         $finalProducts[] = $row;
@@ -75,6 +77,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     foreach ($rawItems as $item) {
         $itemProductId = isset($item['product_id']) ? (int)$item['product_id'] : 0;
         if ($itemProductId <= 0) continue;
+        if (!canAccessProduct($itemProductId)) {
+            continue;
+        }
         $items[] = [
             'product_id' => $itemProductId,
             'quantity'   => max(0.001, floatval($item['quantity'] ?? 1)),
@@ -93,11 +98,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $productBelongsToCustomer = (int)($productCheckRow['total'] ?? 0) > 0;
     }
 
-    if ($customerId <= 0) {
+    if ($customerId <= 0 || !canAccessCustomer($customerId)) {
         setAlert('danger', 'Please select a customer.');
     } elseif ($hasPackagingProductColumn && $finalProductId <= 0) {
         setAlert('danger', 'Please select a final product.');
-    } elseif (!$productBelongsToCustomer) {
+    } elseif (!$productBelongsToCustomer || !canAccessProduct($finalProductId)) {
         setAlert('danger', 'Selected final product does not belong to this customer.');
     } elseif ($name === '') {
         setAlert('danger', 'Please enter a name.');

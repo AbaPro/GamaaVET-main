@@ -14,7 +14,10 @@ $login_region = $_SESSION['login_region'] ?? 'factory';
 $isAdmin = isAdminUser();
 $isSalesPerson = isSalesPersonUser();
 $canViewPhoneNumbers = hasPermission('contacts.phone.view');
-$canViewCustomerWallet = hasPermission('customers.wallet.view') || hasPermission('customers.wallet') || hasPermission('finance.customer_wallet.view');
+$canViewCustomerWallet = hasPermission('customers.wallet.view')
+    || hasPermission('customers.wallet')
+    || hasPermission('customers.wallet.balance.edit')
+    || hasPermission('finance.customer_wallet.view');
 
 // Handle delete request
 if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
@@ -92,8 +95,7 @@ if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
     redirect('index.php');
 }
 
-// Factory is the all-customers view. Direct-sales logins remain scoped to their
-// selected channel, and salespeople remain scoped to their assignments.
+// Factory and each direct-sales region are isolated from one another.
 $sql = "SELECT c.*, ct.name AS type_name, f.name AS factory_name,
         sp.name AS sales_person_name,
         (SELECT COUNT(*) FROM products p WHERE p.customer_id = c.id AND p.type = 'material') as material_count,
@@ -105,7 +107,9 @@ $sql = "SELECT c.*, ct.name AS type_name, f.name AS factory_name,
 $whereClauses = [];
 $bindTypes = '';
 $bindValues = [];
-if ($login_region !== 'factory') {
+if ($login_region === 'factory') {
+    $whereClauses[] = "c.direct_sale IS NULL";
+} else {
     $whereClauses[] = "c.direct_sale = ?";
     $bindTypes .= 's';
     $bindValues[] = $login_region;
@@ -128,14 +132,16 @@ $stmt->execute();
 $result = $stmt->get_result();
 
 $factories_data = [];
-$factoriesSql = "SELECT id, name FROM factories";
-if ($isSalesPerson) {
-    $factoriesSql .= " WHERE sales_person_id = " . (int)$_SESSION['user_id'];
-}
-$factories_result = $conn->query($factoriesSql . " ORDER BY name");
-if ($factories_result) {
-    while ($factory = $factories_result->fetch_assoc()) {
-        $factories_data[] = $factory;
+if ($login_region === 'factory') {
+    $factoriesSql = "SELECT id, name FROM factories";
+    if ($isSalesPerson) {
+        $factoriesSql .= " WHERE sales_person_id = " . (int)$_SESSION['user_id'];
+    }
+    $factories_result = $conn->query($factoriesSql . " ORDER BY name");
+    if ($factories_result) {
+        while ($factory = $factories_result->fetch_assoc()) {
+            $factories_data[] = $factory;
+        }
     }
 }
 $salesPersons = $isAdmin ? getActiveSalesPersons() : [];
@@ -144,10 +150,12 @@ $salesPersons = $isAdmin ? getActiveSalesPersons() : [];
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2>Customers</h2>
     <div class="d-flex gap-2 flex-wrap">
-        <a href="types.php" class="btn btn-outline-secondary">
-            <i class="fas fa-tags"></i> Manage Customer Types
-        </a>
-        <?php if (hasPermission('customers.factories.manage')): ?>
+        <?php if ($login_region === 'factory'): ?>
+            <a href="types.php" class="btn btn-outline-secondary">
+                <i class="fas fa-tags"></i> Manage Customer Types
+            </a>
+        <?php endif; ?>
+        <?php if ($login_region === 'factory' && hasPermission('customers.factories.manage')): ?>
         <a href="factories.php" class="btn btn-outline-secondary">
             <i class="fas fa-industry"></i> Manage Factories
         </a>
@@ -170,9 +178,9 @@ $salesPersons = $isAdmin ? getActiveSalesPersons() : [];
                         <th>ID</th>
                         <th>Name</th>
                         <th>Type</th>
-                        <th>Factory</th>
+                        <?php if ($login_region === 'factory'): ?><th>Factory</th><?php endif; ?>
                         <?php if ($isAdmin): ?><th>Sales Person</th><?php endif; ?>
-                        <?php if (!$isSalesPerson): ?><th>Material Products</th><?php endif; ?>
+                        <?php if ($login_region === 'factory' && !$isSalesPerson): ?><th>Material Products</th><?php endif; ?>
                         <th>Final Products</th>
                         <th>Email</th>
                         <?php if ($canViewPhoneNumbers): ?>
@@ -198,11 +206,13 @@ $salesPersons = $isAdmin ? getActiveSalesPersons() : [];
                                         <?php echo ucfirst($row['type_name']); ?>
                                     </span>
                                 </td>
-                                <td><?php echo !empty($row['factory_name']) ? e($row['factory_name']) : '<span class="text-muted">N/A</span>'; ?></td>
+                                <?php if ($login_region === 'factory'): ?>
+                                    <td><?php echo !empty($row['factory_name']) ? e($row['factory_name']) : '<span class="text-muted">N/A</span>'; ?></td>
+                                <?php endif; ?>
                                 <?php if ($isAdmin): ?>
                                     <td><?= !empty($row['sales_person_name']) ? e($row['sales_person_name']) : '<span class="text-muted">Unassigned</span>'; ?></td>
                                 <?php endif; ?>
-                                <?php if (!$isSalesPerson): ?><td><?php echo (int) $row['material_count']; ?></td><?php endif; ?>
+                                <?php if ($login_region === 'factory' && !$isSalesPerson): ?><td><?php echo (int) $row['material_count']; ?></td><?php endif; ?>
                                 <td><?php echo (int) $row['final_count']; ?></td>
                                 <td><?php echo e($row['email']); ?></td>
                                 <?php if ($canViewPhoneNumbers): ?>
@@ -315,6 +325,7 @@ $salesPersons = $isAdmin ? getActiveSalesPersons() : [];
                                 </div>
                             </div>
                             <div class="row">
+                                <?php if ($login_region === 'factory'): ?>
                                 <div class="col-md-6 mb-3">
                                     <label for="factory_id" class="form-label">Factory</label>
                                     <select class="form-select" id="factory_id" name="factory_id">
@@ -325,6 +336,7 @@ $salesPersons = $isAdmin ? getActiveSalesPersons() : [];
                                     </select>
                                     <small class="text-muted">Controls which factory appears on invoices.</small>
                                 </div>
+                                <?php endif; ?>
                                 <div class="col-md-6 mb-3">
                                     <label for="whatsapp_phone" class="form-label">WhatsApp Number</label>
                                     <input type="text" class="form-control" id="whatsapp_phone" name="whatsapp_phone" placeholder="+201234567890">
@@ -369,10 +381,8 @@ $salesPersons = $isAdmin ? getActiveSalesPersons() : [];
                                 </div>
                                 <?php endif; ?>
                                 <div class="col-md-6 mb-3">
-                                    <label for="direct_sale" class="form-label">Direct Sale</label>
-                                    <select class="form-select" id="direct_sale" name="direct_sale">
-                                        <?= getDirectSaleOptions($login_region !== 'factory' ? $login_region : null) ?>
-                                    </select>
+                                    <label class="form-label">Sales Channel</label>
+                                    <input type="text" class="form-control" value="<?= e($login_region === 'factory' ? 'Factory' : $login_region) ?>" readonly>
                                 </div>
                             </div>
                             <div class="row">
@@ -503,6 +513,7 @@ $salesPersons = $isAdmin ? getActiveSalesPersons() : [];
                                 </div>
                             </div>
                             <div class="row">
+                                <?php if ($login_region === 'factory'): ?>
                                 <div class="col-md-6 mb-3">
                                     <label for="edit_factory_id" class="form-label">Factory</label>
                                     <select class="form-select" id="edit_factory_id" name="factory_id">
@@ -512,6 +523,7 @@ $salesPersons = $isAdmin ? getActiveSalesPersons() : [];
                                         <?php endforeach; ?>
                                     </select>
                                 </div>
+                                <?php endif; ?>
                                 <div class="col-md-6 mb-3">
                                     <label for="edit_whatsapp_phone" class="form-label">WhatsApp Number</label>
                                     <input type="text" class="form-control" id="edit_whatsapp_phone" name="whatsapp_phone">
@@ -557,10 +569,8 @@ $salesPersons = $isAdmin ? getActiveSalesPersons() : [];
                                 </div>
                                 <?php endif; ?>
                                 <div class="col-md-6 mb-3">
-                                    <label for="edit_direct_sale" class="form-label">Direct Sale</label>
-                                    <select class="form-select" id="edit_direct_sale" name="direct_sale">
-                                        <?= getDirectSaleOptions() ?>
-                                    </select>
+                                    <label class="form-label">Sales Channel</label>
+                                    <input type="text" class="form-control" value="<?= e($login_region === 'factory' ? 'Factory' : $login_region) ?>" readonly>
                                 </div>
                             </div>
                             <div class="row">
@@ -624,7 +634,6 @@ $(document).ready(function() {
                     $('#edit_tax_number').val(response.customer.tax_number);
                     $('#edit_wallet_balance').val(response.customer.wallet_balance);
                     $('#edit_region').val(response.customer.region);
-                    $('#edit_direct_sale').val(response.customer.direct_sale);
                     
                     $('#editCustomerModal').modal('show');
                 } else {

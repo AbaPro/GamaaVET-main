@@ -21,7 +21,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $whatsapp_phone = !empty($_POST['whatsapp_phone']) ? sanitize($_POST['whatsapp_phone']) : NULL;
     $tax_number = !empty($_POST['tax_number']) ? sanitize($_POST['tax_number']) : NULL;
     $region = !empty($_POST['region']) ? sanitize($_POST['region']) : NULL;
-    $direct_sale = !empty($_POST['direct_sale']) ? sanitize($_POST['direct_sale']) : NULL;
+    $loginRegion = $_SESSION['login_region'] ?? 'factory';
+    $direct_sale = $loginRegion === 'factory' ? NULL : sanitize($loginRegion);
+
+    if ($loginRegion !== 'factory') {
+        $factory_id = NULL;
+    }
 
     $currentStmt = $conn->prepare("SELECT sales_person_id FROM customers WHERE id = ?");
     $currentStmt->bind_param('i', $id);
@@ -34,9 +39,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (isSalesPersonUser()) {
-        $direct_sale = ($_SESSION['login_region'] ?? 'factory') === 'factory'
-            ? NULL
-            : sanitize($_SESSION['login_region']);
         if ($factory_id !== NULL && !canAccessFactory($factory_id)) {
             setAlert('danger', 'You can only link customers to a factory assigned to you.');
             redirect('index.php');

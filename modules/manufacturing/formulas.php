@@ -57,9 +57,11 @@ require_once '../../includes/header.php';
 $providerFilter = isset($_GET['customer_id']) ? (int)$_GET['customer_id'] : (isset($_GET['provider_id']) ? (int)$_GET['provider_id'] : 0);
 $productFilter = isset($_GET['product_id']) ? (int)$_GET['product_id'] : 0;
 $search = sanitize($_GET['search'] ?? '');
+$customerScope = getCustomerChannelScopeSql('c', 'customer_factory');
+$productScope = getProductChannelScopeSql('p', 'product_customer', 'product_factory');
 
 $customers = [];
-$customerResult = $conn->query("SELECT id, name FROM customers ORDER BY name");
+$customerResult = $conn->query("SELECT c.id, c.name FROM customers c LEFT JOIN factories customer_factory ON customer_factory.id = c.factory_id WHERE $customerScope ORDER BY c.name");
 if ($customerResult) {
     while ($customerRow = $customerResult->fetch_assoc()) {
         $customers[] = $customerRow;
@@ -67,14 +69,14 @@ if ($customerResult) {
 }
 
 $allProducts = [];
-$productResult = $conn->query("SELECT id, name, sku FROM products ORDER BY name");
+$productResult = $conn->query("SELECT p.id, p.name, p.sku FROM products p LEFT JOIN customers product_customer ON product_customer.id = p.customer_id LEFT JOIN factories product_factory ON product_factory.id = product_customer.factory_id WHERE $productScope ORDER BY p.name");
 if ($productResult) {
     while ($pRow = $productResult->fetch_assoc()) {
         $allProducts[] = $pRow;
     }
 }
 
-$whereClauses = [];
+$whereClauses = [$customerScope];
 if ($providerFilter > 0) {
     $whereClauses[] = "f.customer_id = " . (int)$providerFilter;
 }
@@ -90,6 +92,7 @@ $query = "
     SELECT f.*, c.name AS customer_name, p.name AS product_name, p.sku AS product_sku
     FROM manufacturing_formulas f
     JOIN customers c ON c.id = f.customer_id
+    LEFT JOIN factories customer_factory ON customer_factory.id = c.factory_id
     LEFT JOIN products p ON p.id = f.product_id
 ";
 if (!empty($whereClauses)) {

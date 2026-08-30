@@ -21,7 +21,10 @@ $page_title = 'Login';
 
 // Check if user is already logged in
 if (isLoggedIn()) {
-    header('Location: dashboard.php');
+    $landingPage = ($_SESSION['login_region'] ?? 'factory') === 'factory'
+        ? 'dashboard.php'
+        : 'modules/sales/';
+    header('Location: ' . $landingPage);
     exit();
 }
 

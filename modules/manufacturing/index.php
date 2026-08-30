@@ -16,9 +16,11 @@ $statusFilter = sanitize($_GET['status'] ?? '');
 $providerFilter = isset($_GET['provider_id']) ? (int)$_GET['provider_id'] : 0;
 $productFilter = isset($_GET['product_id']) ? (int)$_GET['product_id'] : 0;
 $hasPackagingProductColumn = $conn->query("SHOW COLUMNS FROM packaging_options LIKE 'product_id'")->num_rows > 0;
+$customerScope = getCustomerChannelScopeSql('c', 'customer_factory');
+$productScope = getProductChannelScopeSql('p', 'product_customer', 'product_factory');
 
 $customers = [];
-$customerResult = $conn->query("SELECT id, name FROM customers ORDER BY name");
+$customerResult = $conn->query("SELECT c.id, c.name FROM customers c LEFT JOIN factories customer_factory ON customer_factory.id = c.factory_id WHERE $customerScope ORDER BY c.name");
 if ($customerResult) {
     while ($customerRow = $customerResult->fetch_assoc()) {
         $customers[] = $customerRow;
@@ -26,14 +28,14 @@ if ($customerResult) {
 }
 
 $allProducts = [];
-$productResult = $conn->query("SELECT id, name, sku FROM products WHERE type = 'final' ORDER BY name");
+$productResult = $conn->query("SELECT p.id, p.name, p.sku FROM products p LEFT JOIN customers product_customer ON product_customer.id = p.customer_id LEFT JOIN factories product_factory ON product_factory.id = product_customer.factory_id WHERE p.type = 'final' AND $productScope ORDER BY p.name");
 if ($productResult) {
     while ($pRow = $productResult->fetch_assoc()) {
         $allProducts[] = $pRow;
     }
 }
 
-$whereClauses = [];
+$whereClauses = [$customerScope];
 
 if ($statusFilter) {
     $whereClauses[] = "mo.status = '" . $conn->real_escape_string($statusFilter) . "'";
@@ -57,6 +59,7 @@ $ordersQuery = "
     SELECT mo.*, c.name AS customer_name, f.name AS formula_name, p.name AS product_name{$packagingProductSelect}
     FROM manufacturing_orders mo
     JOIN customers c ON c.id = mo.customer_id
+    LEFT JOIN factories customer_factory ON customer_factory.id = c.factory_id
     JOIN manufacturing_formulas f ON f.id = mo.formula_id
     LEFT JOIN products p ON p.id = mo.product_id
     {$packagingProductJoin}

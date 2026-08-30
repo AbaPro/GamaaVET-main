@@ -3,7 +3,11 @@ require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
 
 $canManageCustomerWallet = hasPermission('customers.wallet') || hasPermission('finance.customer_payment.process');
-$canViewCustomerWallet = hasPermission('customers.wallet.view') || $canManageCustomerWallet || hasPermission('finance.customer_wallet.view');
+$canAdjustCustomerWalletBalance = hasPermission('customers.wallet.balance.edit');
+$canViewCustomerWallet = hasPermission('customers.wallet.view')
+    || $canManageCustomerWallet
+    || $canAdjustCustomerWalletBalance
+    || hasPermission('finance.customer_wallet.view');
 
 if (!$canViewCustomerWallet) {
     setAlert('danger', 'You do not have permission to access this page.');
@@ -15,12 +19,12 @@ if (!isset($_GET['id']) || !is_numeric($_GET['id'])) {
     redirect('index.php');
 }
 
-$customer_id = sanitize($_GET['id']);
+$customer_id = (int)$_GET['id'];
 if (!canAccessCustomer($customer_id) || !isCustomerInCurrentChannel($customer_id)) {
     setAlert('danger', 'You do not have permission to access this customer.');
     redirect('index.php');
 }
-$page_title = 'Customer Wallet';
+$page_title = 'Customer Account';
 
 // Get customer info for header
 $customer_sql = "SELECT name, wallet_balance FROM customers WHERE id = ?";
@@ -36,6 +40,101 @@ if ($customer_result->num_rows === 0) {
 
 $customer = $customer_result->fetch_assoc();
 $customer_stmt->close();
+$walletBalanceAdjustmentStorageReady = tableExists('customer_wallet_balance_adjustments');
+
+// A balance adjustment sets the customer account balance directly. It deliberately does
+// not create a wallet transaction or move money through a safe/bank account.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['set_wallet_balance'])) {
+    if (!$canAdjustCustomerWalletBalance) {
+        setAlert('danger', 'You do not have permission to set customer wallet balances directly.');
+        redirect('wallet.php?id=' . $customer_id);
+    }
+
+    if (!$walletBalanceAdjustmentStorageReady) {
+        setAlert('danger', 'The wallet balance adjustment migration has not been applied yet.');
+        redirect('wallet.php?id=' . $customer_id);
+    }
+
+    $newBalanceInput = trim((string)($_POST['wallet_balance'] ?? ''));
+    $adjustmentReason = trim(strip_tags((string)($_POST['adjustment_reason'] ?? '')));
+
+    if (!preg_match('/^-?\d{1,8}(?:\.\d{1,2})?$/', $newBalanceInput)) {
+        setAlert('danger', 'Enter a valid wallet balance between -99,999,999.99 and 99,999,999.99.');
+        redirect('wallet.php?id=' . $customer_id);
+    }
+
+    if ($adjustmentReason === '') {
+        setAlert('danger', 'A reason is required when setting the wallet balance directly.');
+        redirect('wallet.php?id=' . $customer_id);
+    }
+
+    $reasonLength = function_exists('mb_strlen')
+        ? mb_strlen($adjustmentReason, 'UTF-8')
+        : strlen($adjustmentReason);
+    if ($reasonLength > 500) {
+        setAlert('danger', 'The adjustment reason cannot exceed 500 characters.');
+        redirect('wallet.php?id=' . $customer_id);
+    }
+
+    $newBalance = round((float)$newBalanceInput, 2);
+    $userId = (int)$_SESSION['user_id'];
+
+    $conn->begin_transaction();
+
+    try {
+        $balanceStmt = $conn->prepare("SELECT wallet_balance FROM customers WHERE id = ? FOR UPDATE");
+        $balanceStmt->bind_param('i', $customer_id);
+        $balanceStmt->execute();
+        $balanceRow = $balanceStmt->get_result()->fetch_assoc();
+        $balanceStmt->close();
+
+        if (!$balanceRow) {
+            throw new Exception('Customer not found.');
+        }
+
+        $previousBalance = round((float)$balanceRow['wallet_balance'], 2);
+        if (abs($previousBalance - $newBalance) < 0.005) {
+            $conn->rollback();
+            setAlert('info', 'The wallet balance is already ' . number_format($newBalance, 2) . '.');
+            redirect('wallet.php?id=' . $customer_id);
+        }
+
+        $updateStmt = $conn->prepare("UPDATE customers SET wallet_balance = ? WHERE id = ?");
+        $updateStmt->bind_param('di', $newBalance, $customer_id);
+        $updateStmt->execute();
+        $updateStmt->close();
+
+        $adjustmentStmt = $conn->prepare("
+            INSERT INTO customer_wallet_balance_adjustments
+                (customer_id, previous_balance, new_balance, reason, created_by)
+            VALUES (?, ?, ?, ?, ?)
+        ");
+        $adjustmentStmt->bind_param('iddsi', $customer_id, $previousBalance, $newBalance, $adjustmentReason, $userId);
+        $adjustmentStmt->execute();
+        $adjustmentId = $adjustmentStmt->insert_id;
+        $adjustmentStmt->close();
+
+        logActivity('Set customer wallet balance directly', [
+            'customer_id' => $customer_id,
+            'previous_balance' => $previousBalance,
+            'new_balance' => $newBalance,
+            'reason' => $adjustmentReason,
+            'adjustment_id' => $adjustmentId,
+        ]);
+
+        $conn->commit();
+        setAlert(
+            'success',
+            'Wallet balance updated from ' . number_format($previousBalance, 2)
+            . ' to ' . number_format($newBalance, 2) . ' without creating a wallet transaction.'
+        );
+    } catch (Throwable $e) {
+        $conn->rollback();
+        setAlert('danger', 'Unable to update the wallet balance: ' . $e->getMessage());
+    }
+
+    redirect('wallet.php?id=' . $customer_id);
+}
 
 // Fetch safes and bank accounts for payment methods, scoped to the current brand
 $safes_data = [];
@@ -105,7 +204,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // Update customer wallet balance
         $update_sql = "UPDATE customers SET wallet_balance = wallet_balance ";
-        $update_sql .= $type === 'deposit' ? '+' : '-';
+        $update_sql .= in_array($type, ['deposit', 'refund'], true) ? '+' : '-';
         $update_sql .= " ? WHERE id = ?";
         $update_stmt = $conn->prepare($update_sql);
         $update_stmt->bind_param("di", $amount, $customer_id);
@@ -152,11 +251,107 @@ $transactions_result = $transactions_stmt->get_result();
 
 // Compute a running balance per row (result set is newest-first, so walk backwards from the current balance).
 $wallet_transactions = $transactions_result->fetch_all(MYSQLI_ASSOC);
+$transactions_stmt->close();
+
+// Order payments are part of the customer's financial activity even when they
+// are paid directly into a cash safe or bank account instead of prepaid credit.
+$orderPaymentsStmt = $conn->prepare("
+    SELECT op.*, o.internal_id AS order_number, u.name AS created_by_name,
+           CASE
+               WHEN op.payment_method = 'cash' THEN s.name
+               WHEN op.payment_method = 'transfer' THEN ba.bank_name
+               ELSE 'Customer wallet'
+           END AS destination_name
+    FROM order_payments op
+    JOIN orders o ON o.id = op.order_id
+    LEFT JOIN users u ON u.id = op.created_by
+    LEFT JOIN safes s ON s.id = op.safe_id
+    LEFT JOIN bank_accounts ba ON ba.id = op.bank_account_id
+    WHERE o.customer_id = ?
+    ORDER BY op.created_at DESC, op.id DESC
+");
+$orderPaymentsStmt->bind_param('i', $customer_id);
+$orderPaymentsStmt->execute();
+$orderPayments = $orderPaymentsStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+$orderPaymentsStmt->close();
+
+$outstandingOrdersStmt = $conn->prepare("
+    SELECT COALESCE(SUM(GREATEST(total_amount - paid_amount, 0)), 0)
+    FROM orders
+    WHERE customer_id = ?
+");
+$outstandingOrdersStmt->bind_param('i', $customer_id);
+$outstandingOrdersStmt->execute();
+$outstandingOrdersStmt->bind_result($outstandingOrderBalance);
+$outstandingOrdersStmt->fetch();
+$outstandingOrdersStmt->close();
+$outstandingOrderBalance = (float)$outstandingOrderBalance;
+$customerReceivable = max($outstandingOrderBalance, max(-(float)$customer['wallet_balance'], 0));
+
+// Direct balance changes have their own audit history and remain separate from
+// deposits, refunds, and payments.
+$walletBalanceAdjustments = [];
+if ($walletBalanceAdjustmentStorageReady) {
+    $adjustmentsStmt = $conn->prepare("
+        SELECT wa.*, u.name AS created_by_name
+        FROM customer_wallet_balance_adjustments wa
+        LEFT JOIN users u ON wa.created_by = u.id
+        WHERE wa.customer_id = ?
+        ORDER BY wa.created_at DESC, wa.id DESC
+    ");
+    $adjustmentsStmt->bind_param('i', $customer_id);
+    $adjustmentsStmt->execute();
+    $walletBalanceAdjustments = $adjustmentsStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $adjustmentsStmt->close();
+}
+
+// Build a combined internal ledger so transaction running balances remain
+// correct even when an administrator has set an absolute balance between them.
+$ledgerEvents = [];
+foreach ($wallet_transactions as $txn) {
+    $ledgerEvents[] = [
+        'kind' => 'transaction',
+        'id' => (int)$txn['id'],
+        'created_at' => $txn['created_at'],
+        'amount' => (float)$txn['amount'],
+        'is_credit' => in_array($txn['type'], ['deposit', 'refund'], true),
+    ];
+}
+foreach ($walletBalanceAdjustments as $adjustment) {
+    $ledgerEvents[] = [
+        'kind' => 'adjustment',
+        'id' => (int)$adjustment['id'],
+        'created_at' => $adjustment['created_at'],
+        'previous_balance' => (float)$adjustment['previous_balance'],
+    ];
+}
+usort($ledgerEvents, function ($left, $right) {
+    $dateComparison = strcmp($right['created_at'], $left['created_at']);
+    if ($dateComparison !== 0) {
+        return $dateComparison;
+    }
+
+    // A direct adjustment is the final absolute balance at its timestamp.
+    if ($left['kind'] !== $right['kind']) {
+        return $left['kind'] === 'adjustment' ? -1 : 1;
+    }
+
+    return $right['id'] <=> $left['id'];
+});
+
+$transactionRunningBalances = [];
 $runningBalance = (float)$customer['wallet_balance'];
+foreach ($ledgerEvents as $event) {
+    if ($event['kind'] === 'adjustment') {
+        $runningBalance = $event['previous_balance'];
+        continue;
+    }
+
+    $transactionRunningBalances[$event['id']] = $runningBalance;
+    $runningBalance += $event['is_credit'] ? -$event['amount'] : $event['amount'];
+}
 foreach ($wallet_transactions as &$txn) {
-    $txn['running_balance'] = $runningBalance;
-    $isCredit = in_array($txn['type'], ['deposit', 'refund'], true);
-    $runningBalance += $isCredit ? -(float)$txn['amount'] : (float)$txn['amount'];
+    $txn['running_balance'] = $transactionRunningBalances[(int)$txn['id']] ?? (float)$customer['wallet_balance'];
 }
 unset($txn);
 
@@ -165,14 +360,20 @@ require_once '../../includes/header.php';
 
 <div class="d-flex justify-content-between align-items-center mb-1">
     <h2>
-        Wallet for: <?php echo e($customer['name']); ?>
+        Customer Account for: <?php echo e($customer['name']); ?>
         <span class="badge bg-<?php echo $customer['wallet_balance'] >= 0 ? 'success' : 'danger'; ?>">
-            Balance: <?php echo number_format($customer['wallet_balance'], 2); ?>
+            Wallet: <?php echo number_format($customer['wallet_balance'], 2); ?>
+        </span>
+        <span class="badge bg-<?php echo $outstandingOrderBalance > 0 ? 'danger' : 'success'; ?>">
+            Outstanding Orders: <?php echo number_format($outstandingOrderBalance, 2); ?>
+        </span>
+        <span class="badge bg-<?php echo $customerReceivable > 0 ? 'dark' : 'success'; ?>">
+            Receivable: <?php echo number_format($customerReceivable, 2); ?>
         </span>
     </h2>
     <a href="view.php?id=<?php echo $customer_id; ?>" class="btn btn-secondary">Back to Customer</a>
 </div>
-<p class="text-muted mb-4">Prepaid wallet balance. Order payments made by cash or bank transfer do not appear here &mdash; only deposits, refunds, and payments made using the Wallet method.</p>
+<p class="text-muted mb-4">Positive wallet balances are customer credit; negative balances are customer debt. Cash and bank down payments are shown in Order Payment History below and reduce the outstanding order balance. Direct administrative balance changes are listed separately.</p>
 
 <div class="row mb-4">
     <?php if ($canManageCustomerWallet): ?>
@@ -222,11 +423,57 @@ require_once '../../includes/header.php';
         </div>
     </div>
     <?php endif; ?>
+    <?php if ($canAdjustCustomerWalletBalance && $walletBalanceAdjustmentStorageReady): ?>
+    <div class="col-md-6">
+        <div class="card border-warning">
+            <div class="card-header">
+                <h5 class="card-title mb-0">Set Wallet Balance</h5>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-warning py-2">
+                    This sets the customer account balance directly. Use a negative value for debt and a positive value for credit. It will not create a wallet transaction or change any cash safe or bank account.
+                </div>
+                <form action="wallet.php?id=<?php echo $customer_id; ?>" method="POST" onsubmit="return confirm('Set this wallet to the entered balance?');">
+                    <input type="hidden" name="set_wallet_balance" value="1">
+                    <div class="mb-3">
+                        <label for="wallet_balance" class="form-label">New Balance*</label>
+                        <input type="number"
+                               class="form-control"
+                               id="wallet_balance"
+                               name="wallet_balance"
+                               value="<?php echo e(number_format((float)$customer['wallet_balance'], 2, '.', '')); ?>"
+                               min="-99999999.99"
+                               max="99999999.99"
+                               step="0.01"
+                               required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="adjustment_reason" class="form-label">Reason*</label>
+                        <textarea class="form-control"
+                                  id="adjustment_reason"
+                                  name="adjustment_reason"
+                                  rows="2"
+                                  maxlength="500"
+                                  placeholder="Why is the stored balance being corrected?"
+                                  required></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-warning">Update Balance</button>
+                </form>
+            </div>
+        </div>
+    </div>
+    <?php elseif ($canAdjustCustomerWalletBalance): ?>
+    <div class="col-md-6">
+        <div class="alert alert-warning mb-0">
+            Apply migration <code>20260830_customer_wallet_balance_adjustments.sql</code> to enable direct balance updates.
+        </div>
+    </div>
+    <?php endif; ?>
 </div>
 
 <div class="card">
     <div class="card-header">
-        <h5 class="card-title mb-0">Transaction History</h5>
+        <h5 class="card-title mb-0">Wallet Transaction History</h5>
     </div>
     <div class="card-body">
         <div class="table-responsive">
@@ -277,6 +524,99 @@ require_once '../../includes/header.php';
         </div>
     </div>
 </div>
+
+<div class="card mt-4">
+    <div class="card-header">
+        <h5 class="card-title mb-0">Order Payment History</h5>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table js-datatable table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Order</th>
+                        <th>Amount</th>
+                        <th>Method</th>
+                        <th>Destination</th>
+                        <th>Reference</th>
+                        <th>Notes</th>
+                        <th>Processed By</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if (!empty($orderPayments)): ?>
+                        <?php foreach ($orderPayments as $payment): ?>
+                            <tr>
+                                <td><?php echo date('M d, Y H:i', strtotime($payment['created_at'])); ?></td>
+                                <td>
+                                    <a href="../sales/order_details.php?id=<?php echo (int)$payment['order_id']; ?>">
+                                        <?php echo e($payment['order_number']); ?>
+                                    </a>
+                                </td>
+                                <td><?php echo number_format($payment['amount'], 2); ?></td>
+                                <td><span class="badge bg-info"><?php echo e(ucfirst($payment['payment_method'])); ?></span></td>
+                                <td><?php echo $payment['destination_name'] ? e($payment['destination_name']) : '-'; ?></td>
+                                <td><?php echo $payment['reference'] ? e($payment['reference']) : '-'; ?></td>
+                                <td><?php echo $payment['notes'] ? e($payment['notes']) : '-'; ?></td>
+                                <td><?php echo $payment['created_by_name'] ? e($payment['created_by_name']) : 'System'; ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php else: ?>
+                        <tr>
+                            <td colspan="8" class="text-center">No order payments found</td>
+                        </tr>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<?php if ($walletBalanceAdjustmentStorageReady && ($canAdjustCustomerWalletBalance || !empty($walletBalanceAdjustments))): ?>
+<div class="card mt-4">
+    <div class="card-header">
+        <h5 class="card-title mb-0">Administrative Balance Adjustment History</h5>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Previous Balance</th>
+                        <th>New Balance</th>
+                        <th>Change</th>
+                        <th>Reason</th>
+                        <th>Changed By</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if (!empty($walletBalanceAdjustments)): ?>
+                        <?php foreach ($walletBalanceAdjustments as $adjustment): ?>
+                            <?php $balanceChange = (float)$adjustment['new_balance'] - (float)$adjustment['previous_balance']; ?>
+                            <tr>
+                                <td><?php echo date('M d, Y H:i', strtotime($adjustment['created_at'])); ?></td>
+                                <td><?php echo number_format($adjustment['previous_balance'], 2); ?></td>
+                                <td><?php echo number_format($adjustment['new_balance'], 2); ?></td>
+                                <td class="<?php echo $balanceChange >= 0 ? 'text-success' : 'text-danger'; ?>">
+                                    <?php echo ($balanceChange >= 0 ? '+' : '') . number_format($balanceChange, 2); ?>
+                                </td>
+                                <td><?php echo e($adjustment['reason']); ?></td>
+                                <td><?php echo $adjustment['created_by_name'] ? e($adjustment['created_by_name']) : 'System'; ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php else: ?>
+                        <tr>
+                            <td colspan="6" class="text-center">No direct balance adjustments found</td>
+                        </tr>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
 
 <script>
 $(document).ready(function() {

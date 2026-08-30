@@ -2,6 +2,10 @@
 require_once 'includes/auth.php';
 require_once 'includes/functions.php';
 
+if (($_SESSION['login_region'] ?? 'factory') !== 'factory') {
+    redirect('modules/sales/');
+}
+
 $page_title = 'Dashboard';
 require_once 'includes/header.php';
 
@@ -11,12 +15,16 @@ $canSalesDashboard = hasPermission('sales.dashboard.view')
     || hasPermission('sales.dashboard.this_month')
     || hasPermission('sales.dashboard.recent_orders');
 $salesDashboardUrl = $canSalesDashboard ? BASE_URL . 'modules/sales/' : BASE_URL . 'modules/finance/bills.php';
-$accountsReceivableUrl = hasPermission('finance.customer_payment.process') ? BASE_URL . 'modules/finance/bills.php' : $salesDashboardUrl;
+$accountsReceivableUrl = hasPermission('finance.customer_wallet.view')
+    ? BASE_URL . 'modules/finance/customers.php'
+    : (hasPermission('finance.customer_payment.process') ? BASE_URL . 'modules/finance/bills.php' : $salesDashboardUrl);
 $canViewSalesPrices = hasPermission('sales.orders.price.view');
 $dashboardOrderJoins = " JOIN customers dashboard_customer ON dashboard_customer.id = o.customer_id
                          LEFT JOIN factories dashboard_factory ON dashboard_factory.id = dashboard_customer.factory_id ";
 $dashboardOrderScope = getCustomerChannelScopeSql('dashboard_customer', 'dashboard_factory');
 $dashboardInventoryScope = getInventoryChannelScopeSql('i');
+$dashboardProductScope = getProductChannelScopeSql('p', 'product_customer', 'product_factory');
+$receivablesSummary = getCustomerReceivablesSummary();
 ?>
 
 <div class="row">
@@ -118,28 +126,16 @@ $dashboardInventoryScope = getInventoryChannelScopeSql('i');
                             <?php
                             // Counts distinct products whose TOTAL stock across locations is at/below minimum,
                             // not per-location rows, so a product split across bins isn't over-counted or misflagged.
-                            if (isSalesPersonUser()) {
-                                $productCustomerScope = getCustomerChannelScopeSql('product_customer', 'product_factory');
-                                $sql = "SELECT COUNT(DISTINCT p.id) AS total
-                                        FROM inventory_products ip
-                                        JOIN inventories i ON i.id = ip.inventory_id
-                                        JOIN products p ON ip.product_id = p.id
-                                        JOIN customers product_customer ON product_customer.id = p.customer_id
-                                        LEFT JOIN factories product_factory ON product_factory.id = product_customer.factory_id
-                                        WHERE p.type = 'final'
-                                          AND $dashboardInventoryScope
-                                          AND $productCustomerScope
-                                          AND p.min_stock_level > 0
-                                          AND (SELECT COALESCE(SUM(ip2.quantity),0) FROM inventory_products ip2 WHERE ip2.product_id = p.id) <= p.min_stock_level";
-                            } else {
-                                $sql = "SELECT COUNT(DISTINCT p.id) AS total
-                                        FROM inventory_products ip
-                                        JOIN inventories i ON i.id = ip.inventory_id
-                                        JOIN products p ON ip.product_id = p.id
-                                        WHERE $dashboardInventoryScope
-                                          AND p.min_stock_level > 0
-                                          AND (SELECT COALESCE(SUM(ip2.quantity),0) FROM inventory_products ip2 WHERE ip2.product_id = p.id) <= p.min_stock_level";
-                            }
+                            $sql = "SELECT COUNT(DISTINCT p.id) AS total
+                                    FROM inventory_products ip
+                                    JOIN inventories i ON i.id = ip.inventory_id
+                                    JOIN products p ON ip.product_id = p.id
+                                    LEFT JOIN customers product_customer ON product_customer.id = p.customer_id
+                                    LEFT JOIN factories product_factory ON product_factory.id = product_customer.factory_id
+                                    WHERE $dashboardInventoryScope
+                                      AND $dashboardProductScope
+                                      AND p.min_stock_level > 0
+                                      AND (SELECT COALESCE(SUM(ip2.quantity),0) FROM inventory_products ip2 WHERE ip2.product_id = p.id) <= p.min_stock_level";
                             $result = $conn->query($sql);
                             $low_stock = (int)($result->fetch_assoc()['total'] ?? 0);
                             ?>
@@ -167,13 +163,10 @@ $dashboardInventoryScope = getInventoryChannelScopeSql('i');
                         <div>
                             <h6 class="card-title">Accounts Receivable</h6>
                             <?php
-                            $sql = "SELECT SUM(o.total_amount - o.paid_amount) AS ar
-                                    FROM orders o $dashboardOrderJoins
-                                    WHERE o.paid_amount < o.total_amount AND $dashboardOrderScope";
-                            $result = $conn->query($sql);
-                            $ar = (float)($result->fetch_assoc()['ar'] ?? 0);
+                            $ar = $receivablesSummary['total'];
                             ?>
                             <h2 class="mb-0"><?php echo number_format($ar, 2); ?></h2>
+                            <small><?php echo (int)$receivablesSummary['customer_count']; ?> customer<?php echo $receivablesSummary['customer_count'] === 1 ? '' : 's'; ?></small>
                         </div>
                         <div>
                             <i class="fas fa-sack-dollar fa-3x opacity-50"></i>
@@ -336,25 +329,15 @@ $dashboardInventoryScope = getInventoryChannelScopeSql('i');
             <div class="card-body">
                 <ul class="list-group">
                     <?php
-                    if (isSalesPersonUser()) {
-                        $productCustomerScope = getCustomerChannelScopeSql('product_customer', 'product_factory');
-                        $sql = "SELECT i.name, COUNT(ip.product_id) AS products, SUM(ip.quantity) AS total_qty
-                                FROM inventories i
-                                JOIN inventory_products ip ON i.id = ip.inventory_id
-                                JOIN products p ON p.id = ip.product_id
-                                JOIN customers product_customer ON product_customer.id = p.customer_id
-                                LEFT JOIN factories product_factory ON product_factory.id = product_customer.factory_id
-                                WHERE $dashboardInventoryScope
-                                  AND p.type = 'final'
-                                  AND $productCustomerScope
-                                GROUP BY i.id, i.name";
-                    } else {
-                        $sql = "SELECT i.name, COUNT(ip.product_id) AS products, SUM(ip.quantity) AS total_qty
-                                FROM inventories i
-                                LEFT JOIN inventory_products ip ON i.id = ip.inventory_id
-                                WHERE $dashboardInventoryScope
-                                GROUP BY i.id, i.name";
-                    }
+                    $sql = "SELECT i.name, COUNT(p.id) AS products, COALESCE(SUM(ip.quantity), 0) AS total_qty
+                            FROM inventories i
+                            LEFT JOIN inventory_products ip ON i.id = ip.inventory_id
+                            LEFT JOIN products p ON p.id = ip.product_id
+                            LEFT JOIN customers product_customer ON product_customer.id = p.customer_id
+                            LEFT JOIN factories product_factory ON product_factory.id = product_customer.factory_id
+                            WHERE $dashboardInventoryScope
+                              AND ($dashboardProductScope OR p.id IS NULL)
+                            GROUP BY i.id, i.name";
                     $result = $conn->query($sql);
                     if ($result && $result->num_rows > 0) {
                         while ($row = $result->fetch_assoc()) {

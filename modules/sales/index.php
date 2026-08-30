@@ -36,6 +36,7 @@ $stats = [
     'pending_orders' => 0,
     'overall_orders' => 0
 ];
+$receivablesSummary = getCustomerReceivablesSummary();
 
 /* Use $conn (MySQLi) instead of $pdo (PDO) */
 
@@ -58,6 +59,19 @@ $result = $stmt->get_result();
 $month_by_currency = [];
 while ($row = $result->fetch_assoc()) {
     $month_by_currency[$row['currency']] = $row['total'];
+}
+$stmt->close();
+
+// All-time sales and received payments grouped by the order currency. These
+// remain visible when there are no orders dated today or in the current month.
+$stmt = $conn->prepare("SELECT o.currency, SUM(o.total_amount) AS total, SUM(o.paid_amount) AS paid FROM orders o $salesScopeJoins WHERE 1=1 $salesScopeCondition GROUP BY o.currency");
+$stmt->execute();
+$result = $stmt->get_result();
+$all_time_by_currency = [];
+$paid_by_currency = [];
+while ($row = $result->fetch_assoc()) {
+    $all_time_by_currency[$row['currency']] = $row['total'];
+    $paid_by_currency[$row['currency']] = $row['paid'];
 }
 $stmt->close();
 
@@ -86,7 +100,12 @@ $stmt->close();
 
     <!-- Per-currency sales cards -->
     <?php
-    $all_currencies = array_unique(array_merge(array_keys($today_by_currency), array_keys($month_by_currency)));
+    $all_currencies = array_unique(array_merge(
+        array_keys($today_by_currency),
+        array_keys($month_by_currency),
+        array_keys($all_time_by_currency),
+        array_keys($paid_by_currency)
+    ));
     if (empty($all_currencies)) $all_currencies = ['EGP'];
     $cur_symbols = ['EGP' => 'ج.م', 'USD' => '$', 'EUR' => '€', 'SAR' => 'ر.س'];
     ?>
@@ -95,6 +114,8 @@ $stmt->close();
         $sym = $cur_symbols[$cur] ?? $cur;
         $today_val = $today_by_currency[$cur] ?? 0;
         $month_val = $month_by_currency[$cur] ?? 0;
+        $all_time_val = $all_time_by_currency[$cur] ?? 0;
+        $paid_val = $paid_by_currency[$cur] ?? 0;
     ?>
     <div class="row mb-2">
         <div class="col-12"><h6 class="text-muted text-uppercase fw-bold mb-2"><i class="fas fa-coins me-1"></i> <?= htmlspecialchars($cur) ?></h6></div>
@@ -111,6 +132,22 @@ $stmt->close();
                 <div class="card-body">
                     <h5 class="card-title">Month's Sales</h5>
                     <p class="card-text h4"><?= $sym ?> <?= number_format($month_val, 2) ?></p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-white bg-secondary mb-3">
+                <div class="card-body">
+                    <h5 class="card-title">All-time Sales</h5>
+                    <p class="card-text h4"><?= $sym ?> <?= number_format($all_time_val, 2) ?></p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-white bg-info mb-3">
+                <div class="card-body">
+                    <h5 class="card-title">Total Received</h5>
+                    <p class="card-text h4"><?= $sym ?> <?= number_format($paid_val, 2) ?></p>
                 </div>
             </div>
         </div>
@@ -136,6 +173,19 @@ $stmt->close();
                     <p class="card-text h4"><?= $stats['overall_orders'] ?></p>
                 </div>
             </div>
+        </div>
+        <?php endif; ?>
+        <?php if ($canViewPrices && ($canViewDashboard || $canProcessPayments)): ?>
+        <div class="col-md-3">
+            <a href="<?= hasPermission('finance.customer_wallet.view') ? '../finance/customers.php' : ($canProcessPayments ? '../finance/bills.php' : 'order_list.php') ?>" class="text-decoration-none">
+                <div class="card text-white bg-dark">
+                    <div class="card-body">
+                        <h5 class="card-title">Accounts Receivable</h5>
+                        <p class="card-text h4 mb-0">EGP <?= number_format($receivablesSummary['total'], 2) ?></p>
+                        <small><?= (int)$receivablesSummary['customer_count'] ?> customer<?= $receivablesSummary['customer_count'] === 1 ? '' : 's' ?></small>
+                    </div>
+                </div>
+            </a>
         </div>
         <?php endif; ?>
     </div>

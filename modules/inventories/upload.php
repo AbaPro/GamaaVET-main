@@ -10,6 +10,7 @@ if (!hasPermission('inventories.products.add')) {
 
 $inventoryScope = getInventoryChannelScopeSql('i');
 $customerScope = getCustomerChannelScopeSql('c', 'f');
+$productScope = getProductChannelScopeSql('p', 'c', 'f');
 
 // Initialize session if not set
 if (!isset($_SESSION['inventory_bulk_upload'])) {
@@ -54,11 +55,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
         $missing_products = [];
         $all_products = [];
 
-        // Final products stay channel-scoped; raw materials are shared
-        // operational items available to non-sales inventory users.
-        $eligibleProductScope = isSalesPersonUser()
-            ? "p.type = 'final' AND $customerScope"
-            : "(p.type = 'material' OR (p.type = 'final' AND $customerScope))";
+        $eligibleProductScope = $productScope;
         $prod_res = $conn->query("SELECT p.id, p.name
                                   FROM products p
                                   LEFT JOIN customers c ON c.id = p.customer_id
@@ -354,9 +351,7 @@ $step = $_SESSION['inventory_bulk_upload']['step'] ?? 1;
                                 </thead>
                                 <tbody>
                                     <?php 
-                                    $eligibleProductScope = isSalesPersonUser()
-                                        ? "p.type = 'final' AND $customerScope"
-                                        : "(p.type = 'material' OR (p.type = 'final' AND $customerScope))";
+                                    $eligibleProductScope = $productScope;
                                     $all_prods_res = $conn->query("SELECT p.id, p.name, p.sku, p.type
                                                                   FROM products p
                                                                   LEFT JOIN customers c ON c.id = p.customer_id

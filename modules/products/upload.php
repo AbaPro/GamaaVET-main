@@ -240,17 +240,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['process_global_custom
         setAlert('danger', 'Please select a customer to link to all products.');
         redirect('upload.php');
     }
-    // Verify customer exists
-    $check_stmt = $conn->prepare("SELECT id FROM customers WHERE id = ?");
-    $check_stmt->bind_param("i", $global_customer_id);
-    $check_stmt->execute();
-    $check_stmt->store_result();
-    if ($check_stmt->num_rows === 0) {
-        $check_stmt->close();
-        setAlert('danger', 'Selected customer not found.');
+    if (!canAccessCustomer($global_customer_id)) {
+        setAlert('danger', 'Selected customer is not available in the current sales channel.');
         redirect('upload.php');
     }
-    $check_stmt->close();
 
     $_SESSION['bulk_upload']['global_customer_id'] = $global_customer_id;
     $_SESSION['bulk_upload']['step'] = 3;
@@ -266,6 +259,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['process_customer_mapp
         $mapped_id = $_POST['customer_' . md5($customer_name)] ?? '';
         if (empty($mapped_id)) {
             $errors[] = "Please map customer: '$customer_name'";
+        } elseif (!canAccessCustomer((int)$mapped_id)) {
+            $errors[] = "Customer mapping is outside the current sales channel: '$customer_name'";
         } else {
             $customer_mapping[$customer_name] = (int)$mapped_id;
         }
@@ -329,6 +324,7 @@ if (isset($_SESSION['bulk_upload']['step']) && $_SESSION['bulk_upload']['step'] 
             $sku = isset($row['sku']) && $row['sku'] !== '' ? sanitize($row['sku']) : '';
             $barcode = isset($row['barcode']) && $row['barcode'] !== '' ? sanitize($row['barcode']) : '';
             $type = sanitize(strtolower($row['type']));
+            $loginRegion = $_SESSION['login_region'] ?? 'factory';
             $category_name = trim($row['category']);
             $category_id = $category_mapping[$category_name] ?? null;
             
@@ -350,6 +346,25 @@ if (isset($_SESSION['bulk_upload']['step']) && $_SESSION['bulk_upload']['step'] 
                     $errors[] = "Customer mapping not found for: $customer_name - $name";
                     continue;
                 }
+            }
+
+            if ($type === 'final') {
+                if (!$customer_id || !canAccessCustomer($customer_id)) {
+                    $error_count++;
+                    $errors[] = "Final product must use a customer in the current sales channel: $name";
+                    continue;
+                }
+            } elseif (in_array($type, ['primary', 'material'], true)) {
+                if ($loginRegion !== 'factory' || isSalesPersonUser()) {
+                    $error_count++;
+                    $errors[] = "Raw and primary products are available only in Factory: $name";
+                    continue;
+                }
+                $customer_id = null;
+            } else {
+                $error_count++;
+                $errors[] = "Invalid product type: $name";
+                continue;
             }
             
             $subcategory_id = null;
@@ -530,8 +545,12 @@ elseif ($current_step == 2) {
     $unique_customers = $_SESSION['bulk_upload']['unique_customers'];
     $global_customer_mode = $_SESSION['bulk_upload']['global_customer_mode'] ?? false;
 
-    // Get all existing customers
-    $customers_sql = "SELECT id, name, type FROM customers ORDER BY name";
+    // Only customers in the selected Factory/direct-sales channel can be mapped.
+    $customers_sql = "SELECT c.id, c.name, c.type
+                      FROM customers c
+                      LEFT JOIN factories f ON f.id = c.factory_id
+                      WHERE " . getCustomerChannelScopeSql('c', 'f') . "
+                      ORDER BY c.name";
     $customers_result = $conn->query($customers_sql);
     $existing_customers = [];
     if ($customers_result) {

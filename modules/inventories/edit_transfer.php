@@ -142,6 +142,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $productId = (int)sanitize($productId);
                     $quantity = (float)sanitize($_POST['quantity'][$key] ?? 0);
                     if ($productId > 0 && $quantity > 0) {
+                        if (!canAddProductToInventory((int)$transfer['from_inventory_id'], $productId)
+                            || !canAddProductToInventory((int)$transfer['to_inventory_id'], $productId)) {
+                            throw new Exception('A selected product is outside the current channel.');
+                        }
                         $insStmt->bind_param('iid', $transfer_id, $productId, $quantity);
                         $insStmt->execute();
                         $itemCount++;
