@@ -80,6 +80,18 @@ $stmt = $pdo->prepare("
 $stmt->execute([$order_id]);
 $payments = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+$customerPortalNotes = [];
+if (tableExists('customer_order_notes')) {
+    $portalNotesStmt = $pdo->prepare("
+        SELECT id, note, created_at
+        FROM customer_order_notes
+        WHERE order_id = ? AND customer_id = ?
+        ORDER BY created_at DESC, id DESC
+    ");
+    $portalNotesStmt->execute([$order_id, $order['customer_id']]);
+    $customerPortalNotes = $portalNotesStmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
 $returns = [];
 $returnsByItem = [];
 
@@ -621,6 +633,33 @@ require_once '../../includes/header.php';
                     <?php endif; ?>
                 </div>
             </div>
+
+            <?php if (tableExists('customer_order_notes')): ?>
+                <hr>
+                <div class="mt-4">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div>
+                            <h5 class="mb-1">Customer Portal Notes</h5>
+                            <div class="text-muted small">Notes added by <?= htmlspecialchars($order['customer_name']); ?> from their portal.</div>
+                        </div>
+                        <span class="badge bg-primary"><?= count($customerPortalNotes); ?> note<?= count($customerPortalNotes) === 1 ? '' : 's'; ?></span>
+                    </div>
+                    <?php if ($customerPortalNotes): ?>
+                        <div class="list-group">
+                            <?php foreach ($customerPortalNotes as $portalNote): ?>
+                                <div class="list-group-item">
+                                    <div class="d-flex justify-content-between gap-3">
+                                        <div><?= nl2br(htmlspecialchars($portalNote['note'], ENT_QUOTES, 'UTF-8')); ?></div>
+                                        <small class="text-muted text-nowrap"><?= date('M d, Y H:i', strtotime($portalNote['created_at'])); ?></small>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php else: ?>
+                        <div class="text-muted">The customer has not added any portal notes to this order.</div>
+                    <?php endif; ?>
+                </div>
+            <?php endif; ?>
         </div>
     </div>
 </div>

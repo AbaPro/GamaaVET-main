@@ -166,7 +166,12 @@ $customers = $pdo->query($customerSql)->fetchAll(PDO::FETCH_ASSOC);
                     </thead>
                     <tbody>
                         <?php foreach ($orders as $row): ?>
-                            <?php $balance = $row['total_amount'] - $row['paid_amount']; ?>
+                            <?php
+                            $totalAmount = round((float)$row['total_amount'], 2);
+                            $paidAmount = round((float)$row['paid_amount'], 2);
+                            $balance = round($totalAmount - $paidAmount, 2);
+                            $isPaid = $totalAmount > 0 && $paidAmount >= $totalAmount;
+                            ?>
                             <tr>
                                 <td class="fw-bold">
                                     <a href="../../modules/sales/order_details.php?id=<?= $row['id'] ?>" class="text-decoration-none">
@@ -175,8 +180,8 @@ $customers = $pdo->query($customerSql)->fetchAll(PDO::FETCH_ASSOC);
                                 </td>
                                 <td><?= htmlspecialchars($row['customer']); ?></td>
                                 <td><?= date('M j, Y', strtotime($row['order_date'])); ?></td>
-                                <td class="text-end fw-semibold"><?= number_format($row['total_amount'], 2); ?></td>
-                                <td class="text-end text-success"><?= number_format($row['paid_amount'], 2); ?></td>
+                                <td class="text-end fw-semibold"><?= number_format($totalAmount, 2); ?></td>
+                                <td class="text-end text-success"><?= number_format($paidAmount, 2); ?></td>
                                 <td class="text-end <?= $balance > 0 ? 'text-danger fw-bold' : 'text-muted' ?>">
                                     <?= number_format($balance, 2); ?>
                                 </td>
@@ -191,8 +196,12 @@ $customers = $pdo->query($customerSql)->fetchAll(PDO::FETCH_ASSOC);
                                         <a href="../../modules/sales/process_payment.php?order_id=<?= $row['id']; ?>" class="btn btn-sm btn-success px-3 shadow-sm">
                                             <i class="fas fa-credit-card me-1"></i> Pay
                                         </a>
-                                    <?php else: ?>
+                                    <?php elseif ($isPaid): ?>
                                         <span class="text-success fw-bold small"><i class="fas fa-check-circle me-1"></i> Paid</span>
+                                    <?php else: ?>
+                                        <span class="text-muted fw-semibold small" title="Set an order total before recording payment">
+                                            <i class="fas fa-clock me-1"></i> Awaiting Amount
+                                        </span>
                                     <?php endif; ?>
                                 </td>
                             </tr>
@@ -213,4 +222,3 @@ $(document).ready(function() {
 </script>
 
 <?php require_once '../../includes/footer.php'; ?>
-

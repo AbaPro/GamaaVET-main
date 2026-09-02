@@ -164,12 +164,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $type = sanitize($_POST['type']);
     $notes = sanitize($_POST['notes']);
     $payment_method = sanitize($_POST['payment_method'] ?? 'cash');
+    $safe_id = !empty($_POST['safe_id']) ? (int)$_POST['safe_id'] : null;
     $bank_account_id = !empty($_POST['bank_account_id']) ? (int)$_POST['bank_account_id'] : null;
     $user_id = $_SESSION['user_id'];
     $isDebit = in_array($type, ['payment', 'withdrawal'], true);
 
     $validationError = null;
-    if ($bank_account_id && !isBankAccountInCurrentAccount($bank_account_id)) {
+    if (!in_array($payment_method, ['cash', 'transfer'], true)) {
+        $validationError = 'Select a valid payment method.';
+    } elseif ($payment_method === 'cash' && (!$safe_id || !isSafeInCurrentAccount($safe_id))) {
+        $validationError = 'Select a cash safe available for this brand.';
+    } elseif ($payment_method === 'transfer' && (!$bank_account_id || !isBankAccountInCurrentAccount($bank_account_id))) {
         $validationError = 'Selected bank account is not available for this brand.';
     } elseif ($isDebit) {
         $currentStmt = $conn->prepare("SELECT wallet_balance FROM customers WHERE id = ?");
@@ -194,10 +199,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         // Insert wallet transaction
         $transaction_sql = "INSERT INTO customer_wallet_transactions
-                           (customer_id, amount, type, notes, payment_method, bank_account_id, reference_type, created_by)
-                           VALUES (?, ?, ?, ?, ?, ?, 'manual', ?)";
+                           (customer_id, amount, type, notes, payment_method, safe_id, bank_account_id, reference_type, created_by)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, 'manual', ?)";
         $transaction_stmt = $conn->prepare($transaction_sql);
-        $transaction_stmt->bind_param("idsssii", $customer_id, $amount, $type, $notes, $payment_method, $bank_account_id, $user_id);
+        $transaction_stmt->bind_param("idsssiii", $customer_id, $amount, $type, $notes, $payment_method, $safe_id, $bank_account_id, $user_id);
         $transaction_stmt->execute();
         $transaction_id = $transaction_stmt->insert_id;
         $transaction_stmt->close();
@@ -212,12 +217,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $update_stmt->close();
 
         // Update destination balance based on payment method (for payment type only)
-        if ($type === 'payment' && $payment_method === 'transfer' && $bank_account_id) {
-            $bank_update = "UPDATE bank_accounts SET balance = balance + ? WHERE id = ?";
-            $bank_stmt = $conn->prepare($bank_update);
-            $bank_stmt->bind_param("di", $amount, $bank_account_id);
-            $bank_stmt->execute();
-            $bank_stmt->close();
+        if ($type === 'payment') {
+            if ($payment_method === 'cash' && $safe_id) {
+                $safe_stmt = $conn->prepare("UPDATE safes SET balance = balance + ? WHERE id = ?");
+                $safe_stmt->bind_param("di", $amount, $safe_id);
+                $safe_stmt->execute();
+                $safe_stmt->close();
+            } elseif ($payment_method === 'transfer' && $bank_account_id) {
+                $bank_stmt = $conn->prepare("UPDATE bank_accounts SET balance = balance + ? WHERE id = ?");
+                $bank_stmt->bind_param("di", $amount, $bank_account_id);
+                $bank_stmt->execute();
+                $bank_stmt->close();
+            }
         }
 
         // Commit transaction
@@ -236,11 +247,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Get wallet transactions with payment method info
 $transactions_sql = "SELECT wt.*, u.name as created_by_name,
                             CASE
+                                WHEN wt.payment_method = 'cash' THEN s.name
                                 WHEN wt.payment_method = 'transfer' THEN ba.bank_name
                                 ELSE NULL
                             END as destination_name
                      FROM customer_wallet_transactions wt
                      LEFT JOIN users u ON wt.created_by = u.id
+                     LEFT JOIN safes s ON wt.safe_id = s.id
                      LEFT JOIN bank_accounts ba ON wt.bank_account_id = ba.id
                      WHERE wt.customer_id = ?
                      ORDER BY wt.created_at DESC";
@@ -410,6 +423,15 @@ require_once '../../includes/header.php';
                             <option value="">-- Select Bank Account --</option>
                             <?php foreach ($banks_data as $bank): ?>
                                 <option value="<?php echo $bank['id']; ?>"><?php echo e($bank['name']); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="mb-3" id="safe_container">
+                        <label for="safe_id" class="form-label">Destination Safe</label>
+                        <select class="form-select" id="safe_id" name="safe_id">
+                            <option value="">-- Select Safe --</option>
+                            <?php foreach ($safes_data as $safe): ?>
+                                <option value="<?php echo (int)$safe['id']; ?>"><?php echo e($safe['name']); ?></option>
                             <?php endforeach; ?>
                         </select>
                     </div>
@@ -626,9 +648,13 @@ $(document).ready(function() {
         if (method === 'transfer') {
             $('#bank_account_container').show();
             $('#bank_account_id').prop('required', true);
+            $('#safe_container').hide();
+            $('#safe_id').prop('required', false).val('');
         } else {
             $('#bank_account_container').hide();
             $('#bank_account_id').prop('required', false).val('');
+            $('#safe_container').show();
+            $('#safe_id').prop('required', true);
         }
     });
 

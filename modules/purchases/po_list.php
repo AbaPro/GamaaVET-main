@@ -11,10 +11,18 @@ if (!hasPermission('purchases.view_all')) {
 }
 
 // Filter parameters
-$status = $_GET['status'] ?? '';
-$vendor_id = $_GET['vendor_id'] ?? '';
-$date_from = $_GET['date_from'] ?? '';
-$date_to = $_GET['date_to'] ?? '';
+$status = (string)($_GET['status'] ?? '');
+$payment_status = (string)($_GET['payment_status'] ?? '');
+$vendor_id = filter_input(INPUT_GET, 'vendor_id', FILTER_VALIDATE_INT) ?: '';
+$date_from = (string)($_GET['date_from'] ?? '');
+$date_to = (string)($_GET['date_to'] ?? '');
+
+$allowedStatuses = ['', 'pending', 'new', 'ordered', 'partially-received', 'received', 'cancelled'];
+$allowedPaymentStatuses = ['', 'unpaid', 'partially-paid', 'paid'];
+if (!in_array($status, $allowedStatuses, true)) $status = '';
+if (!in_array($payment_status, $allowedPaymentStatuses, true)) $payment_status = '';
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date_from)) $date_from = '';
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date_to)) $date_to = '';
 
 // Build query
 $query = "SELECT po.id, po.order_date, po.total_amount, po.paid_amount, 
@@ -24,9 +32,19 @@ $query = "SELECT po.id, po.order_date, po.total_amount, po.paid_amount,
           WHERE 1=1";
 $params = [];
 
-if (!empty($status)) {
+if ($status === 'pending') {
+    $query .= " AND po.status IN ('new', 'ordered', 'partially-received')";
+} elseif (!empty($status)) {
     $query .= " AND po.status = ?";
     $params[] = $status;
+}
+
+if ($payment_status === 'unpaid') {
+    $query .= " AND po.paid_amount < po.total_amount";
+} elseif ($payment_status === 'partially-paid') {
+    $query .= " AND po.paid_amount > 0 AND po.paid_amount < po.total_amount";
+} elseif ($payment_status === 'paid') {
+    $query .= " AND po.total_amount > 0 AND po.paid_amount >= po.total_amount";
 }
 
 if (!empty($vendor_id)) {
@@ -56,6 +74,7 @@ $vendors = $pdo->query("SELECT id, name FROM vendors ORDER BY name")->fetchAll(P
 
 $canViewPrices = hasPermission('purchases.po.price.view');
 $canDeletePO = hasPermission('purchases.orders.delete');
+$canViewPODetails = hasPermission('purchases.view');
 ?>
 
 <div class="container mt-4">
@@ -77,11 +96,21 @@ $canDeletePO = hasPermission('purchases.orders.delete');
                         <label for="status" class="form-label">Status</label>
                         <select class="form-select" id="status" name="status">
                             <option value="">All Statuses</option>
+                            <option value="pending" <?= $status == 'pending' ? 'selected' : '' ?>>Pending (New / Ordered / Partially Received)</option>
                             <option value="new" <?= $status == 'new' ? 'selected' : '' ?>>New</option>
                             <option value="ordered" <?= $status == 'ordered' ? 'selected' : '' ?>>Ordered</option>
                             <option value="partially-received" <?= $status == 'partially-received' ? 'selected' : '' ?>>Partially Received</option>
                             <option value="received" <?= $status == 'received' ? 'selected' : '' ?>>Received</option>
                             <option value="cancelled" <?= $status == 'cancelled' ? 'selected' : '' ?>>Cancelled</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="payment_status" class="form-label">Payment Status</label>
+                        <select class="form-select" id="payment_status" name="payment_status">
+                            <option value="">All Payment Statuses</option>
+                            <option value="unpaid" <?= $payment_status == 'unpaid' ? 'selected' : '' ?>>Unpaid / Outstanding</option>
+                            <option value="partially-paid" <?= $payment_status == 'partially-paid' ? 'selected' : '' ?>>Partially Paid</option>
+                            <option value="paid" <?= $payment_status == 'paid' ? 'selected' : '' ?>>Paid</option>
                         </select>
                     </div>
                     <div class="col-md-3">
@@ -97,11 +126,11 @@ $canDeletePO = hasPermission('purchases.orders.delete');
                     </div>
                     <div class="col-md-3">
                         <label for="date_from" class="form-label">From Date</label>
-                        <input type="date" class="form-control" id="date_from" name="date_from" value="<?= $date_from ?>">
+                        <input type="date" class="form-control" id="date_from" name="date_from" value="<?= htmlspecialchars($date_from, ENT_QUOTES, 'UTF-8'); ?>">
                     </div>
                     <div class="col-md-3">
                         <label for="date_to" class="form-label">To Date</label>
-                        <input type="date" class="form-control" id="date_to" name="date_to" value="<?= $date_to ?>">
+                        <input type="date" class="form-control" id="date_to" name="date_to" value="<?= htmlspecialchars($date_to, ENT_QUOTES, 'UTF-8'); ?>">
                     </div>
                     <div class="col-md-12">
                         <button type="submit" class="btn btn-primary">Filter</button>
@@ -173,7 +202,9 @@ $canDeletePO = hasPermission('purchases.orders.delete');
                                 </td>
                                 <td>
                                     <div class="btn-group">
-                                        <a href="po_details.php?id=<?= $po['id'] ?>" class="btn btn-sm btn-info">View</a>
+                                        <?php if ($canViewPODetails): ?>
+                                            <a href="po_details.php?id=<?= $po['id'] ?>" class="btn btn-sm btn-info">View</a>
+                                        <?php endif; ?>
                                         <?php if (in_array($po['status'], ['new', 'ordered', 'partially-received'])) : ?>
                                             <a href="receive_items.php?po_id=<?= $po['id'] ?>" class="btn btn-sm btn-success">Receive</a>
                                         <?php endif; ?>
@@ -216,6 +247,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     const modalBody = modalElement.querySelector('.modal-body');
     const modalInstance = new bootstrap.Modal(modalElement);
+    const canViewPODetails = <?= $canViewPODetails ? 'true' : 'false'; ?>;
     const spinner = `
         <div class="d-flex justify-content-center py-4">
             <div class="spinner-border text-primary" role="status">
@@ -299,7 +331,7 @@ document.addEventListener('DOMContentLoaded', function () {
                         </div>
                         <div class="border-top pt-3">
                             <div class="mb-2"><strong>Notes:</strong> ${order.notes ? escapeHtml(order.notes) : '<span class="text-muted">No notes</span>'}</div>
-                            <a href="po_details.php?id=${order.id}" class="btn btn-sm btn-primary">Open Full PO</a>
+                            ${canViewPODetails ? `<a href="po_details.php?id=${order.id}" class="btn btn-sm btn-primary">Open Full PO</a>` : ''}
                         </div>
                     `;
                 })

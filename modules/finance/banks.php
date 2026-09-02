@@ -10,13 +10,18 @@ if (!hasPermission('finance.bank_accounts.create')) {
 $page_title = 'Bank Accounts';
 require_once '../../includes/header.php';
 
-$accounts = $conn->query("SELECT id, name FROM accounts WHERE is_active = 1 ORDER BY id ASC")->fetch_all(MYSQLI_ASSOC);
+$accounts = $conn->query("SELECT id, name FROM accounts WHERE is_active = 1 AND slug <> 'curva' ORDER BY id ASC")->fetch_all(MYSQLI_ASSOC);
+$allowedAccountIds = array_fill_keys(array_map('intval', array_column($accounts, 'id')), true);
 
 // Add bank
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bank_name'])) {
     $bank_name = sanitize($_POST['bank_name']);
     $acc_no = sanitize($_POST['account_number']);
     $account_id = !empty($_POST['account_id']) ? (int)$_POST['account_id'] : null;
+    if (!$account_id || !isset($allowedAccountIds[$account_id])) {
+        setAlert('danger', 'Please select an available brand.');
+        redirect('banks.php');
+    }
     $stmt = $conn->prepare("INSERT INTO bank_accounts (bank_name, account_number, balance, account_id) VALUES (?, ?, 0, ?)");
     $stmt->bind_param("ssi", $bank_name, $acc_no, $account_id);
     $stmt->execute();
@@ -53,11 +58,18 @@ $result = $conn->query("SELECT b.*, a.name AS account_name FROM bank_accounts b 
                 <?php while ($row=$result->fetch_assoc()): ?>
                     <tr>
                         <td><?= $row['id']; ?></td>
-                        <td><?= htmlspecialchars($row['bank_name']); ?></td>
+                        <td>
+                            <a href="bank_details.php?id=<?= (int)$row['id']; ?>" class="fw-semibold text-decoration-none">
+                                <i class="fas fa-university me-1"></i><?= htmlspecialchars($row['bank_name']); ?>
+                            </a>
+                        </td>
                         <td><?= htmlspecialchars($row['account_number']); ?></td>
                         <td><?= $row['account_name'] ? htmlspecialchars($row['account_name']) : 'GammaVet'; ?></td>
                         <td><?= number_format($row['balance'],2); ?></td>
                         <td>
+                            <a href="bank_details.php?id=<?= (int)$row['id']; ?>" class="btn btn-sm btn-outline-primary me-1">
+                                <i class="fas fa-history me-1"></i>History
+                            </a>
                             <?php if ($row['balance']==0): ?>
                                 <a href="banks.php?delete=<?= $row['id']; ?>" class="btn btn-sm btn-danger" onclick="return confirm('Delete this account?')">Delete</a>
                             <?php endif; ?>
@@ -83,7 +95,7 @@ $result = $conn->query("SELECT b.*, a.name AS account_name FROM bank_accounts b 
           </div>
           <div class="mb-3">
             <label class="form-label">Brand</label>
-            <select class="form-select" name="account_id">
+            <select class="form-select" name="account_id" required>
                 <?php foreach ($accounts as $acc): ?>
                     <option value="<?= $acc['id']; ?>"><?= htmlspecialchars($acc['name']); ?></option>
                 <?php endforeach; ?>

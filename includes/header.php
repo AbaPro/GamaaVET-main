@@ -354,6 +354,7 @@
                         || hasPermission('finance.bank_accounts.create')
                         || hasPermission('finance.personal_accounts.create')
                         || hasPermission('finance.transfers.create')
+                        || hasPermission('finance.transfers.approve')
                         || ($login_region === 'factory' && (
                             hasPermission('finance.po_payment.process')
                             || hasPermission('finance.vendor_wallet.view')
@@ -380,7 +381,7 @@
                                 <?php if (hasPermission('finance.personal_accounts.create')): ?>
                                     <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/personal.php"><i class="fas fa-user-shield me-2"></i> Personal Accounts</a></li>
                                 <?php endif; ?>
-                                <?php if (hasPermission('finance.transfers.create')): ?>
+                                <?php if (hasPermission('finance.transfers.create') || hasPermission('finance.transfers.approve')): ?>
                                     <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/transfers.php"><i class="fas fa-right-left me-2"></i> Transfers</a></li>
                                 <?php endif; ?>
                                 <?php if ($login_region === 'factory' && hasPermission('finance.po_payment.process')): ?>

@@ -11,7 +11,8 @@ if (!hasPermission('finance.po_payment.process')) {
 }
 
 // Get PO ID
-$po_id = $_GET['po_id'] ?? 0;
+$po_id = filter_input(INPUT_GET, 'po_id', FILTER_VALIDATE_INT) ?: 0;
+$canViewPODetails = hasPermission('purchases.view');
 
 // Fetch PO details
 $stmt = $pdo->prepare("
@@ -25,7 +26,7 @@ $po = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$po) {
     $_SESSION['error'] = "Purchase order not found";
-    header("Location: po_list.php");
+    header("Location: ../finance/po.php");
     exit();
 }
 
@@ -127,7 +128,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $pdo->commit();
             
             $_SESSION['success'] = "Payment recorded successfully!";
-            header("Location: po_details.php?id=" . $po_id);
+            header("Location: " . ($canViewPODetails ? 'po_details.php?id=' . $po_id : '../finance/po.php'));
             exit();
         } catch (PDOException $e) {
             $pdo->rollBack();
@@ -152,7 +153,13 @@ require_once '../../includes/header.php';
     
     <div class="card">
         <div class="card-header">
-            <h4>Purchase Order #<?= $po['id'] ?></h4>
+            <h4 class="mb-0">
+                <?php if ($canViewPODetails): ?>
+                    <a href="po_details.php?id=<?= (int)$po['id']; ?>" class="text-decoration-none">PO-<?= (int)$po['id']; ?></a>
+                <?php else: ?>
+                    PO-<?= (int)$po['id']; ?>
+                <?php endif; ?>
+            </h4>
         </div>
         <div class="card-body">
             <div class="row mb-4">
@@ -201,7 +208,7 @@ require_once '../../includes/header.php';
                     </div>
                     <div class="col-md-12">
                         <button type="submit" class="btn btn-primary">Record Payment</button>
-                        <a href="po_details.php?id=<?= $po_id ?>" class="btn btn-secondary">Cancel</a>
+                        <a href="<?= $canViewPODetails ? 'po_details.php?id=' . (int)$po_id : '../finance/po.php'; ?>" class="btn btn-secondary">Cancel</a>
                     </div>
                 </div>
             </form>

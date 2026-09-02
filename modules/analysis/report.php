@@ -778,7 +778,7 @@ $definitions = [
             foreach ([
                 "SELECT 'Safe' AS source_type, name AS account_name, balance FROM safes WHERE $scope",
                 "SELECT 'Bank' AS source_type, bank_name AS account_name, balance FROM bank_accounts WHERE $scope",
-                "SELECT 'Personal' AS source_type, name AS account_name, personal_balance AS balance FROM users WHERE is_active = 1",
+                "SELECT 'Personal' AS source_type, name AS account_name, balance FROM personal_accounts WHERE is_active = 1",
             ] as $sql) {
                 $result = $conn->query($sql);
                 if (!$result) {

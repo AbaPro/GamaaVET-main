@@ -359,7 +359,8 @@ if ($epResult) {
 
 // 4. Finance transfers
 $ftWhere = timestampFilterClause('ft.created_at', $cbDateFrom, $cbDateTo);
-$ftSql = "SELECT ft.amount, ft.from_type, ft.from_id, ft.to_type, ft.to_id, ft.notes, ft.created_at
+$ftWhere[] = "ft.status = 'approved'";
+$ftSql = "SELECT ft.amount, ft.from_type, ft.from_id, ft.to_type, ft.to_id, ft.reason, ft.notes, ft.created_at
           FROM finance_transfers ft";
 if (!empty($ftWhere)) {
     $ftSql .= ' WHERE ' . implode(' AND ', $ftWhere);
@@ -381,6 +382,9 @@ if ($ftResult) {
         } elseif ($row['from_type'] === 'bank') {
             $r = $conn->query("SELECT bank_name FROM bank_accounts WHERE id = " . (int)$row['from_id']);
             if ($r && $rr = $r->fetch_assoc()) $fromLabel = 'Bank: ' . $rr['bank_name'];
+        } elseif ($row['from_type'] === 'personal') {
+            $r = $conn->query("SELECT name FROM personal_accounts WHERE id = " . (int)$row['from_id']);
+            if ($r && $rr = $r->fetch_assoc()) $fromLabel = 'Personal: ' . $rr['name'];
         }
 
         if ($row['to_type'] === 'safe') {
@@ -389,6 +393,9 @@ if ($ftResult) {
         } elseif ($row['to_type'] === 'bank') {
             $r = $conn->query("SELECT bank_name FROM bank_accounts WHERE id = " . (int)$row['to_id']);
             if ($r && $rr = $r->fetch_assoc()) $toLabel = 'Bank: ' . $rr['bank_name'];
+        } elseif ($row['to_type'] === 'personal') {
+            $r = $conn->query("SELECT name FROM personal_accounts WHERE id = " . (int)$row['to_id']);
+            if ($r && $rr = $r->fetch_assoc()) $toLabel = 'Personal: ' . $rr['name'];
         }
 
         $allTransactions[] = [
@@ -397,7 +404,7 @@ if ($ftResult) {
             'account' => $fromLabel . ' -> ' . $toLabel,
             'inflow' => 0,
             'outflow' => fmtNum($row['amount']),
-            'note' => $row['notes'] ?? '',
+            'note' => $row['reason'] ?: ($row['notes'] ?? ''),
         ];
     }
 }

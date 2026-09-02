@@ -41,19 +41,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['payment_id'])) {
             $stmt = $pdo->prepare("UPDATE safes SET balance = balance - ? WHERE id = ?");
             $stmt->execute([$amount, $payment['safe_id']]);
             
-            // Delete related finance transfer (best effort - matching amount, safe, and reference in notes)
-            $ref_like = '%' . $payment['reference'] . '%';
-            $stmt = $pdo->prepare("DELETE FROM finance_transfers WHERE to_type = 'safe' AND to_id = ? AND amount = ? AND notes LIKE ? ORDER BY created_at DESC LIMIT 1");
-            $stmt->execute([$payment['safe_id'], $amount, $ref_like]);
+            // Preserve the related audit transfer as reversed instead of deleting it.
+            $financeTransferNote = 'Order Payment Reference: ' . $payment['reference'];
+            $stmt = $pdo->prepare("SELECT id FROM finance_transfers WHERE from_type = 'personal' AND from_id = 0 AND to_type = 'safe' AND to_id = ? AND amount = ? AND notes = ? AND status = 'approved' ORDER BY created_at DESC LIMIT 1");
+            $stmt->execute([$payment['safe_id'], $amount, $financeTransferNote]);
+            $financeTransferId = $stmt->fetchColumn();
 
         } elseif ($method === 'transfer' && !empty($payment['bank_account_id'])) {
             $stmt = $pdo->prepare("UPDATE bank_accounts SET balance = balance - ? WHERE id = ?");
             $stmt->execute([$amount, $payment['bank_account_id']]);
 
-            // Delete related finance transfer
-            $ref_like = '%' . $payment['reference'] . '%';
-            $stmt = $pdo->prepare("DELETE FROM finance_transfers WHERE to_type = 'bank' AND to_id = ? AND amount = ? AND notes LIKE ? ORDER BY created_at DESC LIMIT 1");
-            $stmt->execute([$payment['bank_account_id'], $amount, $ref_like]);
+            // Preserve the related audit transfer as reversed instead of deleting it.
+            $financeTransferNote = 'Order Payment Reference: ' . $payment['reference'];
+            $stmt = $pdo->prepare("SELECT id FROM finance_transfers WHERE from_type = 'personal' AND from_id = 0 AND to_type = 'bank' AND to_id = ? AND amount = ? AND notes = ? AND status = 'approved' ORDER BY created_at DESC LIMIT 1");
+            $stmt->execute([$payment['bank_account_id'], $amount, $financeTransferNote]);
+            $financeTransferId = $stmt->fetchColumn();
 
         } elseif ($method === 'wallet') {
             // Get customer ID from order
@@ -70,6 +72,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['payment_id'])) {
                 $stmt = $pdo->prepare("DELETE FROM customer_wallet_transactions WHERE customer_id = ? AND amount = ? AND type = 'payment' AND reference_id = ? AND reference_type = 'order' ORDER BY created_at DESC LIMIT 1");
                 $stmt->execute([$customer_id, $amount, $order_id]);
             }
+        }
+
+        if (!empty($financeTransferId)) {
+            $reversalReason = 'Order payment #' . $payment_id . ' was deleted and its account balance impact was reversed.';
+            $stmt = $pdo->prepare("
+                UPDATE finance_transfers
+                SET status = 'reversed', reversed_by = ?, reversed_at = NOW(), reversal_reason = ?
+                WHERE id = ? AND status = 'approved'
+            ");
+            $stmt->execute([$_SESSION['user_id'], $reversalReason, $financeTransferId]);
+
+            $stmt = $pdo->prepare("
+                INSERT INTO finance_transfer_history (finance_transfer_id, action, note, created_by)
+                VALUES (?, 'reversed', ?, ?)
+            ");
+            $stmt->execute([$financeTransferId, $reversalReason, $_SESSION['user_id']]);
         }
 
         // 4. Delete the payment record itself

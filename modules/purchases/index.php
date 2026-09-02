@@ -42,6 +42,7 @@ $stmt->execute();
 $stats['partially_received'] = (int)($stmt->fetchColumn() ?? 0);
 
 $canViewPrices = hasPermission('purchases.po.price.view');
+$canViewPODetails = hasPermission('purchases.view');
 ?>
 
 <div class="container mt-4">
@@ -52,37 +53,45 @@ $canViewPrices = hasPermission('purchases.po.price.view');
     <div class="row mb-4">
         <?php if ($canViewPrices): ?>
         <div class="col-md-3 mb-3">
-            <div class="card text-white bg-primary">
+            <a href="po_list.php?date_from=<?= urlencode($month_start); ?>&date_to=<?= urlencode($today); ?>" class="text-decoration-none d-block purchase-stat-link" aria-label="View this month's purchase orders">
+            <div class="card text-white bg-primary h-100 shadow-sm purchase-stat-card">
                 <div class="card-body">
                     <h5 class="card-title">Month's Purchases</h5>
                     <p class="card-text h4"><?= number_format($stats['month_purchases'], 2) ?> USD</p>
                 </div>
             </div>
+            </a>
         </div>
         <?php endif; ?>
         <div class="col-md-3 mb-3">
-            <div class="card text-white bg-warning">
+            <a href="po_list.php?status=pending" class="text-decoration-none d-block purchase-stat-link" aria-label="View pending purchase orders">
+            <div class="card text-white bg-warning h-100 shadow-sm purchase-stat-card">
                 <div class="card-body">
                     <h5 class="card-title">Pending POs</h5>
                     <p class="card-text h4"><?= $stats['pending_pos'] ?></p>
                 </div>
             </div>
+            </a>
         </div>
         <div class="col-md-3 mb-3">
-            <div class="card text-white bg-danger">
+            <a href="po_list.php?payment_status=unpaid" class="text-decoration-none d-block purchase-stat-link" aria-label="View unpaid purchase orders">
+            <div class="card text-white bg-danger h-100 shadow-sm purchase-stat-card">
                 <div class="card-body">
                     <h5 class="card-title">Unpaid POs</h5>
                     <p class="card-text h4"><?= $stats['unpaid_pos'] ?></p>
                 </div>
             </div>
+            </a>
         </div>
         <div class="col-md-3 mb-3">
-            <div class="card text-white bg-info">
+            <a href="po_list.php?status=partially-received" class="text-decoration-none d-block purchase-stat-link" aria-label="View partially received purchase orders">
+            <div class="card text-white bg-info h-100 shadow-sm purchase-stat-card">
                 <div class="card-body">
                     <h5 class="card-title">Partially Received</h5>
                     <p class="card-text h4"><?= $stats['partially_received'] ?></p>
                 </div>
             </div>
+            </a>
         </div>
     </div>
     
@@ -141,7 +150,9 @@ $canViewPrices = hasPermission('purchases.po.price.view');
                                 </span>
                             </td>
                             <td>
-                                <a href="po_details.php?id=<?= $po['id'] ?>" class="btn btn-sm btn-info">View</a>
+                                <?php if ($canViewPODetails): ?>
+                                    <a href="po_details.php?id=<?= $po['id'] ?>" class="btn btn-sm btn-info">View</a>
+                                <?php endif; ?>
                                 <?php if ($po['status'] == 'new' || $po['status'] == 'ordered') : ?>
                                     <a href="receive_items.php?po_id=<?= $po['id'] ?>" class="btn btn-sm btn-success">Receive</a>
                                 <?php endif; ?>
@@ -154,5 +165,17 @@ $canViewPrices = hasPermission('purchases.po.price.view');
         </div>
     </div>
 </div>
+
+<style>
+.purchase-stat-card {
+    transition: transform .15s ease, box-shadow .15s ease;
+    cursor: pointer;
+}
+.purchase-stat-card:hover,
+.purchase-stat-link:focus .purchase-stat-card {
+    transform: translateY(-2px);
+    box-shadow: 0 .5rem 1rem rgba(0, 0, 0, .18) !important;
+}
+</style>
 
 <?php require_once '../../includes/footer.php'; ?>

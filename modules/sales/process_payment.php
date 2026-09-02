@@ -115,17 +115,53 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 if ($payment_method == 'cash' && $safe_id) {
                     $stmtSafe = $pdo->prepare("UPDATE safes SET balance = balance + ? WHERE id = ?");
                     $stmtSafe->execute([$amount, $safe_id]);
-                    
-                    // Create a finance transfer entry for deposit
-                    $stmtTrans = $pdo->prepare("INSERT INTO finance_transfers (from_type, from_id, to_type, to_id, amount, notes, created_by) VALUES ('personal', 0, 'safe', ?, ?, ?, ?)");
-                    $stmtTrans->execute([$safe_id, $amount, 'Order Payment Reference: ' . $reference, $_SESSION['user_id']]);
+
+                    // This payment already moved money, so its audit transfer is
+                    // recorded as system-approved rather than entering the manual workflow.
+                    $financeTransferReference = 'FT-' . date('Ymd') . '-' . strtoupper(generateRandomString(6));
+                    $financeReason = 'Customer payment for order ' . $order['internal_id'];
+                    $financeNotes = 'Order Payment Reference: ' . $reference;
+                    $stmtTrans = $pdo->prepare("
+                        INSERT INTO finance_transfers
+                            (transfer_reference, from_type, from_id, to_type, to_id, amount,
+                             status, reason, notes, assigned_approver_id, approved_by, approved_at, created_by)
+                        VALUES (?, 'personal', 0, 'safe', ?, ?, 'approved', ?, ?, ?, ?, NOW(), ?)
+                    ");
+                    $stmtTrans->execute([
+                        $financeTransferReference, $safe_id, $amount, $financeReason, $financeNotes,
+                        $_SESSION['user_id'], $_SESSION['user_id'], $_SESSION['user_id']
+                    ]);
+                    $financeTransferId = (int)$pdo->lastInsertId();
+                    $stmtHistory = $pdo->prepare("
+                        INSERT INTO finance_transfer_history
+                            (finance_transfer_id, action, note, created_by)
+                        VALUES (?, 'approved', ?, ?)
+                    ");
+                    $stmtHistory->execute([$financeTransferId, $financeReason, $_SESSION['user_id']]);
                 } elseif ($payment_method == 'transfer' && $bank_account_id) {
                     $stmtBank = $pdo->prepare("UPDATE bank_accounts SET balance = balance + ? WHERE id = ?");
                     $stmtBank->execute([$amount, $bank_account_id]);
-                    
-                    // Create a finance transfer entry for deposit
-                    $stmtTrans = $pdo->prepare("INSERT INTO finance_transfers (from_type, from_id, to_type, to_id, amount, notes, created_by) VALUES ('personal', 0, 'bank', ?, ?, ?, ?)");
-                    $stmtTrans->execute([$bank_account_id, $amount, 'Order Payment Reference: ' . $reference, $_SESSION['user_id']]);
+
+                    $financeTransferReference = 'FT-' . date('Ymd') . '-' . strtoupper(generateRandomString(6));
+                    $financeReason = 'Customer payment for order ' . $order['internal_id'];
+                    $financeNotes = 'Order Payment Reference: ' . $reference;
+                    $stmtTrans = $pdo->prepare("
+                        INSERT INTO finance_transfers
+                            (transfer_reference, from_type, from_id, to_type, to_id, amount,
+                             status, reason, notes, assigned_approver_id, approved_by, approved_at, created_by)
+                        VALUES (?, 'personal', 0, 'bank', ?, ?, 'approved', ?, ?, ?, ?, NOW(), ?)
+                    ");
+                    $stmtTrans->execute([
+                        $financeTransferReference, $bank_account_id, $amount, $financeReason, $financeNotes,
+                        $_SESSION['user_id'], $_SESSION['user_id'], $_SESSION['user_id']
+                    ]);
+                    $financeTransferId = (int)$pdo->lastInsertId();
+                    $stmtHistory = $pdo->prepare("
+                        INSERT INTO finance_transfer_history
+                            (finance_transfer_id, action, note, created_by)
+                        VALUES (?, 'approved', ?, ?)
+                    ");
+                    $stmtHistory->execute([$financeTransferId, $financeReason, $_SESSION['user_id']]);
                 }
                 
                 // Update order paid amount

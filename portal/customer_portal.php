@@ -236,6 +236,102 @@ if ($requiresPassword) {
     touchPortalAccess($pdo, $customerId);
 }
 
+$noteTableStmt = $pdo->query("
+    SELECT COUNT(*)
+    FROM information_schema.tables
+    WHERE table_schema = DATABASE() AND table_name = 'customer_order_notes'
+");
+$customerOrderNotesReady = (bool)$noteTableStmt->fetchColumn();
+
+$portalSessionKey = 'customer_' . $customerId;
+if (!isset($_SESSION['portal_note_csrf'])) {
+    $_SESSION['portal_note_csrf'] = [];
+}
+if (empty($_SESSION['portal_note_csrf'][$portalSessionKey])) {
+    $_SESSION['portal_note_csrf'][$portalSessionKey] = bin2hex(random_bytes(32));
+}
+$portalNoteCsrf = $_SESSION['portal_note_csrf'][$portalSessionKey];
+
+$portalNoteFlash = $_SESSION['portal_note_flash'][$portalSessionKey] ?? null;
+unset($_SESSION['portal_note_flash'][$portalSessionKey]);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['portal_action'] ?? '') === 'add_order_note') {
+    $orderId = filter_input(INPUT_POST, 'order_id', FILTER_VALIDATE_INT) ?: 0;
+    $note = trim((string)($_POST['customer_order_note'] ?? ''));
+    $submittedCsrf = (string)($_POST['portal_note_csrf'] ?? '');
+    $flash = ['type' => 'error', 'order_id' => $orderId, 'message' => 'تعذر إضافة الملاحظة. حاول مرة أخرى.'];
+
+    try {
+        if (!$customerOrderNotesReady) {
+            throw new DomainException('خدمة ملاحظات الطلبات غير متاحة حالياً.');
+        }
+        if ($submittedCsrf === '' || !hash_equals($portalNoteCsrf, $submittedCsrf)) {
+            throw new DomainException('انتهت صلاحية النموذج. حدّث الصفحة وحاول مرة أخرى.');
+        }
+        if ($orderId <= 0) {
+            throw new DomainException('الطلب المحدد غير صالح.');
+        }
+        if ($note === '') {
+            throw new DomainException('اكتب الملاحظة قبل الإرسال.');
+        }
+
+        $noteLength = function_exists('mb_strlen') ? mb_strlen($note, 'UTF-8') : strlen($note);
+        if ($noteLength > 2000) {
+            throw new DomainException('يجب ألا تتجاوز الملاحظة 2000 حرف.');
+        }
+
+        $orderCheck = $pdo->prepare("
+            SELECT id, internal_id, created_by
+            FROM orders
+            WHERE id = ? AND customer_id = ?
+            LIMIT 1
+        ");
+        $orderCheck->execute([$orderId, $customerId]);
+        $ownedOrder = $orderCheck->fetch(PDO::FETCH_ASSOC);
+        if (!$ownedOrder) {
+            throw new DomainException('لا يمكنك إضافة ملاحظة إلى هذا الطلب.');
+        }
+
+        $pdo->beginTransaction();
+        $insertNote = $pdo->prepare("
+            INSERT INTO customer_order_notes (order_id, customer_id, note)
+            VALUES (?, ?, ?)
+        ");
+        $insertNote->execute([$orderId, $customerId, $note]);
+
+        $notify = $pdo->prepare("
+            INSERT INTO notifications
+                (type, title, message, module, entity_type, entity_id, severity, created_for_user_id)
+            VALUES
+                ('customer_order_note', ?, ?, 'sales', 'order', ?, 'info', ?)
+        ");
+        $orderLabel = $ownedOrder['internal_id'] ?: 'Order #' . $orderId;
+        $notify->execute([
+            'Customer note on ' . $orderLabel,
+            $customer['name'] . ' added a note to ' . $orderLabel . '.',
+            $orderId,
+            (int)$ownedOrder['created_by']
+        ]);
+        $pdo->commit();
+
+        $flash = ['type' => 'success', 'order_id' => $orderId, 'message' => 'تمت إضافة ملاحظتك إلى الطلب بنجاح.'];
+    } catch (DomainException $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        $flash['message'] = $e->getMessage();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        error_log('Customer portal note failed: ' . $e->getMessage());
+    }
+
+    $_SESSION['portal_note_flash'][$portalSessionKey] = $flash;
+    header('Location: customer_portal.php?token=' . rawurlencode($token) . '#order-' . max($orderId, 0));
+    exit;
+}
+
 /* =========================
    Queries
 ========================= */
@@ -336,6 +432,7 @@ $discountBasisMap = [
 ];
 
 $orderItemsByOrder = [];
+$customerOrderNotesByOrder = [];
 
 if (!empty($orders)) {
     $orderIds = array_column($orders, 'id');
@@ -352,6 +449,19 @@ if (!empty($orders)) {
 
     while ($row = $itemsStmt->fetch(PDO::FETCH_ASSOC)) {
         $orderItemsByOrder[$row['order_id']][] = $row;
+    }
+
+    if ($customerOrderNotesReady) {
+        $notesStmt = $pdo->prepare("
+            SELECT id, order_id, note, created_at
+            FROM customer_order_notes
+            WHERE customer_id = ? AND order_id IN ($placeholders)
+            ORDER BY created_at ASC, id ASC
+        ");
+        $notesStmt->execute(array_merge([$customerId], $orderIds));
+        while ($row = $notesStmt->fetch(PDO::FETCH_ASSOC)) {
+            $customerOrderNotesByOrder[$row['order_id']][] = $row;
+        }
     }
 }
 ?>
@@ -570,18 +680,21 @@ if (!empty($orders)) {
             <?php foreach ($orders as $order): ?>
               <?php
                 $orderItems = $orderItemsByOrder[$order['id']] ?? [];
+                $customerOrderNotes = $customerOrderNotesByOrder[$order['id']] ?? [];
                 $shippingAmount = ($order['shipping_cost_type'] === 'manual') ? (float)$order['shipping_cost'] : 0;
                 $orderDue = max(0, (float)$order['total_amount'] - (float)$order['paid_amount']);
                 $statusClass = $statusBadgeMap[$order['status']] ?? 'bg-slate-600';
                 $statusLabel = $statusLabelMap[$order['status']] ?? $order['status'];
                 $discountLabel = $discountBasisMap[$order['discount_basis']] ?? 'خصم غير محدد';
                 $orderProductNames = implode(' ', array_column($orderItems, 'product_name'));
+                $customerNoteSearchText = implode(' ', array_column($customerOrderNotes, 'note'));
                 $orderSearchText = trim(implode(' ', [
                     $order['internal_id'],
                     $order['status'],
                     $statusLabel,
                     $order['order_date'],
                     $order['notes'],
+                    $customerNoteSearchText,
                     $orderProductNames
                 ]));
               ?>
@@ -693,8 +806,60 @@ if (!empty($orders)) {
 
                     <?php if (!empty($order['notes'])): ?>
                       <div class="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:bg-slate-900 dark:border-slate-800">
-                        <p class="font-extrabold text-slate-900 dark:text-slate-100 mb-1">ملاحظات</p>
+                        <p class="font-extrabold text-slate-900 dark:text-slate-100 mb-1">ملاحظات الطلب</p>
                         <p class="text-slate-700 dark:text-slate-200"><?= nl2br(htmlspecialchars($order['notes'])); ?></p>
+                      </div>
+                    <?php endif; ?>
+
+                    <?php if ($customerOrderNotesReady): ?>
+                      <div class="rounded-2xl border border-blue-200 bg-blue-50/60 p-4 dark:border-blue-900 dark:bg-blue-950/30">
+                        <div class="flex items-center justify-between gap-3 mb-3">
+                          <div>
+                            <p class="font-extrabold text-slate-900 dark:text-slate-100">ملاحظاتك على الطلب</p>
+                            <p class="text-xs text-slate-500 dark:text-slate-400">يمكنك إضافة ملاحظة جديدة، وستظهر لفريق GammaVET.</p>
+                          </div>
+                          <span class="inline-flex items-center rounded-full bg-white px-3 py-1 text-xs font-bold text-blue-700 dark:bg-slate-900 dark:text-blue-200">
+                            <?= count($customerOrderNotes); ?> ملاحظة
+                          </span>
+                        </div>
+
+                        <?php if ($portalNoteFlash && (int)($portalNoteFlash['order_id'] ?? 0) === (int)$order['id']): ?>
+                          <div class="mb-3 rounded-xl border px-4 py-3 text-sm font-bold <?= ($portalNoteFlash['type'] ?? '') === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'; ?>">
+                            <?= htmlspecialchars($portalNoteFlash['message'] ?? '', ENT_QUOTES, 'UTF-8'); ?>
+                          </div>
+                        <?php endif; ?>
+
+                        <?php if ($customerOrderNotes): ?>
+                          <div class="mb-4 space-y-2">
+                            <?php foreach ($customerOrderNotes as $customerNote): ?>
+                              <div class="rounded-xl border border-blue-100 bg-white p-3 dark:border-slate-800 dark:bg-slate-950">
+                                <p class="text-slate-700 dark:text-slate-200"><?= nl2br(htmlspecialchars($customerNote['note'], ENT_QUOTES, 'UTF-8')); ?></p>
+                                <p class="mt-2 text-[11px] text-slate-400"><?= date('Y-m-d H:i', strtotime($customerNote['created_at'])); ?></p>
+                              </div>
+                            <?php endforeach; ?>
+                          </div>
+                        <?php endif; ?>
+
+                        <form method="post" action="customer_portal.php?token=<?= rawurlencode($token); ?>#order-<?= (int)$order['id']; ?>" class="space-y-3">
+                          <input type="hidden" name="token" value="<?= htmlspecialchars($token, ENT_QUOTES, 'UTF-8'); ?>">
+                          <input type="hidden" name="portal_action" value="add_order_note">
+                          <input type="hidden" name="order_id" value="<?= (int)$order['id']; ?>">
+                          <input type="hidden" name="portal_note_csrf" value="<?= htmlspecialchars($portalNoteCsrf, ENT_QUOTES, 'UTF-8'); ?>">
+                          <label for="customer-order-note-<?= (int)$order['id']; ?>" class="block text-sm font-bold text-slate-700 dark:text-slate-200">إضافة ملاحظة</label>
+                          <textarea
+                            id="customer-order-note-<?= (int)$order['id']; ?>"
+                            name="customer_order_note"
+                            rows="3"
+                            maxlength="2000"
+                            required
+                            class="w-full rounded-xl border border-blue-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-blue-900/40"
+                            placeholder="اكتب ملاحظتك الخاصة بهذا الطلب..."
+                          ></textarea>
+                          <button type="submit" class="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-800 transition">
+                            <i class="bx bx-message-square-add text-lg"></i>
+                            إرسال الملاحظة
+                          </button>
+                        </form>
                       </div>
                     <?php endif; ?>
                   </div>
@@ -952,6 +1117,16 @@ if (!empty($orders)) {
       }
     });
     applyOrderControls();
+
+    const portalNoteOrderId = <?= json_encode((int)($portalNoteFlash['order_id'] ?? 0)); ?>;
+    if (portalNoteOrderId > 0) {
+      const notePanel = document.getElementById('order-' + portalNoteOrderId);
+      const noteToggle = document.querySelector('[data-target="order-' + portalNoteOrderId + '"]');
+      if (notePanel && noteToggle && noteToggle.getAttribute('aria-expanded') !== 'true') {
+        noteToggle.click();
+        setTimeout(() => notePanel.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
+      }
+    }
 
     const productsList = document.getElementById('productsList');
     const productSearch = document.getElementById('productSearch');

@@ -84,6 +84,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['order_ids'])) {
 
             $conn->begin_transaction();
 
+            // Delete customer portal notes when the optional notes feature is installed.
+            if (tableExists('customer_order_notes')) {
+                $stmt_notes = $conn->prepare("DELETE FROM customer_order_notes WHERE order_id = ?");
+                if (!$stmt_notes) throw new Exception("Error preparing customer notes deletion: " . $conn->error);
+                $stmt_notes->bind_param("i", $id);
+                $stmt_notes->execute();
+                $stmt_notes->close();
+            }
+
             // Delete order items
             $stmt_items = $conn->prepare("DELETE FROM order_items WHERE order_id = ?");
             if (!$stmt_items) throw new Exception("Error preparing items deletion: " . $conn->error);
