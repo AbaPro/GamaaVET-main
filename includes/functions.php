@@ -1405,6 +1405,52 @@ function createTicket($notification_id, $title, $description, $priority = 'mediu
     return $id;
 }
 
+// Deletes a ticket along with its notes and attachments (DB rows + uploaded
+// files). Returns true on success, false on failure (transaction rolled back).
+function deleteTicket($ticketId) {
+    global $conn;
+    $ticketId = (int)$ticketId;
+    if ($ticketId <= 0) return false;
+
+    $attStmt = $conn->prepare("SELECT file_path FROM ticket_attachments WHERE ticket_id = ?");
+    $attStmt->bind_param('i', $ticketId);
+    $attStmt->execute();
+    $filesToDelete = $attStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $attStmt->close();
+
+    $conn->begin_transaction();
+    try {
+        $stmt = $conn->prepare("DELETE FROM ticket_notes WHERE ticket_id = ?");
+        $stmt->bind_param('i', $ticketId);
+        $stmt->execute();
+        $stmt->close();
+
+        $stmt = $conn->prepare("DELETE FROM ticket_attachments WHERE ticket_id = ?");
+        $stmt->bind_param('i', $ticketId);
+        $stmt->execute();
+        $stmt->close();
+
+        $stmt = $conn->prepare("DELETE FROM tickets WHERE id = ?");
+        $stmt->bind_param('i', $ticketId);
+        $stmt->execute();
+        $stmt->close();
+
+        $conn->commit();
+    } catch (Exception $e) {
+        $conn->rollback();
+        return false;
+    }
+
+    foreach ($filesToDelete as $file) {
+        $fullPath = __DIR__ . '/../' . $file['file_path'];
+        if (is_file($fullPath)) {
+            @unlink($fullPath);
+        }
+    }
+
+    return true;
+}
+
 function displayMessage() {
     if (isset($_SESSION['message'])) {
         $message = $_SESSION['message'];

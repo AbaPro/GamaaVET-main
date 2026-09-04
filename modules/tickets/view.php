@@ -6,6 +6,7 @@ $canManageTickets = hasPermission('tickets.manage');
 $canCreateTickets = hasPermission('tickets.create');
 $canViewTickets = hasPermission('tickets.view');
 $canUpdateTicketStatus = $canManageTickets || hasPermission('tickets.update_status');
+$canDeleteTicket = hasPermission('tickets.delete');
 
 // Any ticket permission grants entry; the per-ticket scope check below decides
 // which tickets are actually reachable. tickets.update_status is included so a
@@ -84,6 +85,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         setAlert('success', 'Ticket status updated.');
         redirect('view.php?id=' . $id);
     }
+
+    // Delete ticket logic
+    if (isset($_POST['delete_ticket']) && $canDeleteTicket) {
+        if (deleteTicket($id)) {
+            setAlert('success', 'Ticket deleted.');
+            redirect('index.php');
+        }
+        setAlert('danger', 'Failed to delete ticket.');
+        redirect('view.php?id=' . $id);
+    }
 }
 
 // Fetch attachments
@@ -107,7 +118,15 @@ require_once '../../includes/header.php';
 <div class="container mt-4">
   <div class="d-flex justify-content-between align-items-center mb-3">
     <h2>Ticket #<?= (int)$id ?></h2>
-    <a href="index.php" class="btn btn-secondary">Back</a>
+    <div class="d-flex gap-2">
+      <?php if ($canDeleteTicket): ?>
+        <form method="post" onsubmit="return confirm('Delete this ticket permanently? This cannot be undone.');">
+          <input type="hidden" name="delete_ticket" value="1">
+          <button type="submit" class="btn btn-outline-danger"><i class="fas fa-trash"></i> Delete</button>
+        </form>
+      <?php endif; ?>
+      <a href="index.php" class="btn btn-secondary">Back</a>
+    </div>
   </div>
 
   <div class="card">

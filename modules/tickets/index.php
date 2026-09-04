@@ -14,6 +14,17 @@ global $conn;
 if (!isset($_SESSION['role_id'])) loadUserAccessToSession($_SESSION['user_id']);
 $roleId = $_SESSION['role_id'] ?? null;
 $userId = $_SESSION['user_id'];
+$canDeleteTicket = hasPermission('tickets.delete');
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_ticket']) && $canDeleteTicket) {
+    $deleteId = (int)$_POST['delete_ticket'];
+    if ($deleteId > 0 && deleteTicket($deleteId)) {
+        setAlert('success', 'Ticket deleted.');
+    } else {
+        setAlert('danger', 'Failed to delete ticket.');
+    }
+    redirect('index.php');
+}
 
 // Scope: if manage -> all, else only assigned to role/user or created_by
 if (hasPermission('tickets.manage')) {
@@ -69,7 +80,15 @@ require_once '../../includes/header.php';
             <td><span class="badge bg-<?= $t['priority']==='urgent'?'danger':($t['priority']==='high'?'warning':'info') ?> text-capitalize"><?= htmlspecialchars($t['priority']) ?></span></td>
             <td><?= htmlspecialchars($t['assigned_role'] ?? '—') ?></td>
             <td><?= formatDateTime($t['created_at']) ?></td>
-            <td><a href="view.php?id=<?= (int)$t['id'] ?>" class="btn btn-sm btn-outline-primary">Open</a></td>
+            <td class="d-flex gap-1">
+              <a href="view.php?id=<?= (int)$t['id'] ?>" class="btn btn-sm btn-outline-primary">Open</a>
+              <?php if ($canDeleteTicket): ?>
+                <form method="post" onsubmit="return confirm('Delete this ticket permanently? This cannot be undone.');">
+                  <input type="hidden" name="delete_ticket" value="<?= (int)$t['id'] ?>">
+                  <button type="submit" class="btn btn-sm btn-outline-danger"><i class="fas fa-trash"></i></button>
+                </form>
+              <?php endif; ?>
+            </td>
           </tr>
         <?php endforeach; ?>
       </tbody>

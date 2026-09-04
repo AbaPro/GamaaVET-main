@@ -188,7 +188,9 @@ if (empty($token)) {
 }
 
 $stmt = $pdo->prepare("
-    SELECT c.*, f.name AS factory_name, f.contact_person, f.contact_phone, f.whatsapp_number AS factory_whatsapp_number
+    SELECT c.*, f.name AS factory_name, f.contact_person, f.contact_phone,
+           f.whatsapp_number AS factory_whatsapp_number,
+           f.sales_person_id AS factory_sales_person_id
     FROM customers c
     LEFT JOIN factories f ON c.factory_id = f.id
     WHERE c.portal_token = ?
@@ -254,6 +256,257 @@ $portalNoteCsrf = $_SESSION['portal_note_csrf'][$portalSessionKey];
 
 $portalNoteFlash = $_SESSION['portal_note_flash'][$portalSessionKey] ?? null;
 unset($_SESSION['portal_note_flash'][$portalSessionKey]);
+$portalOrderFlash = $_SESSION['portal_order_flash'][$portalSessionKey] ?? null;
+unset($_SESSION['portal_order_flash'][$portalSessionKey]);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['portal_action'] ?? '') === 'create_order') {
+    $submittedCsrf = (string)($_POST['portal_note_csrf'] ?? '');
+    $note = trim((string)($_POST['new_order_note'] ?? ''));
+    $rawItems = is_array($_POST['items'] ?? null) ? $_POST['items'] : [];
+    $flash = ['type' => 'error', 'message' => 'تعذر إنشاء الطلب. حاول مرة أخرى.'];
+
+    try {
+        if ($submittedCsrf === '' || !hash_equals($portalNoteCsrf, $submittedCsrf)) {
+            throw new DomainException('انتهت صلاحية النموذج. حدّث الصفحة وحاول مرة أخرى.');
+        }
+
+        $noteLength = function_exists('mb_strlen') ? mb_strlen($note, 'UTF-8') : strlen($note);
+        if ($noteLength > 2000) {
+            throw new DomainException('يجب ألا تتجاوز الملاحظة 2000 حرف.');
+        }
+
+        $requestedQuantities = [];
+        foreach (array_slice($rawItems, 0, 100) as $rawItem) {
+            if (!is_array($rawItem)) {
+                continue;
+            }
+            $productId = filter_var($rawItem['product_id'] ?? null, FILTER_VALIDATE_INT) ?: 0;
+            $quantity = filter_var($rawItem['quantity'] ?? null, FILTER_VALIDATE_INT) ?: 0;
+            if ($productId <= 0 || $quantity <= 0) {
+                continue;
+            }
+            if ($quantity > 1000000) {
+                throw new DomainException('كمية أحد المنتجات أكبر من الحد المسموح.');
+            }
+            $requestedQuantities[$productId] = ($requestedQuantities[$productId] ?? 0) + $quantity;
+            if ($requestedQuantities[$productId] > 1000000) {
+                throw new DomainException('إجمالي كمية أحد المنتجات أكبر من الحد المسموح.');
+            }
+        }
+
+        if (!$requestedQuantities) {
+            throw new DomainException('اختر منتجاً واحداً على الأقل وحدد الكمية المطلوبة.');
+        }
+
+        $productIds = array_keys($requestedQuantities);
+        $placeholders = implode(',', array_fill(0, count($productIds), '?'));
+        $productStmt = $pdo->prepare("
+            SELECT id, name, unit_price
+            FROM products
+            WHERE customer_id = ? AND type = 'final' AND id IN ($placeholders)
+            FOR UPDATE
+        ");
+
+        $pdo->beginTransaction();
+        $productStmt->execute(array_merge([$customerId], $productIds));
+        $selectedProducts = $productStmt->fetchAll(PDO::FETCH_ASSOC);
+        if (count($selectedProducts) !== count($productIds)) {
+            throw new DomainException('أحد المنتجات المختارة غير متاح لهذا الحساب.');
+        }
+
+        $responsibleUserId = (int)($customer['sales_person_id'] ?? 0);
+        if ($responsibleUserId <= 0) {
+            $responsibleUserId = (int)($customer['factory_sales_person_id'] ?? 0);
+        }
+        if ($responsibleUserId > 0) {
+            $userCheck = $pdo->prepare("SELECT id FROM users WHERE id = ? AND is_active = 1 LIMIT 1");
+            $userCheck->execute([$responsibleUserId]);
+            if (!$userCheck->fetchColumn()) {
+                $responsibleUserId = 0;
+            }
+        }
+        if ($responsibleUserId <= 0) {
+            $responsibleUserId = (int)$pdo->query("
+                SELECT u.id
+                FROM users u
+                LEFT JOIN roles r ON r.id = u.role_id
+                WHERE u.is_active = 1
+                  AND COALESCE(r.slug, u.role) IN (
+                      'salesman', 'factory_sales', 'representative_sales', 'sales_manager', 'admin'
+                  )
+                ORDER BY FIELD(
+                    COALESCE(r.slug, u.role),
+                    'salesman', 'factory_sales', 'representative_sales', 'sales_manager', 'admin'
+                ), u.id
+                LIMIT 1
+            ")->fetchColumn();
+        }
+        if ($responsibleUserId <= 0) {
+            throw new DomainException('لا يوجد مسؤول مبيعات متاح لاستلام الطلب حالياً.');
+        }
+
+        $contactStmt = $pdo->prepare("
+            SELECT id
+            FROM customer_contacts
+            WHERE customer_id = ?
+            ORDER BY is_primary DESC, id ASC
+            LIMIT 1
+        ");
+        $contactStmt->execute([$customerId]);
+        $contactId = (int)$contactStmt->fetchColumn();
+        if ($contactId <= 0) {
+            $createContact = $pdo->prepare("
+                INSERT INTO customer_contacts (customer_id, name, email, phone, is_primary, position)
+                VALUES (?, ?, ?, ?, 1, 'Portal contact')
+            ");
+            $contactPhone = trim((string)($customer['phone'] ?: ($customer['whatsapp_phone'] ?: '-')));
+            $createContact->execute([
+                $customerId,
+                $customer['name'],
+                $customer['email'] ?: null,
+                $contactPhone,
+            ]);
+            $contactId = (int)$pdo->lastInsertId();
+        }
+
+        $itemsSubtotal = 0.0;
+        foreach ($selectedProducts as &$selectedProduct) {
+            $selectedProduct['quantity'] = $requestedQuantities[(int)$selectedProduct['id']];
+            $selectedProduct['unit_price'] = (float)$selectedProduct['unit_price'];
+            $selectedProduct['total_price'] = round($selectedProduct['quantity'] * $selectedProduct['unit_price'], 2);
+            $itemsSubtotal += $selectedProduct['total_price'];
+        }
+        unset($selectedProduct);
+
+        $internalId = 'ORD-' . date('Ymd') . '-P' . strtoupper(bin2hex(random_bytes(3)));
+        $insertOrder = $pdo->prepare("
+            INSERT INTO orders (
+                internal_id, customer_id, factory_id, contact_id, order_date, status,
+                total_amount, paid_amount, discount_percentage, discount_basis,
+                discount_amount, discount_product_count, free_sample_count,
+                shipping_cost_type, shipping_cost, notes, created_by
+            ) VALUES (?, ?, ?, ?, CURDATE(), 'new', ?, 0, 0, 'none', 0, 0, 0, 'none', 0, ?, ?)
+        ");
+        $insertOrder->execute([
+            $internalId,
+            $customerId,
+            empty($customer['direct_sale']) ? ($customer['factory_id'] ?: null) : null,
+            $contactId,
+            round($itemsSubtotal, 2),
+            $note !== '' ? $note : null,
+            $responsibleUserId,
+        ]);
+        $orderId = (int)$pdo->lastInsertId();
+
+        $insertItem = $pdo->prepare("
+            INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price, is_free_sample)
+            VALUES (?, ?, ?, ?, ?, 0)
+        ");
+        $stockBeforeStmt = $pdo->prepare("
+            SELECT quantity
+            FROM inventory_products
+            WHERE inventory_id = 1 AND product_id = ?
+            LIMIT 1
+            FOR UPDATE
+        ");
+        $deductStockStmt = $pdo->prepare("
+            UPDATE inventory_products
+            SET quantity = quantity - ?
+            WHERE inventory_id = 1 AND product_id = ?
+        ");
+        $stockLogsReady = (bool)$pdo->query("
+            SELECT COUNT(*) FROM information_schema.tables
+            WHERE table_schema = DATABASE() AND table_name = 'inventory_stock_logs'
+        ")->fetchColumn();
+        $priceLogsReady = (bool)$pdo->query("
+            SELECT COUNT(*) FROM information_schema.tables
+            WHERE table_schema = DATABASE() AND table_name = 'product_price_logs'
+        ")->fetchColumn();
+        $insertStockLog = $stockLogsReady ? $pdo->prepare("
+            INSERT INTO inventory_stock_logs
+                (inventory_id, product_id, change_quantity, quantity_before, quantity_after,
+                 source_type, source_id, sell_price, notes, created_by)
+            VALUES (1, ?, ?, ?, ?, 'sales_order', ?, ?, ?, ?)
+        ") : null;
+        $insertPriceLog = $priceLogsReady ? $pdo->prepare("
+            INSERT INTO product_price_logs
+                (product_id, price_type, price, quantity, source_type, source_id, notes, created_by)
+            VALUES (?, 'sell', ?, ?, 'sales_order', ?, ?, ?)
+        ") : null;
+
+        foreach ($selectedProducts as $selectedProduct) {
+            $productId = (int)$selectedProduct['id'];
+            $quantity = (int)$selectedProduct['quantity'];
+            $unitPrice = (float)$selectedProduct['unit_price'];
+            $insertItem->execute([$orderId, $productId, $quantity, $unitPrice, $selectedProduct['total_price']]);
+            $orderItemId = (int)$pdo->lastInsertId();
+
+            $stockBeforeStmt->execute([$productId]);
+            $stockBefore = $stockBeforeStmt->fetchColumn();
+            if ($stockBefore !== false) {
+                $stockBefore = (float)$stockBefore;
+                $deductStockStmt->execute([$quantity, $productId]);
+                if ($insertStockLog) {
+                    $insertStockLog->execute([
+                        $productId,
+                        -$quantity,
+                        $stockBefore,
+                        $stockBefore - $quantity,
+                        $orderItemId,
+                        $unitPrice,
+                        'Customer portal order ' . $internalId,
+                        $responsibleUserId,
+                    ]);
+                }
+            }
+            if ($insertPriceLog && $unitPrice > 0) {
+                $insertPriceLog->execute([
+                    $productId,
+                    $unitPrice,
+                    $quantity,
+                    $orderItemId,
+                    'Customer portal order ' . $internalId,
+                    $responsibleUserId,
+                ]);
+            }
+        }
+
+        $notify = $pdo->prepare("
+            INSERT INTO notifications
+                (type, title, message, module, entity_type, entity_id, severity, created_for_user_id)
+            VALUES
+                ('customer_portal_order', ?, ?, 'sales', 'order', ?, 'info', ?)
+        ");
+        $notify->execute([
+            'New customer portal order: ' . $internalId,
+            $customer['name'] . ' submitted a new order through the customer portal.',
+            $orderId,
+            $responsibleUserId,
+        ]);
+
+        $pdo->commit();
+        $flash = [
+            'type' => 'success',
+            'order_id' => $orderId,
+            'message' => 'تم إرسال الطلب ' . $internalId . ' بنجاح.',
+        ];
+    } catch (DomainException $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        $flash['message'] = $e->getMessage();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        error_log('Customer portal order failed: ' . $e->getMessage());
+    }
+
+    $_SESSION['portal_order_flash'][$portalSessionKey] = $flash;
+    $orderAnchor = !empty($flash['order_id']) ? '#order-' . (int)$flash['order_id'] : '#newOrderPanel';
+    header('Location: customer_portal.php?token=' . rawurlencode($token) . $orderAnchor);
+    exit;
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['portal_action'] ?? '') === 'add_order_note') {
     $orderId = filter_input(INPUT_POST, 'order_id', FILTER_VALIDATE_INT) ?: 0;
@@ -369,6 +622,10 @@ $productsStmt = $pdo->prepare("
 ");
 $productsStmt->execute([$customerId]);
 $customerProducts = $productsStmt->fetchAll(PDO::FETCH_ASSOC);
+$orderableProducts = array_values(array_filter(
+    $customerProducts,
+    static fn(array $product): bool => ($product['type'] ?? '') === 'final'
+));
 
 $balanceStmt = $pdo->prepare("
     SELECT SUM(total_amount - paid_amount) AS due
@@ -632,14 +889,119 @@ if (!empty($orders)) {
     <!-- Orders -->
     <section class="rounded-3xl bg-white border border-slate-200 shadow-soft dark:bg-slate-900 dark:border-slate-800">
       <div class="p-6 sm:p-7">
-        <div class="flex items-center gap-3 mb-5">
-          <div class="h-11 w-11 rounded-2xl bg-blue-50 text-blue-700 flex items-center justify-center dark:bg-blue-900/30 dark:text-blue-200">
-            <i class="bx bx-receipt text-2xl"></i>
+        <div class="mb-5 flex flex-wrap items-center justify-between gap-4">
+          <div class="flex items-center gap-3">
+            <div class="h-11 w-11 rounded-2xl bg-blue-50 text-blue-700 flex items-center justify-center dark:bg-blue-900/30 dark:text-blue-200">
+              <i class="bx bx-receipt text-2xl"></i>
+            </div>
+            <div>
+              <h2 class="text-lg sm:text-xl font-extrabold">طلباتك</h2>
+              <p class="text-sm text-slate-500 dark:text-slate-400">افتح أي طلب لإضافة ملاحظة خاصة به.</p>
+            </div>
           </div>
-          <div>
-            <h2 class="text-lg sm:text-xl font-extrabold">طلباتك</h2>
-          </div>
+          <button
+            type="button"
+            id="toggleNewOrder"
+            class="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
+            aria-controls="newOrderPanel"
+            aria-expanded="<?= $portalOrderFlash && ($portalOrderFlash['type'] ?? '') !== 'success' ? 'true' : 'false'; ?>"
+            <?= !$orderableProducts ? 'disabled' : ''; ?>
+          >
+            <i class="bx bx-plus-circle text-lg"></i>
+            إضافة طلب جديد
+          </button>
         </div>
+
+        <?php if ($portalOrderFlash): ?>
+          <div class="mb-5 rounded-xl border px-4 py-3 text-sm font-bold <?= ($portalOrderFlash['type'] ?? '') === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'; ?>">
+            <?= htmlspecialchars($portalOrderFlash['message'] ?? '', ENT_QUOTES, 'UTF-8'); ?>
+          </div>
+        <?php endif; ?>
+
+        <?php if ($orderableProducts): ?>
+          <div
+            id="newOrderPanel"
+            class="<?= $portalOrderFlash && ($portalOrderFlash['type'] ?? '') !== 'success' ? '' : 'hidden'; ?> mb-6 rounded-2xl border border-blue-200 bg-blue-50/60 p-4 sm:p-5 dark:border-blue-900 dark:bg-blue-950/30"
+          >
+            <div class="mb-4">
+              <h3 class="font-extrabold text-slate-900 dark:text-slate-100">طلب جديد</h3>
+              <p class="text-xs leading-6 text-slate-500 dark:text-slate-400">اختر المنتجات والكميات المطلوبة. سيصل الطلب مباشرة إلى مسؤول المبيعات.</p>
+            </div>
+            <form method="post" action="customer_portal.php?token=<?= rawurlencode($token); ?>#newOrderPanel" class="space-y-4" id="newOrderForm">
+              <input type="hidden" name="token" value="<?= htmlspecialchars($token, ENT_QUOTES, 'UTF-8'); ?>">
+              <input type="hidden" name="portal_action" value="create_order">
+              <input type="hidden" name="portal_note_csrf" value="<?= htmlspecialchars($portalNoteCsrf, ENT_QUOTES, 'UTF-8'); ?>">
+
+              <div id="newOrderItems" class="space-y-3">
+                <div class="grid gap-3 rounded-xl border border-blue-100 bg-white p-3 sm:grid-cols-[minmax(0,1fr)_130px_42px] dark:border-slate-800 dark:bg-slate-950" data-order-item-row>
+                  <div>
+                    <label class="mb-1 block text-xs font-bold text-slate-600 dark:text-slate-300">المنتج</label>
+                    <select name="items[0][product_id]" required class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100">
+                      <option value="">اختر المنتج</option>
+                      <?php foreach ($orderableProducts as $product): ?>
+                        <option value="<?= (int)$product['id']; ?>">
+                          <?= htmlspecialchars($product['name'] . (!empty($product['sku']) ? ' — ' . $product['sku'] : ''), ENT_QUOTES, 'UTF-8'); ?>
+                        </option>
+                      <?php endforeach; ?>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-bold text-slate-600 dark:text-slate-300">الكمية</label>
+                    <input type="number" name="items[0][quantity]" min="1" max="1000000" step="1" value="1" required class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100">
+                  </div>
+                  <button type="button" class="remove-order-item mt-5 inline-flex h-10 w-10 items-center justify-center rounded-xl text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-30 dark:hover:bg-rose-950/30" aria-label="حذف المنتج" disabled>
+                    <i class="bx bx-trash text-xl"></i>
+                  </button>
+                </div>
+              </div>
+
+              <button type="button" id="addOrderItem" class="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-white px-4 py-2 text-sm font-bold text-blue-700 transition hover:bg-blue-50 dark:border-blue-900 dark:bg-slate-950 dark:text-blue-200">
+                <i class="bx bx-plus"></i>
+                إضافة منتج آخر
+              </button>
+
+              <div>
+                <label for="newOrderNote" class="mb-1 block text-sm font-bold text-slate-700 dark:text-slate-200">ملاحظات الطلب (اختياري)</label>
+                <textarea id="newOrderNote" name="new_order_note" rows="3" maxlength="2000" class="w-full rounded-xl border border-blue-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-blue-900/40" placeholder="أضف أي تفاصيل أو تعليمات خاصة بالطلب..."></textarea>
+              </div>
+
+              <div class="flex flex-wrap gap-3">
+                <button type="submit" class="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-blue-800">
+                  <i class="bx bx-send text-lg"></i>
+                  إرسال الطلب
+                </button>
+                <button type="button" id="cancelNewOrder" class="rounded-xl px-4 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-white dark:text-slate-300 dark:hover:bg-slate-950">إلغاء</button>
+              </div>
+            </form>
+          </div>
+
+          <template id="newOrderItemTemplate">
+            <div class="grid gap-3 rounded-xl border border-blue-100 bg-white p-3 sm:grid-cols-[minmax(0,1fr)_130px_42px] dark:border-slate-800 dark:bg-slate-950" data-order-item-row>
+              <div>
+                <label class="mb-1 block text-xs font-bold text-slate-600 dark:text-slate-300">المنتج</label>
+                <select name="items[__INDEX__][product_id]" required class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100">
+                  <option value="">اختر المنتج</option>
+                  <?php foreach ($orderableProducts as $product): ?>
+                    <option value="<?= (int)$product['id']; ?>">
+                      <?= htmlspecialchars($product['name'] . (!empty($product['sku']) ? ' — ' . $product['sku'] : ''), ENT_QUOTES, 'UTF-8'); ?>
+                    </option>
+                  <?php endforeach; ?>
+                </select>
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-bold text-slate-600 dark:text-slate-300">الكمية</label>
+                <input type="number" name="items[__INDEX__][quantity]" min="1" max="1000000" step="1" value="1" required class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100">
+              </div>
+              <button type="button" class="remove-order-item mt-5 inline-flex h-10 w-10 items-center justify-center rounded-xl text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/30" aria-label="حذف المنتج">
+                <i class="bx bx-trash text-xl"></i>
+              </button>
+            </div>
+          </template>
+        <?php else: ?>
+          <div class="mb-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+            لا توجد منتجات نهائية متاحة لإنشاء طلب جديد حالياً.
+          </div>
+        <?php endif; ?>
 
         <?php if ($orders): ?>
           <div class="mb-5 grid gap-3 md:grid-cols-[1fr_180px_190px]">
@@ -970,8 +1332,6 @@ if (!empty($orders)) {
               >
                 <option value="name-asc">الاسم أ-ي</option>
                 <option value="name-desc">الاسم ي-أ</option>
-                <option value="price-desc">السعر من الأعلى</option>
-                <option value="price-asc">السعر من الأقل</option>
                 <option value="stock-desc">المخزون من الأعلى</option>
                 <option value="stock-asc">المخزون من الأقل</option>
               </select>
@@ -982,7 +1342,6 @@ if (!empty($orders)) {
                   <tr>
                     <th class="px-4 py-3 text-right font-bold">المنتج</th>
                     <th class="px-4 py-3 text-center font-bold">التصنيف</th>
-                    <th class="px-4 py-3 text-center font-bold">السعر</th>
                     <th class="px-4 py-3 text-center font-bold">المخزون</th>
                   </tr>
                 </thead>
@@ -998,7 +1357,6 @@ if (!empty($orders)) {
                     <tr
                       class="portal-product hover:bg-slate-50 dark:hover:bg-slate-950/60 transition"
                       data-name="<?= htmlspecialchars((string)$product['name'], ENT_QUOTES, 'UTF-8'); ?>"
-                      data-price="<?= htmlspecialchars((string)(float)$product['unit_price'], ENT_QUOTES, 'UTF-8'); ?>"
                       data-stock="<?= htmlspecialchars((string)(float)$product['stock'], ENT_QUOTES, 'UTF-8'); ?>"
                       data-search="<?= htmlspecialchars($productSearchText, ENT_QUOTES, 'UTF-8'); ?>"
                     >
@@ -1008,9 +1366,6 @@ if (!empty($orders)) {
                       </td>
                       <td class="px-4 py-3 text-center text-slate-600 dark:text-slate-400">
                         <?= htmlspecialchars($product['category_name'] ?? '-'); ?>
-                      </td>
-                      <td class="px-4 py-3 text-center font-bold">
-                        <?= number_format((float)$product['unit_price'], 2); ?>
                       </td>
                       <td class="px-4 py-3 text-center">
                         <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-extrabold <?= $product['stock'] > 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-400'; ?>">
@@ -1041,6 +1396,53 @@ if (!empty($orders)) {
   </main>
 
   <script>
+    const newOrderToggle = document.getElementById('toggleNewOrder');
+    const newOrderPanel = document.getElementById('newOrderPanel');
+    const cancelNewOrder = document.getElementById('cancelNewOrder');
+    const addOrderItem = document.getElementById('addOrderItem');
+    const newOrderItems = document.getElementById('newOrderItems');
+    const newOrderItemTemplate = document.getElementById('newOrderItemTemplate');
+    let nextOrderItemIndex = 1;
+
+    function setNewOrderPanel(open) {
+      if (!newOrderPanel || !newOrderToggle) return;
+      newOrderPanel.classList.toggle('hidden', !open);
+      newOrderToggle.setAttribute('aria-expanded', String(open));
+      if (open) {
+        newOrderPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+
+    function updateOrderItemRemoveButtons() {
+      if (!newOrderItems) return;
+      const rows = newOrderItems.querySelectorAll('[data-order-item-row]');
+      rows.forEach((row) => {
+        const removeButton = row.querySelector('.remove-order-item');
+        if (removeButton) removeButton.disabled = rows.length === 1;
+      });
+    }
+
+    newOrderToggle?.addEventListener('click', () => {
+      setNewOrderPanel(newOrderToggle.getAttribute('aria-expanded') !== 'true');
+    });
+    cancelNewOrder?.addEventListener('click', () => setNewOrderPanel(false));
+
+    addOrderItem?.addEventListener('click', () => {
+      if (!newOrderItems || !newOrderItemTemplate) return;
+      const markup = newOrderItemTemplate.innerHTML.replaceAll('__INDEX__', String(nextOrderItemIndex++));
+      newOrderItems.insertAdjacentHTML('beforeend', markup);
+      updateOrderItemRemoveButtons();
+      newOrderItems.lastElementChild?.querySelector('select')?.focus();
+    });
+
+    newOrderItems?.addEventListener('click', (event) => {
+      const removeButton = event.target.closest('.remove-order-item');
+      if (!removeButton || removeButton.disabled) return;
+      removeButton.closest('[data-order-item-row]')?.remove();
+      updateOrderItemRemoveButtons();
+    });
+    updateOrderItemRemoveButtons();
+
     // Orders accordion: smooth expand/collapse + chevron rotate
     document.querySelectorAll('.toggle-order').forEach((button) => {
       button.addEventListener('click', function () {
@@ -1119,9 +1521,11 @@ if (!empty($orders)) {
     applyOrderControls();
 
     const portalNoteOrderId = <?= json_encode((int)($portalNoteFlash['order_id'] ?? 0)); ?>;
-    if (portalNoteOrderId > 0) {
-      const notePanel = document.getElementById('order-' + portalNoteOrderId);
-      const noteToggle = document.querySelector('[data-target="order-' + portalNoteOrderId + '"]');
+    const portalCreatedOrderId = <?= json_encode((int)($portalOrderFlash['order_id'] ?? 0)); ?>;
+    const orderToOpen = portalNoteOrderId || portalCreatedOrderId;
+    if (orderToOpen > 0) {
+      const notePanel = document.getElementById('order-' + orderToOpen);
+      const noteToggle = document.querySelector('[data-target="order-' + orderToOpen + '"]');
       if (notePanel && noteToggle && noteToggle.getAttribute('aria-expanded') !== 'true') {
         noteToggle.click();
         setTimeout(() => notePanel.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
