@@ -58,9 +58,12 @@ $canViewPhoneNumbers = hasPermission('contacts.phone.view');
 
 // Fetch payments
 $stmt = $pdo->prepare("
-    SELECT pop.*, u.name AS created_by_name
+    SELECT pop.*, u.name AS created_by_name, COALESCE(ps.name, pb.bank_name, pp.name) AS payment_source_name
     FROM purchase_order_payments pop
     JOIN users u ON pop.created_by = u.id
+    LEFT JOIN safes ps ON pop.payment_source_type = 'safe' AND ps.id = pop.payment_source_id
+    LEFT JOIN bank_accounts pb ON pop.payment_source_type = 'bank' AND pb.id = pop.payment_source_id
+    LEFT JOIN personal_accounts pp ON pop.payment_source_type = 'personal' AND pp.id = pop.payment_source_id
     WHERE pop.purchase_order_id = ?
     ORDER BY pop.created_at DESC
 ");
@@ -270,6 +273,7 @@ require_once '../../includes/header.php';
                                     <th>Date</th>
                                     <th>Amount</th>
                                     <th>Method</th>
+                                    <th>Paid From</th>
                                     <th>By</th>
                                     <th>Screenshot</th>
                                     <?php if ($canDeletePayments): ?>
@@ -283,6 +287,7 @@ require_once '../../includes/header.php';
                                         <td><?= date('M d, Y', strtotime($payment['created_at'])) ?></td>
                                         <td><?= number_format($payment['amount'], 2) ?></td>
                                         <td><?= ucfirst($payment['payment_method']) ?></td>
+                                        <td><?= e($payment['payment_method'] === 'wallet' ? 'Vendor Wallet' : ($payment['payment_source_name'] ? ucfirst($payment['payment_source_type']) . ' — ' . $payment['payment_source_name'] : 'Not recorded')); ?></td>
                                         <td><?= htmlspecialchars($payment['created_by_name']) ?></td>
                                         <td>
                                             <?php echo renderAttachmentThumbnails($paymentAttachmentsByPayment[$payment['id']] ?? []); ?>

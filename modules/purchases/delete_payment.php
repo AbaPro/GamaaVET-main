@@ -2,6 +2,7 @@
 require_once '../../includes/auth.php';
 require_once '../../config/database.php';
 require_once '../../includes/functions.php';
+require_once __DIR__ . '/payment_sources.php';
 
 // Permission check
 if (!hasPermission('finance.purchase_payments.delete')) {
@@ -17,7 +18,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['payment_id'])) {
         $pdo->beginTransaction();
 
         // 1. Fetch payment details
-        $stmt = $pdo->prepare("SELECT pop.*, po.vendor_id FROM purchase_order_payments pop JOIN purchase_orders po ON pop.purchase_order_id = po.id WHERE pop.id = ?");
+        $stmt = $pdo->prepare("SELECT pop.*, po.vendor_id FROM purchase_order_payments pop JOIN purchase_orders po ON pop.purchase_order_id = po.id WHERE pop.id = ? FOR UPDATE");
         $stmt->execute([$payment_id]);
         $payment = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -44,6 +45,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['payment_id'])) {
             $stmt = $pdo->prepare("DELETE FROM vendor_wallet_transactions WHERE vendor_id = ? AND amount = ? AND type = 'payment' AND reference_id = ? AND reference_type = 'purchase_order' ORDER BY created_at DESC LIMIT 1");
             $stmt->execute([$vendor_id, $amount, $po_id]);
         }
+
+        refundPoPaymentSource($payment);
 
         // 4. Delete attachment rows and remember their file paths for post-commit cleanup
         $attStmt = $pdo->prepare("SELECT file_path FROM purchase_order_payment_attachments WHERE purchase_order_payment_id = ?");

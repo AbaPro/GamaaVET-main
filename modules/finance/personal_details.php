@@ -4,6 +4,7 @@ require_once '../../includes/functions.php';
 require_once 'transfer_helpers.php';
 
 if (!hasPermission('finance.personal_accounts.create')
+    && !hasPermission('finance.personal_accounts.delete')
     && !hasPermission('finance.transfers.create')
     && !hasPermission('finance.transfers.approve')) {
     setAlert('danger', 'Access denied.');
@@ -60,6 +61,22 @@ if ($transfers) {
     }
 }
 
+require_once __DIR__ . '/../purchases/payment_sources.php';
+foreach (poPaymentSourceHistory('personal', $personalAccountId) as $payment) {
+    $transfers[] = [
+        'id' => 0, 'po_payment_id' => $payment['id'],
+        'created_at' => $payment['created_at'], 'transfer_reference' => 'PO Payment #' . $payment['id'],
+        'status' => 'approved', 'from_type' => 'personal', 'from_id' => $personalAccountId,
+        'to_type' => 'vendor', 'to_id' => 0, 'to_account_name' => $payment['vendor_name'],
+        'amount' => $payment['amount'], 'reason' => $payment['notes'], 'notes' => $payment['reference'],
+        'purchase_order_id' => $payment['purchase_order_id'], 'ticket_id' => null,
+        'requested_by_name' => $payment['created_by_name'], 'approved_by_name' => null,
+    ];
+}
+usort($transfers, function ($a, $b) {
+    return strcmp($b['created_at'], $a['created_at']) ?: (($b['po_payment_id'] ?? $b['id']) <=> ($a['po_payment_id'] ?? $a['id']));
+});
+
 $totalReceived = 0.0;
 $totalSpent = 0.0;
 $runningBalance = (float)$account['balance'];
@@ -113,7 +130,7 @@ require_once '../../includes/header.php';
         <div class="h3 mb-0 text-danger"><?= number_format($totalSpent, 2); ?> EGP</div>
     </div></div></div>
     <div class="col-lg-3 col-md-6 mb-3"><div class="card border-0 shadow-sm h-100"><div class="card-body">
-        <div class="small text-uppercase text-muted fw-bold">Transfer Records</div>
+        <div class="small text-uppercase text-muted fw-bold">Transaction Records</div>
         <div class="h3 mb-0"><?= number_format(count($transfers)); ?></div>
     </div></div></div>
 </div>
@@ -140,7 +157,7 @@ require_once '../../includes/header.php';
                         <?php foreach ($transfers as $transfer): ?>
                             <tr>
                                 <td data-order="<?= (int)strtotime($transfer['created_at']); ?>"><?= date('M d, Y H:i', strtotime($transfer['created_at'])); ?></td>
-                                <td><a href="transfer_details.php?id=<?= (int)$transfer['id']; ?>" class="fw-semibold"><?= e($transfer['transfer_reference']); ?></a></td>
+                                <td><a href="<?= isset($transfer['po_payment_id']) ? '../purchases/po_details.php?id=' . (int)$transfer['purchase_order_id'] : 'transfer_details.php?id=' . (int)$transfer['id']; ?>" class="fw-semibold"><?= e($transfer['transfer_reference']); ?></a></td>
                                 <td><span class="badge bg-<?= $statusColors[$transfer['status']] ?? 'secondary'; ?>"><?= e(ucfirst($transfer['status'])); ?></span></td>
                                 <td>
                                     <?php if ($transfer['direction'] === 'in'): ?><span class="badge bg-success">Received From</span>
@@ -163,7 +180,7 @@ require_once '../../includes/header.php';
                             </tr>
                         <?php endforeach; ?>
                     <?php else: ?>
-                        <tr><td colspan="13" class="text-center text-muted py-4">No transfer history for this personal account.</td></tr>
+                        <tr><td colspan="13" class="text-center text-muted py-4">No transaction history for this personal account.</td></tr>
                     <?php endif; ?>
                 </tbody>
             </table>

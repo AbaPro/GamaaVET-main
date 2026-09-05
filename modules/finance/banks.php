@@ -1,20 +1,29 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+require_once __DIR__ . '/account_deletion.php';
 
-if (!hasPermission('finance.bank_accounts.create')) {
+$canCreate = hasPermission('finance.bank_accounts.create');
+$canDelete = hasPermission('finance.bank_accounts.delete');
+
+if (!$canCreate && !$canDelete) {
     setAlert('danger', 'Access denied.');
     redirect('../../dashboard.php');
 }
 
 $page_title = 'Bank Accounts';
-require_once '../../includes/header.php';
+
+handleFinanceAccountDeletion('bank', $canDelete, 'banks.php');
 
 $accounts = $conn->query("SELECT id, name FROM accounts WHERE is_active = 1 AND slug <> 'curva' ORDER BY id ASC")->fetch_all(MYSQLI_ASSOC);
 $allowedAccountIds = array_fill_keys(array_map('intval', array_column($accounts, 'id')), true);
 
 // Add bank
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bank_name'])) {
+    if (!$canCreate) {
+        setAlert('danger', 'Access denied.');
+        redirect('banks.php');
+    }
     $bank_name = sanitize($_POST['bank_name']);
     $acc_no = sanitize($_POST['account_number']);
     $account_id = !empty($_POST['account_id']) ? (int)$_POST['account_id'] : null;
@@ -29,25 +38,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bank_name'])) {
     redirect('banks.php');
 }
 
-// Delete bank only if empty
-if (isset($_GET['delete'])) {
-    $id = intval($_GET['delete']);
-    $check = $conn->query("SELECT balance FROM bank_accounts WHERE id=$id")->fetch_assoc();
-    if ($check && $check['balance'] == 0) {
-        $conn->query("DELETE FROM bank_accounts WHERE id=$id");
-        setAlert('success', 'Bank account deleted.');
-    } else {
-        setAlert('danger', 'Cannot delete bank account with balance.');
-    }
-    redirect('banks.php');
-}
-
 $result = $conn->query("SELECT b.*, a.name AS account_name FROM bank_accounts b LEFT JOIN accounts a ON a.id = b.account_id ORDER BY b.id");
+require_once '../../includes/header.php';
 ?>
 
 <div class="d-flex justify-content-between mb-4">
     <h2>Bank Accounts</h2>
+    <?php if ($canCreate): ?>
     <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addBankModal"><i class="fas fa-plus"></i> Add Bank</button>
+    <?php endif; ?>
 </div>
 
 <div class="card">
@@ -70,9 +69,7 @@ $result = $conn->query("SELECT b.*, a.name AS account_name FROM bank_accounts b 
                             <a href="bank_details.php?id=<?= (int)$row['id']; ?>" class="btn btn-sm btn-outline-primary me-1">
                                 <i class="fas fa-history me-1"></i>History
                             </a>
-                            <?php if ($row['balance']==0): ?>
-                                <a href="banks.php?delete=<?= $row['id']; ?>" class="btn btn-sm btn-danger" onclick="return confirm('Delete this account?')">Delete</a>
-                            <?php endif; ?>
+                            <?php if ($canDelete) renderFinanceAccountDeleteButton($row); ?>
                         </td>
                     </tr>
                 <?php endwhile; ?>
@@ -81,6 +78,7 @@ $result = $conn->query("SELECT b.*, a.name AS account_name FROM bank_accounts b 
     </div>
 </div>
 
+<?php if ($canCreate): ?>
 <div class="modal fade" id="addBankModal" tabindex="-1">
   <div class="modal-dialog">
     <div class="modal-content">
@@ -110,5 +108,7 @@ $result = $conn->query("SELECT b.*, a.name AS account_name FROM bank_accounts b 
     </div>
   </div>
 </div>
+
+<?php endif; ?>
 
 <?php require_once '../../includes/footer.php'; ?>

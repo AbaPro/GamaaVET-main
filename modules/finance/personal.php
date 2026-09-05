@@ -1,16 +1,26 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+require_once __DIR__ . '/account_deletion.php';
 
-if (!hasPermission('finance.personal_accounts.create')) {
+$canCreate = hasPermission('finance.personal_accounts.create');
+$canDelete = hasPermission('finance.personal_accounts.delete');
+
+if (!$canCreate && !$canDelete) {
     setAlert('danger', 'Access denied.');
     redirect('../../dashboard.php');
 }
+
+handleFinanceAccountDeletion('personal', $canDelete, 'personal.php');
 
 $accounts = $conn->query("SELECT id, name FROM accounts WHERE is_active = 1 AND slug <> 'curva' ORDER BY id")->fetch_all(MYSQLI_ASSOC);
 $allowedAccountIds = array_fill_keys(array_map('intval', array_column($accounts, 'id')), true);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_personal_account'])) {
+    if (!$canCreate) {
+        setAlert('danger', 'Access denied.');
+        redirect('personal.php');
+    }
     $name = trim(strip_tags((string)($_POST['name'] ?? '')));
     $email = trim((string)($_POST['email'] ?? ''));
     $description = trim(strip_tags((string)($_POST['description'] ?? '')));
@@ -92,9 +102,11 @@ require_once '../../includes/header.php';
 
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2>Personal Accounts</h2>
+    <?php if ($canCreate): ?>
     <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addPersonalAccountModal">
         <i class="fas fa-plus me-1"></i>Add Personal Account
     </button>
+    <?php endif; ?>
 </div>
 
 <div class="card">
@@ -126,6 +138,7 @@ require_once '../../includes/header.php';
                                 <a href="personal_details.php?id=<?= (int)$row['id']; ?>" class="btn btn-sm btn-outline-primary">
                                     <i class="fas fa-history me-1"></i>History
                                 </a>
+                                <?php if ($canDelete) renderFinanceAccountDeleteButton($row); ?>
                             </td>
                         </tr>
                     <?php endwhile; ?>
@@ -135,6 +148,7 @@ require_once '../../includes/header.php';
     </div>
 </div>
 
+<?php if ($canCreate): ?>
 <div class="modal fade" id="addPersonalAccountModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog">
         <div class="modal-content">
@@ -175,7 +189,7 @@ require_once '../../includes/header.php';
                         <textarea class="form-control" id="personal_description" name="description" rows="3" maxlength="1000"></textarea>
                     </div>
                     <div class="alert alert-info mb-0 py-2">
-                        The opening balance is zero. Money enters or leaves this account only through approved Finance Transfers.
+                        The opening balance is zero. Money enters or leaves this account through approved Finance Transfers and PO payments.
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -186,5 +200,7 @@ require_once '../../includes/header.php';
         </div>
     </div>
 </div>
+
+<?php endif; ?>
 
 <?php require_once '../../includes/footer.php'; ?>

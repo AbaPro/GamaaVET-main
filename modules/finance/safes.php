@@ -1,20 +1,29 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+require_once __DIR__ . '/account_deletion.php';
 
-if (!hasPermission('finance.safes.create')) {
+$canCreate = hasPermission('finance.safes.create');
+$canDelete = hasPermission('finance.safes.delete');
+
+if (!$canCreate && !$canDelete) {
     setAlert('danger', 'Access denied.');
     redirect('../../dashboard.php');
 }
 
 $page_title = 'Safes';
-require_once '../../includes/header.php';
+
+handleFinanceAccountDeletion('safe', $canDelete, 'safes.php');
 
 $accounts = $conn->query("SELECT id, name FROM accounts WHERE is_active = 1 AND slug <> 'curva' ORDER BY id ASC")->fetch_all(MYSQLI_ASSOC);
 $allowedAccountIds = array_fill_keys(array_map('intval', array_column($accounts, 'id')), true);
 
 // Create safe
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['name'])) {
+    if (!$canCreate) {
+        setAlert('danger', 'Access denied.');
+        redirect('safes.php');
+    }
     $name = sanitize($_POST['name']);
     $account_id = !empty($_POST['account_id']) ? (int)$_POST['account_id'] : null;
     if (!$account_id || !isset($allowedAccountIds[$account_id])) {
@@ -28,28 +37,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['name'])) {
     redirect('safes.php');
 }
 
-// Delete safe if empty
-if (isset($_GET['delete'])) {
-    $id = intval($_GET['delete']);
-    $check = $conn->query("SELECT balance FROM safes WHERE id=$id")->fetch_assoc();
-    if ($check && $check['balance'] == 0) {
-        $conn->query("DELETE FROM safes WHERE id=$id");
-        setAlert('success', 'Safe deleted.');
-    } else {
-        setAlert('danger', 'Cannot delete safe with balance.');
-    }
-    redirect('safes.php');
-}
-
 $result = $conn->query("SELECT s.*, a.name AS account_name
                         FROM safes s
                         LEFT JOIN accounts a ON a.id = s.account_id
                         ORDER BY s.id");
+require_once '../../includes/header.php';
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2>Safes</h2>
+    <?php if ($canCreate): ?>
     <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addSafeModal"><i class="fas fa-plus"></i> Add Safe</button>
+    <?php endif; ?>
 </div>
 
 <div class="card">
@@ -71,9 +70,7 @@ $result = $conn->query("SELECT s.*, a.name AS account_name
                             <a href="safe_details.php?id=<?= (int)$row['id']; ?>" class="btn btn-sm btn-outline-primary me-1">
                                 <i class="fas fa-history me-1"></i>History
                             </a>
-                            <?php if ($row['balance']==0): ?>
-                                <a href="safes.php?delete=<?= $row['id']; ?>" class="btn btn-sm btn-danger" onclick="return confirm('Delete this safe?')">Delete</a>
-                            <?php endif; ?>
+                            <?php if ($canDelete) renderFinanceAccountDeleteButton($row); ?>
                         </td>
                     </tr>
                 <?php endwhile; ?>
@@ -82,6 +79,7 @@ $result = $conn->query("SELECT s.*, a.name AS account_name
     </div>
 </div>
 
+<?php if ($canCreate): ?>
 <div class="modal fade" id="addSafeModal" tabindex="-1">
   <div class="modal-dialog">
     <div class="modal-content">
@@ -108,5 +106,7 @@ $result = $conn->query("SELECT s.*, a.name AS account_name
     </div>
   </div>
 </div>
+
+<?php endif; ?>
 
 <?php require_once '../../includes/footer.php'; ?>

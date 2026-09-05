@@ -2,6 +2,7 @@
 require_once '../../includes/auth.php';
 require_once '../../config/database.php';
 require_once '../../includes/functions.php';
+require_once __DIR__ . '/payment_sources.php';
 
 // Permission check
 if (!hasPermission('finance.po_payment.process')) {
@@ -33,16 +34,26 @@ if (!$po) {
 $balance = $po['total_amount'] - $po['paid_amount'];
 $selectedPaymentMethod = $_POST['payment_method'] ?? 'cash';
 
+$paymentSources = poPaymentSources();
+$selectedSource = (string)($_POST['payment_source'] ?? '');
+if (empty($_SESSION['po_payment_token'])) $_SESSION['po_payment_token'] = bin2hex(random_bytes(32));
+
 // Handle payment submission
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $amount = (float)$_POST['amount'];
+    $amount = round((float)($_POST['amount'] ?? 0), 2);
     $payment_method = $_POST['payment_method'];
     $selectedPaymentMethod = $payment_method;
     $reference = $_POST['reference'] ?? '';
     $notes = $_POST['notes'] ?? '';
 
     // Validate amount
-    if ($amount <= 0 || $amount > $balance) {
+    if (!is_string($_POST['csrf_token'] ?? null) || !hash_equals($_SESSION['po_payment_token'], $_POST['csrf_token'])) {
+        $_SESSION['error'] = 'Invalid request. Refresh and try again.';
+    } elseif (!in_array($payment_method, ['cash', 'transfer', 'wallet'], true)) {
+        $_SESSION['error'] = 'Invalid payment method.';
+    } elseif ($payment_method !== 'wallet' && !isset($paymentSources[$selectedSource])) {
+        $_SESSION['error'] = 'Select an available payment source.';
+    } elseif (!is_finite($amount) || $amount <= 0 || $amount > $balance) {
         $_SESSION['error'] = "Invalid payment amount";
     } elseif (empty($reference) || empty($notes)) {
         $_SESSION['error'] = "Reference and Notes are required fields.";
@@ -65,11 +76,26 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         try {
             $pdo->beginTransaction();
 
+            // Lock the PO and recheck the remaining balance after concurrent payments.
+            $stmt = $pdo->prepare('SELECT total_amount, paid_amount FROM purchase_orders WHERE id = ? FOR UPDATE');
+            $stmt->execute([$po_id]);
+            $lockedPO = $stmt->fetch(PDO::FETCH_ASSOC);
+            if (!$lockedPO || $amount > round($lockedPO['total_amount'] - $lockedPO['paid_amount'], 2)) {
+                throw new DomainException('Payment exceeds the remaining PO balance. Refresh and try again.');
+            }
+            $sourceType = null;
+            $sourceId = null;
+            if ($payment_method !== 'wallet') {
+                $sourceType = $paymentSources[$selectedSource]['type'];
+                $sourceId = (int)$paymentSources[$selectedSource]['id'];
+                debitPoPaymentSource($sourceType, $sourceId, $amount);
+            }
+
             // Insert payment record
             $stmt = $pdo->prepare("
                 INSERT INTO purchase_order_payments
-                (purchase_order_id, amount, payment_method, reference, notes, created_by)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (purchase_order_id, amount, payment_method, reference, notes, created_by, payment_source_type, payment_source_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ");
             $stmt->execute([
                 $po_id,
@@ -77,7 +103,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $payment_method,
                 $reference,
                 $notes,
-                $_SESSION['user_id']
+                $_SESSION['user_id'],
+                $sourceType,
+                $sourceId
             ]);
             $payment_id = $pdo->lastInsertId();
 
@@ -101,7 +129,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $vStmt->execute([$po['vendor_id']]);
                 $walletBalance = (float)$vStmt->fetchColumn();
                 if ($walletBalance < $amount) {
-                    throw new Exception("Insufficient vendor wallet balance. Available: " . number_format($walletBalance, 2));
+                    throw new DomainException("Insufficient vendor wallet balance. Available: " . number_format($walletBalance, 2));
                 }
 
                 $stmt = $pdo->prepare("
@@ -130,15 +158,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $_SESSION['success'] = "Payment recorded successfully!";
             header("Location: " . ($canViewPODetails ? 'po_details.php?id=' . $po_id : '../finance/po.php'));
             exit();
-        } catch (PDOException $e) {
-            $pdo->rollBack();
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
             foreach ($uploadedScreenshots as $file) {
                 $full = ROOT_PATH . '/' . $file['path'];
                 if (is_file($full)) {
                     unlink($full);
                 }
             }
-            $_SESSION['error'] = "Error recording payment: " . $e->getMessage();
+            error_log('PO payment failed: ' . $e->getMessage());
+            $_SESSION['error'] = $e instanceof DomainException ? $e->getMessage() : 'Unable to record payment. Please try again.';
         }
     }
 }
@@ -177,6 +206,7 @@ require_once '../../includes/header.php';
             </div>
             
             <form method="post" enctype="multipart/form-data">
+                <input type="hidden" name="csrf_token" value="<?= e($_SESSION['po_payment_token']); ?>">
                 <div class="row g-3">
                     <div class="col-md-6">
                         <label for="amount" class="form-label">Amount</label>
@@ -191,6 +221,15 @@ require_once '../../includes/header.php';
                             <option value="wallet" <?= $po['wallet_balance'] > 0 ? '' : 'disabled'; ?> <?= $selectedPaymentMethod === 'wallet' ? 'selected' : ''; ?>>
                                 Vendor Wallet (Balance: <?= number_format($po['wallet_balance'], 2) ?>)
                             </option>
+                        </select>
+                    </div>
+                    <div class="col-md-12" id="payment-source-field">
+                        <label for="payment_source" class="form-label">Pay From*</label>
+                        <select class="form-select" id="payment_source" name="payment_source" required>
+                            <option value="">-- Select safe, bank account, or personal account --</option>
+                            <?php foreach ($paymentSources as $value => $source): ?>
+                                <option value="<?= e($value); ?>" <?= $selectedSource === $value ? 'selected' : ''; ?>><?= e($source['label'] . ' — ' . $source['name']); ?> (Balance: <?= number_format($source['balance'], 2); ?>)</option>
+                            <?php endforeach; ?>
                         </select>
                     </div>
                     <div class="col-md-6">
@@ -223,6 +262,8 @@ $(document).ready(function() {
     // Update max amount when payment method changes
     $('#payment_method').change(function() {
         const method = $(this).val();
+        $('#payment-source-field').toggle(method !== 'wallet');
+        $('#payment_source').prop('disabled', method === 'wallet').prop('required', method !== 'wallet');
         const balance = <?= $balance ?>;
         const walletBalance = <?= $po['wallet_balance'] ?>;
 
@@ -235,6 +276,8 @@ $(document).ready(function() {
             $('#amount').attr('max', balance);
         }
     });
+
+    $('#payment_method').trigger('change');
 
     // Screenshot preview (multi-file)
     $('#screenshot').change(function() {

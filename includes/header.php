@@ -351,8 +351,11 @@
                     $canFinance = hasPermission('finance.customer_wallet.view')
                         || hasPermission('finance.customer_payment.process')
                         || hasPermission('finance.safes.create')
+                        || hasPermission('finance.safes.delete')
                         || hasPermission('finance.bank_accounts.create')
+                        || hasPermission('finance.bank_accounts.delete')
                         || hasPermission('finance.personal_accounts.create')
+                        || hasPermission('finance.personal_accounts.delete')
                         || hasPermission('finance.transfers.create')
                         || hasPermission('finance.transfers.approve')
                         || ($login_region === 'factory' && (
@@ -372,13 +375,13 @@
                                 <?php if (hasPermission('finance.customer_payment.process')): ?>
                                     <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/bills.php"><i class="fas fa-file-invoice-dollar me-2"></i> Bills & Payments</a></li>
                                 <?php endif; ?>
-                                <?php if (hasPermission('finance.safes.create')): ?>
+                                <?php if (hasPermission('finance.safes.create') || hasPermission('finance.safes.delete')): ?>
                                     <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/safes.php"><i class="fas fa-vault me-2"></i> Safes</a></li>
                                 <?php endif; ?>
-                                <?php if (hasPermission('finance.bank_accounts.create')): ?>
+                                <?php if (hasPermission('finance.bank_accounts.create') || hasPermission('finance.bank_accounts.delete')): ?>
                                     <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/banks.php"><i class="fas fa-university me-2"></i> Bank Accounts</a></li>
                                 <?php endif; ?>
-                                <?php if (hasPermission('finance.personal_accounts.create')): ?>
+                                <?php if (hasPermission('finance.personal_accounts.create') || hasPermission('finance.personal_accounts.delete')): ?>
                                     <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/personal.php"><i class="fas fa-user-shield me-2"></i> Personal Accounts</a></li>
                                 <?php endif; ?>
                                 <?php if (hasPermission('finance.transfers.create') || hasPermission('finance.transfers.approve')): ?>

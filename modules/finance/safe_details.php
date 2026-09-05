@@ -3,6 +3,7 @@ require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
 
 if (!hasPermission('finance.safes.create')
+    && !hasPermission('finance.safes.delete')
     && !hasPermission('finance.transfers.create')
     && !hasPermission('finance.transfers.approve')) {
     setAlert('danger', 'Access denied.');
@@ -232,6 +233,22 @@ if ($transferIds && tableExists('finance_transfer_images')) {
     }
 }
 $transactions = array_merge($transactions, array_values($transferEvents));
+
+require_once __DIR__ . '/../purchases/payment_sources.php';
+foreach (poPaymentSourceHistory('safe', $safeId) as $payment) {
+    $transactions[] = [
+        'source_key' => 'po_payment_' . $payment['id'],
+        'sort_id' => (int)$payment['id'],
+        'created_at' => $payment['created_at'],
+        'type' => 'PO Payment', 'direction' => 'out',
+        'amount' => (float)$payment['amount'],
+        'reference' => $payment['reference'],
+        'details' => $payment['vendor_name'] . ' — PO #' . $payment['purchase_order_id'],
+        'details_url' => '../purchases/po_details.php?id=' . (int)$payment['purchase_order_id'],
+        'notes' => $payment['notes'], 'created_by_name' => $payment['created_by_name'] ?: 'System',
+        'attachments' => [],
+    ];
+}
 
 usort($transactions, function ($left, $right) {
     $dateComparison = strcmp($right['created_at'], $left['created_at']);
