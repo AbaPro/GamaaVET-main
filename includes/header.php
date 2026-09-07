@@ -90,7 +90,7 @@
                             || hasPermission('sales.dashboard.overall_orders')
                             || hasPermission('sales.dashboard.this_month')
                             || hasPermission('sales.dashboard.recent_orders');
-                        $canSales = $canSalesDashboard || hasPermission('sales.orders.view_all') || hasPermission('sales.orders.create') || hasPermission('quotations.manage') || hasPermission('customers.view');
+                        $canSales = $canSalesDashboard || hasPermission('sales.orders.view_all') || hasPermission('sales.orders.create') || hasPermission('quotations.manage') || hasPermission('sales.portal_orders.manage') || hasPermission('customers.view');
                         ?>
                         <?php if ($canSales): ?>
                             <li class="nav-item dropdown">
@@ -123,6 +123,13 @@
                                         <li>
                                             <a class="dropdown-item" href="<?= BASE_URL ?>modules/sales/quotations/quotation_list.php">
                                                 <i class="fas fa-file-invoice me-2"></i> Quotations
+                                            </a>
+                                        </li>
+                                    <?php endif; ?>
+                                    <?php if (hasPermission('sales.portal_orders.manage')): ?>
+                                        <li>
+                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/sales/portal_orders/list.php">
+                                                <i class="fas fa-clipboard-check me-2"></i> Portal Order Requests
                                             </a>
                                         </li>
                                     <?php endif; ?>

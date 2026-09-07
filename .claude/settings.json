@@ -22,7 +22,8 @@
       "Bash(grep -n \"CREATE TABLE \\\\`inventory_products\\\\`\" -A 25 /Users/abanoubraafat/Downloads/GamaaVET-main/database_structure.sql)",
       "Bash(grep -i 'update\\\\|edit\\\\|post\\\\|\\\\$_POST')",
       "Bash(mysql -uroot -e \"SHOW DATABASES;\")",
-      "Bash(php -l /Users/abanoubraafat/Downloads/GamaaVET-main/modules/manufacturing/edit.php)"
+      "Bash(php -l /Users/abanoubraafat/Downloads/GamaaVET-main/modules/manufacturing/edit.php)",
+      "Bash(grep -n \"CREATE TABLE \\\\`products\\\\`\" -A 25 /Users/abanoubraafat/Downloads/GamaaVET-main/database_structure.sql)"
     ]
   }
 }

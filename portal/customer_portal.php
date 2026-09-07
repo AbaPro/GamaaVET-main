@@ -304,7 +304,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['portal_action'] ?? '') ===
             SELECT id, name, unit_price
             FROM products
             WHERE customer_id = ? AND type = 'final' AND id IN ($placeholders)
-            FOR UPDATE
         ");
 
         $pdo->beginTransaction();
@@ -369,126 +368,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['portal_action'] ?? '') ===
             $contactId = (int)$pdo->lastInsertId();
         }
 
-        $itemsSubtotal = 0.0;
+        // Portal submissions land in a review queue with no confirmed prices yet —
+        // staff must price/approve them before any stock is touched or a real
+        // order is created (see modules/sales/portal_orders/review.php).
         foreach ($selectedProducts as &$selectedProduct) {
             $selectedProduct['quantity'] = $requestedQuantities[(int)$selectedProduct['id']];
-            $selectedProduct['unit_price'] = (float)$selectedProduct['unit_price'];
-            $selectedProduct['total_price'] = round($selectedProduct['quantity'] * $selectedProduct['unit_price'], 2);
-            $itemsSubtotal += $selectedProduct['total_price'];
         }
         unset($selectedProduct);
 
-        $internalId = 'ORD-' . date('Ymd') . '-P' . strtoupper(bin2hex(random_bytes(3)));
-        $insertOrder = $pdo->prepare("
-            INSERT INTO orders (
-                internal_id, customer_id, factory_id, contact_id, order_date, status,
-                total_amount, paid_amount, discount_percentage, discount_basis,
-                discount_amount, discount_product_count, free_sample_count,
-                shipping_cost_type, shipping_cost, notes, created_by
-            ) VALUES (?, ?, ?, ?, CURDATE(), 'new', ?, 0, 0, 'none', 0, 0, 0, 'none', 0, ?, ?)
+        $insertPortalOrder = $pdo->prepare("
+            INSERT INTO portal_orders (
+                customer_id, contact_id, factory_id, status,
+                customer_note, total_amount, responsible_user_id
+            ) VALUES (?, ?, ?, 'pending_review', ?, 0, ?)
         ");
-        $insertOrder->execute([
-            $internalId,
+        $insertPortalOrder->execute([
             $customerId,
-            empty($customer['direct_sale']) ? ($customer['factory_id'] ?: null) : null,
             $contactId,
-            round($itemsSubtotal, 2),
+            empty($customer['direct_sale']) ? ($customer['factory_id'] ?: null) : null,
             $note !== '' ? $note : null,
             $responsibleUserId,
         ]);
-        $orderId = (int)$pdo->lastInsertId();
+        $portalOrderId = (int)$pdo->lastInsertId();
 
         $insertItem = $pdo->prepare("
-            INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price, is_free_sample)
-            VALUES (?, ?, ?, ?, ?, 0)
+            INSERT INTO portal_order_items (portal_order_id, product_id, quantity, unit_price, total_price, is_priced)
+            VALUES (?, ?, ?, 0, 0, 0)
         ");
-        $stockBeforeStmt = $pdo->prepare("
-            SELECT quantity
-            FROM inventory_products
-            WHERE inventory_id = 1 AND product_id = ?
-            LIMIT 1
-            FOR UPDATE
-        ");
-        $deductStockStmt = $pdo->prepare("
-            UPDATE inventory_products
-            SET quantity = quantity - ?
-            WHERE inventory_id = 1 AND product_id = ?
-        ");
-        $stockLogsReady = (bool)$pdo->query("
-            SELECT COUNT(*) FROM information_schema.tables
-            WHERE table_schema = DATABASE() AND table_name = 'inventory_stock_logs'
-        ")->fetchColumn();
-        $priceLogsReady = (bool)$pdo->query("
-            SELECT COUNT(*) FROM information_schema.tables
-            WHERE table_schema = DATABASE() AND table_name = 'product_price_logs'
-        ")->fetchColumn();
-        $insertStockLog = $stockLogsReady ? $pdo->prepare("
-            INSERT INTO inventory_stock_logs
-                (inventory_id, product_id, change_quantity, quantity_before, quantity_after,
-                 source_type, source_id, sell_price, notes, created_by)
-            VALUES (1, ?, ?, ?, ?, 'sales_order', ?, ?, ?, ?)
-        ") : null;
-        $insertPriceLog = $priceLogsReady ? $pdo->prepare("
-            INSERT INTO product_price_logs
-                (product_id, price_type, price, quantity, source_type, source_id, notes, created_by)
-            VALUES (?, 'sell', ?, ?, 'sales_order', ?, ?, ?)
-        ") : null;
-
         foreach ($selectedProducts as $selectedProduct) {
-            $productId = (int)$selectedProduct['id'];
-            $quantity = (int)$selectedProduct['quantity'];
-            $unitPrice = (float)$selectedProduct['unit_price'];
-            $insertItem->execute([$orderId, $productId, $quantity, $unitPrice, $selectedProduct['total_price']]);
-            $orderItemId = (int)$pdo->lastInsertId();
-
-            $stockBeforeStmt->execute([$productId]);
-            $stockBefore = $stockBeforeStmt->fetchColumn();
-            if ($stockBefore !== false) {
-                $stockBefore = (float)$stockBefore;
-                $deductStockStmt->execute([$quantity, $productId]);
-                if ($insertStockLog) {
-                    $insertStockLog->execute([
-                        $productId,
-                        -$quantity,
-                        $stockBefore,
-                        $stockBefore - $quantity,
-                        $orderItemId,
-                        $unitPrice,
-                        'Customer portal order ' . $internalId,
-                        $responsibleUserId,
-                    ]);
-                }
-            }
-            if ($insertPriceLog && $unitPrice > 0) {
-                $insertPriceLog->execute([
-                    $productId,
-                    $unitPrice,
-                    $quantity,
-                    $orderItemId,
-                    'Customer portal order ' . $internalId,
-                    $responsibleUserId,
-                ]);
-            }
+            $insertItem->execute([$portalOrderId, (int)$selectedProduct['id'], (int)$selectedProduct['quantity']]);
         }
 
         $notify = $pdo->prepare("
             INSERT INTO notifications
                 (type, title, message, module, entity_type, entity_id, severity, created_for_user_id)
             VALUES
-                ('customer_portal_order', ?, ?, 'sales', 'order', ?, 'info', ?)
+                ('customer_portal_order', ?, ?, 'sales', 'portal_order', ?, 'info', ?)
         ");
         $notify->execute([
-            'New customer portal order: ' . $internalId,
-            $customer['name'] . ' submitted a new order through the customer portal.',
-            $orderId,
+            'New portal order request #' . $portalOrderId,
+            $customer['name'] . ' submitted a new order request through the customer portal. It needs pricing and approval.',
+            $portalOrderId,
             $responsibleUserId,
         ]);
 
         $pdo->commit();
         $flash = [
             'type' => 'success',
-            'order_id' => $orderId,
-            'message' => 'تم إرسال الطلب ' . $internalId . ' بنجاح.',
+            'order_id' => $portalOrderId,
+            'message' => 'تم إرسال طلبك بنجاح، وسيقوم فريق المبيعات بمراجعته وتحديد السعر قبل التأكيد.',
         ];
     } catch (DomainException $e) {
         if ($pdo->inTransaction()) {
@@ -503,8 +431,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['portal_action'] ?? '') ===
     }
 
     $_SESSION['portal_order_flash'][$portalSessionKey] = $flash;
-    $orderAnchor = !empty($flash['order_id']) ? '#order-' . (int)$flash['order_id'] : '#newOrderPanel';
-    header('Location: customer_portal.php?token=' . rawurlencode($token) . $orderAnchor);
+    header('Location: customer_portal.php?token=' . rawurlencode($token) . '#newOrderPanel');
     exit;
 }
 
@@ -599,6 +526,43 @@ $ordersStmt = $pdo->prepare("
 ");
 $ordersStmt->execute([$customerId]);
 $orders = $ordersStmt->fetchAll(PDO::FETCH_ASSOC);
+
+$pendingPortalOrdersStmt = $pdo->prepare("
+    SELECT id, status, customer_note, review_note, created_at
+    FROM portal_orders
+    WHERE customer_id = ? AND status IN ('pending_review', 'priced', 'rejected')
+    ORDER BY created_at DESC
+");
+$pendingPortalOrdersStmt->execute([$customerId]);
+$pendingPortalOrders = $pendingPortalOrdersStmt->fetchAll(PDO::FETCH_ASSOC);
+
+$pendingPortalOrderItemsByOrder = [];
+if ($pendingPortalOrders) {
+    $pendingIds = array_column($pendingPortalOrders, 'id');
+    $pendingPlaceholders = implode(',', array_fill(0, count($pendingIds), '?'));
+    $pendingItemsStmt = $pdo->prepare("
+        SELECT poi.portal_order_id, p.name AS product_name, poi.quantity
+        FROM portal_order_items poi
+        JOIN products p ON poi.product_id = p.id
+        WHERE poi.portal_order_id IN ($pendingPlaceholders)
+        ORDER BY poi.id
+    ");
+    $pendingItemsStmt->execute($pendingIds);
+    while ($row = $pendingItemsStmt->fetch(PDO::FETCH_ASSOC)) {
+        $pendingPortalOrderItemsByOrder[$row['portal_order_id']][] = $row;
+    }
+}
+
+$portalOrderStatusLabelMap = [
+    'pending_review' => 'قيد المراجعة',
+    'priced' => 'تم التسعير — بانتظار التأكيد النهائي',
+    'rejected' => 'مرفوض',
+];
+$portalOrderStatusBadgeMap = [
+    'pending_review' => 'bg-amber-500',
+    'priced' => 'bg-sky-600',
+    'rejected' => 'bg-rose-600',
+];
 
 $walletStmt = $pdo->prepare("
     SELECT id, amount, type, notes, created_at
@@ -1000,6 +964,53 @@ if (!empty($orders)) {
         <?php else: ?>
           <div class="mb-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
             لا توجد منتجات نهائية متاحة لإنشاء طلب جديد حالياً.
+          </div>
+        <?php endif; ?>
+
+        <?php if ($pendingPortalOrders): ?>
+          <div class="mb-6 space-y-3">
+            <h3 class="font-extrabold text-slate-900 dark:text-slate-100">طلبات قيد المراجعة</h3>
+            <p class="text-xs text-slate-500 dark:text-slate-400 -mt-2">
+              هذه الطلبات تحت مراجعة فريق المبيعات ولم يتم تأكيدها بعد، لذلك لا يظهر لها سعر حالياً.
+            </p>
+            <?php foreach ($pendingPortalOrders as $pendingOrder): ?>
+              <?php
+                $pendingItems = $pendingPortalOrderItemsByOrder[$pendingOrder['id']] ?? [];
+                $pendingStatusClass = $portalOrderStatusBadgeMap[$pendingOrder['status']] ?? 'bg-slate-500';
+                $pendingStatusLabel = $portalOrderStatusLabelMap[$pendingOrder['status']] ?? $pendingOrder['status'];
+              ?>
+              <article class="rounded-2xl border border-amber-200 bg-amber-50/60 p-5 dark:border-amber-900 dark:bg-amber-950/20">
+                <div class="flex items-start justify-between gap-4 flex-wrap">
+                  <div class="space-y-1">
+                    <div class="flex items-center gap-2 flex-wrap">
+                      <p class="text-sm font-extrabold">طلب رقم #<?= (int)$pendingOrder['id']; ?></p>
+                      <span class="inline-flex items-center gap-2 px-3 py-1 rounded-full text-white text-xs <?= $pendingStatusClass; ?>">
+                        <?= htmlspecialchars($pendingStatusLabel); ?>
+                      </span>
+                    </div>
+                    <p class="text-xs text-slate-500 dark:text-slate-400">
+                      تاريخ الإرسال: <?= date('Y-m-d', strtotime($pendingOrder['created_at'])); ?>
+                    </p>
+                  </div>
+                </div>
+
+                <?php if ($pendingItems): ?>
+                  <ul class="mt-3 space-y-1 text-sm text-slate-700 dark:text-slate-200">
+                    <?php foreach ($pendingItems as $item): ?>
+                      <li>• <?= htmlspecialchars($item['product_name']); ?> — الكمية: <?= (int)$item['quantity']; ?></li>
+                    <?php endforeach; ?>
+                  </ul>
+                <?php endif; ?>
+
+                <?php if (!empty($pendingOrder['customer_note'])): ?>
+                  <p class="mt-3 text-xs text-slate-600 dark:text-slate-300">ملاحظتك: <?= nl2br(htmlspecialchars($pendingOrder['customer_note'])); ?></p>
+                <?php endif; ?>
+
+                <?php if ($pendingOrder['status'] === 'rejected' && !empty($pendingOrder['review_note'])): ?>
+                  <p class="mt-3 text-xs font-bold text-rose-700 dark:text-rose-300">سبب الرفض: <?= nl2br(htmlspecialchars($pendingOrder['review_note'])); ?></p>
+                <?php endif; ?>
+              </article>
+            <?php endforeach; ?>
           </div>
         <?php endif; ?>
 
