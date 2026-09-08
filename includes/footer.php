@@ -65,12 +65,22 @@
                             return true;
                         }
 
-                        return text === 'delete'
+                        if (text === 'delete'
                             || onclick.includes('delete')
                             || /(^|[?&])delete(_[a-z0-9_-]+)?=/.test(href)
                             || /(^|[?&])action=delete(&|$)/.test(href)
                             || /(^|\/|_)delete(_[a-z0-9_-]+)?\.php(\?|$)/.test(href)
-                            || /(^|\/)bulk_delete\.php(\?|$)/.test(href);
+                            || /(^|\/)bulk_delete\.php(\?|$)/.test(href)) {
+                            return true;
+                        }
+
+                        // Any other link that performs a mutating action via a plain GET
+                        // (mark read, create ticket, confirm, approve, etc.) must never be
+                        // used as an implicit "click anywhere on the row" fallback target.
+                        return text === 'mark read'
+                            || text === 'create ticket'
+                            || /(^|[?&])(mark|ticket|confirm|approve|reject|cancel)(_[a-z0-9_-]+)?=/.test(href)
+                            || /(^|[?&])action=(mark|ticket|confirm|approve|reject|cancel)(&|$)/.test(href);
                     }
 
                     function isSafeRowNavigationLink() {

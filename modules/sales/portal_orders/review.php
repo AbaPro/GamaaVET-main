@@ -132,6 +132,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'appro
     exit();
 }
 
+// Send an approved-but-unconverted request back to pricing (e.g. it was approved with zero prices by mistake).
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'reopen') {
+    if ($portalOrder['status'] !== 'approved' || $portalOrder['converted_order_id']) {
+        $_SESSION['error'] = 'This request cannot be reopened for pricing.';
+        header('Location: review.php?id=' . $portalOrderId);
+        exit();
+    }
+
+    $stmt = $pdo->prepare("
+        UPDATE portal_orders SET status = 'priced' WHERE id = ?
+    ");
+    $stmt->execute([$portalOrderId]);
+
+    $_SESSION['success'] = 'Request reopened for pricing.';
+    header('Location: review.php?id=' . $portalOrderId);
+    exit();
+}
+
 // Convert to a real order — same pattern as quotations/convert_to_order.php.
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'convert') {
     if ($portalOrder['status'] !== 'approved' || $portalOrder['converted_order_id']) {
@@ -323,6 +341,7 @@ $isEditable = in_array($portalOrder['status'], ['pending_review', 'priced'], tru
 $canApprove = $portalOrder['status'] === 'priced';
 $canConvert = $portalOrder['status'] === 'approved' && !$portalOrder['converted_order_id'];
 $canReject = in_array($portalOrder['status'], ['pending_review', 'priced'], true);
+$canReopen = $portalOrder['status'] === 'approved' && !$portalOrder['converted_order_id'];
 
 require_once '../../../includes/header.php';
 ?>
@@ -425,6 +444,13 @@ require_once '../../../includes/header.php';
             <form method="post" onsubmit="return confirm('Approve this request with the current pricing?');">
                 <input type="hidden" name="action" value="approve">
                 <button type="submit" class="btn btn-success">Approve Pricing</button>
+            </form>
+        <?php endif; ?>
+
+        <?php if ($canReopen): ?>
+            <form method="post" onsubmit="return confirm('Reopen this request for pricing? You will need to approve it again before converting.');">
+                <input type="hidden" name="action" value="reopen">
+                <button type="submit" class="btn btn-outline-secondary">Return to Pricing</button>
             </form>
         <?php endif; ?>
 
