@@ -34,12 +34,14 @@ if (!$order) {
 }
 
 // Fetch available Safes, scoped to the current brand
-$stmtSafes = $pdo->query("SELECT id, name FROM safes WHERE " . getAccountScopeSql() . " ORDER BY name");
+$stmtSafes = $pdo->query("SELECT id, CONCAT(name, ' — ', currency) AS name, currency FROM safes WHERE " . getAccountScopeSql() . " ORDER BY name");
 $allSafes = $stmtSafes->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
 // Fetch available Banks, scoped to the current brand
-$stmtBanks = $pdo->query("SELECT id, bank_name as name FROM bank_accounts WHERE " . getAccountScopeSql() . " ORDER BY bank_name");
+$stmtBanks = $pdo->query("SELECT id, CONCAT(bank_name, ' — ', currency) AS name, currency FROM bank_accounts WHERE " . getAccountScopeSql() . " ORDER BY bank_name");
 $allBanks = $stmtBanks->fetchAll(PDO::FETCH_ASSOC) ?: [];
+$safeCurrencies = array_column($allSafes, 'currency', 'id');
+$bankCurrencies = array_column($allBanks, 'currency', 'id');
 
 $balance = $order['total_amount'] - $order['paid_amount'];
 $selectedPaymentMethod = $_POST['payment_method'] ?? 'cash';
@@ -80,6 +82,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     if (!isSafeInCurrentAccount($safe_id)) {
                         throw new Exception("Selected safe is not available for this brand.");
                     }
+                    if (($safeCurrencies[$safe_id] ?? 'EGP') !== ($order['currency'] ?? 'EGP')) {
+                        throw new Exception("Selected safe currency must match the order currency (" . ($order['currency'] ?? 'EGP') . ").");
+                    }
                 } elseif ($payment_method == 'transfer') {
                     $bank_account_id = !empty($payment['bank_account_id']) ? (int)$payment['bank_account_id'] : null;
                     if (!$bank_account_id) {
@@ -87,6 +92,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     }
                     if (!isBankAccountInCurrentAccount($bank_account_id)) {
                         throw new Exception("Selected bank account is not available for this brand.");
+                    }
+                    if (($bankCurrencies[$bank_account_id] ?? 'EGP') !== ($order['currency'] ?? 'EGP')) {
+                        throw new Exception("Selected bank account currency must match the order currency (" . ($order['currency'] ?? 'EGP') . ").");
                     }
                 }
                 

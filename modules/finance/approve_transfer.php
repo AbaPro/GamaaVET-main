@@ -37,13 +37,16 @@ try {
     $receiver = financeTransferGetAccount($transfer['to_type'], $transfer['to_id'], true);
     if (!$source) throw new Exception('Sender account no longer exists.');
     if (!$receiver) throw new Exception('Receiver account no longer exists.');
+    if (($source['currency'] ?? 'EGP') !== ($receiver['currency'] ?? 'EGP')) {
+        throw new Exception('Sender and receiver currencies no longer match. The transfer cannot be approved.');
+    }
 
     $amount = round((float)$transfer['amount'], 2);
     if ($amount <= 0) throw new Exception('Transfer amount is invalid.');
     if ((float)$source['balance'] < $amount) {
         throw new Exception(
             'Insufficient balance in ' . $source['account_name'] . '. Available: '
-            . number_format((float)$source['balance'], 2) . ' EGP.'
+            . number_format((float)$source['balance'], 2) . ' ' . ($source['currency'] ?? 'EGP') . '.'
         );
     }
 

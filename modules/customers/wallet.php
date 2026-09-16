@@ -138,7 +138,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['set_wallet_balance'])
 
 // Fetch safes and bank accounts for payment methods, scoped to the current brand
 $safes_data = [];
-$safes_result = $conn->query("SELECT id, name FROM safes WHERE " . getAccountScopeSql() . " ORDER BY name");
+$safes_result = $conn->query("SELECT id, CONCAT(name, ' — ', currency) AS name FROM safes WHERE " . getAccountScopeSql() . " ORDER BY name");
 if ($safes_result) {
     while ($safe = $safes_result->fetch_assoc()) {
         $safes_data[] = $safe;
@@ -146,7 +146,7 @@ if ($safes_result) {
 }
 
 $banks_data = [];
-$banks_result = $conn->query("SELECT id, bank_name as name FROM bank_accounts WHERE " . getAccountScopeSql() . " ORDER BY bank_name");
+$banks_result = $conn->query("SELECT id, CONCAT(bank_name, ' — ', currency) AS name FROM bank_accounts WHERE " . getAccountScopeSql() . " ORDER BY bank_name");
 if ($banks_result) {
     while ($bank = $banks_result->fetch_assoc()) {
         $banks_data[] = $bank;

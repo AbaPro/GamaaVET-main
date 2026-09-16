@@ -10,9 +10,9 @@ function financeTransferTypeLabel($type) {
 
 function financeTransferAccountConfig($type) {
     $configs = [
-        'safe' => ['table' => 'safes', 'name' => 'name', 'balance' => 'balance'],
-        'bank' => ['table' => 'bank_accounts', 'name' => 'bank_name', 'balance' => 'balance'],
-        'personal' => ['table' => 'personal_accounts', 'name' => 'name', 'balance' => 'balance'],
+        'safe' => ['table' => 'safes', 'name' => 'name', 'balance' => 'balance', 'currency' => 'currency'],
+        'bank' => ['table' => 'bank_accounts', 'name' => 'bank_name', 'balance' => 'balance', 'currency' => 'currency'],
+        'personal' => ['table' => 'personal_accounts', 'name' => 'name', 'balance' => 'balance', 'currency' => null],
     ];
     return $configs[$type] ?? null;
 }
@@ -23,7 +23,9 @@ function financeTransferGetAccount($type, $id, $forUpdate = false) {
     $id = (int)$id;
     if (!$config || $id <= 0) return null;
 
-    $sql = "SELECT id, `{$config['name']}` AS account_name, `{$config['balance']}` AS balance
+    $currencySql = $config['currency'] ? "`{$config['currency']}`" : "'EGP'";
+    $sql = "SELECT id, `{$config['name']}` AS account_name, `{$config['balance']}` AS balance,
+                   $currencySql AS currency
             FROM `{$config['table']}` WHERE id = ?" . ($forUpdate ? ' FOR UPDATE' : '');
     $stmt = $conn->prepare($sql);
     $stmt->bind_param('i', $id);
@@ -125,6 +127,8 @@ function financeTransferSelectSql() {
                    to_bank.account_number AS to_bank_account_number,
                    to_personal.name AS to_personal_name,
                    to_personal.email AS to_personal_email,
+                   COALESCE(from_safe.currency, from_bank.currency, 'EGP') AS currency,
+                   COALESCE(to_safe.currency, to_bank.currency, 'EGP') AS to_currency,
                    COALESCE(from_safe.name, from_bank.bank_name, from_personal.name) AS from_account_name,
                    from_bank.account_number AS from_account_number,
                    from_personal.email AS from_account_email,

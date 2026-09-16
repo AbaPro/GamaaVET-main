@@ -101,7 +101,7 @@ require_once '../../includes/header.php';
                 <hr>
                 <div class="text-center">
                     <div class="text-muted text-uppercase small fw-bold">Amount</div>
-                    <div class="display-6 fw-bold"><?= number_format((float)$transfer['amount'], 2); ?> EGP</div>
+                    <div class="display-6 fw-bold"><?= e(formatCurrency((float)$transfer['amount'], $transfer['currency'] ?? 'EGP')); ?></div>
                 </div>
             </div>
         </div>

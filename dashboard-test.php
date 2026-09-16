@@ -184,7 +184,13 @@ require_once 'includes/header-test.php';
         $canFinance = hasPermission('finance.customer_wallet.view') 
             || hasPermission('finance.customer_payment.process')
             || hasPermission('finance.safes.create')
+            || hasPermission('finance.safes.edit')
+            || hasPermission('finance.safes.delete')
+            || hasPermission('finance.safes.balance.edit')
             || hasPermission('finance.bank_accounts.create')
+            || hasPermission('finance.bank_accounts.edit')
+            || hasPermission('finance.bank_accounts.delete')
+            || hasPermission('finance.bank_accounts.balance.edit')
             || hasPermission('finance.personal_accounts.create')
             || hasPermission('finance.transfers.create')
             || hasPermission('finance.po_payment.process')
@@ -562,7 +568,7 @@ require_once 'includes/header-test.php';
             </a>
             <?php endif; ?>
 
-            <?php if (hasPermission('finance.safes.create')): ?>
+            <?php if (hasPermission('finance.safes.create') || hasPermission('finance.safes.edit') || hasPermission('finance.safes.delete') || hasPermission('finance.safes.balance.edit')): ?>
             <a href="<?= BASE_URL ?>modules/finance/safes.php" class="tile bg-gradient-warning">
                 <div>
                     <div class="tile-icon"><i class="fas fa-vault"></i></div>
@@ -571,7 +577,7 @@ require_once 'includes/header-test.php';
             </a>
             <?php endif; ?>
 
-            <?php if (hasPermission('finance.bank_accounts.create')): ?>
+            <?php if (hasPermission('finance.bank_accounts.create') || hasPermission('finance.bank_accounts.edit') || hasPermission('finance.bank_accounts.delete') || hasPermission('finance.bank_accounts.balance.edit')): ?>
             <a href="<?= BASE_URL ?>modules/finance/banks.php" class="tile bg-gradient-info">
                 <div>
                     <div class="tile-icon"><i class="fas fa-university"></i></div>

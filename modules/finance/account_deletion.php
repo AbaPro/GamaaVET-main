@@ -57,6 +57,17 @@ function handleFinanceAccountDeletion($type, $canDelete, $returnPage) {
             throw new DomainException('Cannot delete an account linked to PO payments. Its history must be preserved.');
         }
 
+        if (tableExists('finance_account_balance_adjustments') && in_array($type, ['safe', 'bank'], true)) {
+            $stmt = $conn->prepare('SELECT id FROM finance_account_balance_adjustments WHERE account_type = ? AND account_id = ? LIMIT 1 FOR UPDATE');
+            $stmt->bind_param('si', $type, $id);
+            $stmt->execute();
+            $hasAdjustments = $stmt->get_result()->num_rows > 0;
+            $stmt->close();
+            if ($hasAdjustments) {
+                throw new DomainException('Cannot delete an account with balance-adjustment history. Its audit trail must be preserved.');
+            }
+        }
+
         // Find direct payment references, including optional payment tables in
         // older installations. ON DELETE SET NULL would otherwise erase links.
         $column = ['safe' => 'safe_id', 'bank' => 'bank_account_id', 'personal' => 'personal_account_id'][$type];

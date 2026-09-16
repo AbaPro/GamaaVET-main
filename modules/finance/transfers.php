@@ -35,11 +35,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         setAlert('danger', 'Select valid sender and receiver account types.');
         redirect('transfers.php');
     }
-    if ($fromId <= 0 || !financeTransferGetAccount($fromType, $fromId)) {
+    $fromAccount = $fromId > 0 ? financeTransferGetAccount($fromType, $fromId) : null;
+    $toAccount = $toId > 0 ? financeTransferGetAccount($toType, $toId) : null;
+    if (!$fromAccount) {
         setAlert('danger', 'Select a valid sender account.');
         redirect('transfers.php');
     }
-    if ($toId <= 0 || !financeTransferGetAccount($toType, $toId)) {
+    if (!$toAccount) {
         setAlert('danger', 'Select a valid receiver account.');
         redirect('transfers.php');
     }
@@ -47,6 +49,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         setAlert('danger', 'Sender and receiver accounts must be different.');
         redirect('transfers.php');
     }
+    if (($fromAccount['currency'] ?? 'EGP') !== ($toAccount['currency'] ?? 'EGP')) {
+        setAlert('danger', 'Sender and receiver must use the same currency. Exchange transactions require separate reconciliation entries.');
+        redirect('transfers.php');
+    }
+    $transferCurrency = $fromAccount['currency'] ?? 'EGP';
     if ($amount <= 0) {
         setAlert('danger', 'Transfer amount must be greater than zero.');
         redirect('transfers.php');
@@ -149,7 +156,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         createNotification(
             'finance_transfer_approval',
             'Finance transfer awaiting your approval',
-            $reference . ' for ' . number_format($amount, 2) . ' EGP requires approval.',
+            $reference . ' for ' . number_format($amount, 2) . ' ' . $transferCurrency . ' requires approval.',
             'finance',
             'finance_transfer',
             $transferId,
@@ -193,17 +200,17 @@ if ($imageResult) {
 }
 
 $safeAccounts = [];
-$safeResult = $conn->query('SELECT id, name, balance FROM safes ORDER BY name');
+$safeResult = $conn->query('SELECT id, name, balance, currency FROM safes ORDER BY name');
 while ($row = $safeResult->fetch_assoc()) {
-    $safeAccounts[] = ['id' => (int)$row['id'], 'label' => $row['name'] . ' — ' . number_format((float)$row['balance'], 2)];
+    $safeAccounts[] = ['id' => (int)$row['id'], 'label' => $row['name'] . ' — ' . number_format((float)$row['balance'], 2) . ' ' . ($row['currency'] ?: 'EGP')];
 }
 
 $bankAccounts = [];
-$bankResult = $conn->query('SELECT id, bank_name, account_number, balance FROM bank_accounts ORDER BY bank_name');
+$bankResult = $conn->query('SELECT id, bank_name, account_number, balance, currency FROM bank_accounts ORDER BY bank_name');
 while ($row = $bankResult->fetch_assoc()) {
     $bankAccounts[] = [
         'id' => (int)$row['id'],
-        'label' => $row['bank_name'] . ' (#' . $row['account_number'] . ') — ' . number_format((float)$row['balance'], 2),
+        'label' => $row['bank_name'] . ' (#' . $row['account_number'] . ') — ' . number_format((float)$row['balance'], 2) . ' ' . ($row['currency'] ?: 'EGP'),
     ];
 }
 
@@ -288,7 +295,7 @@ require_once '../../includes/header.php';
                                     <?php else: ?><?= e(financeTransferAccountName($row, 'to')); ?><?php endif; ?>
                                 </div>
                             </td>
-                            <td class="fw-bold"><?= number_format((float)$row['amount'], 2); ?></td>
+                            <td class="fw-bold"><?= e(formatCurrency((float)$row['amount'], $row['currency'] ?? 'EGP')); ?></td>
                             <td><span class="badge bg-<?= $statusColors[$status] ?? 'secondary'; ?>"><?= e(ucfirst($status)); ?></span></td>
                             <td><?= e($row['reason'] ?: $row['notes']); ?></td>
                             <td>
