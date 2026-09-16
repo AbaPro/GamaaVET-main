@@ -128,7 +128,7 @@ if ($result) {
 <div class="card">
     <div class="card-body p-0">
         <div class="table-responsive">
-            <table class="table table-hover mb-0" id="packagingOptionsTable">
+            <table class="table table-hover mb-0 js-datatable" id="packagingOptionsTable" data-table-order='[[1,"asc"],[0,"asc"]]'>
                 <thead class="table-light">
                     <tr>
                         <th>Name</th>

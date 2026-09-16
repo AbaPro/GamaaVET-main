@@ -273,9 +273,6 @@ $productsTableColspan += 1;
         <a href="upload.php" class="btn btn-info me-2">
             <i class="fas fa-upload"></i> Bulk Upload
         </a>
-        <a href="export.php<?php echo '?' . http_build_query($_GET); ?>" class="btn btn-success me-2">
-            <i class="fas fa-file-csv"></i> Export CSV
-        </a>
         <a href="export.php<?php echo '?' . http_build_query(array_merge($_GET, ['format' => 'excel'])); ?>" class="btn btn-success me-2">
             <i class="fas fa-file-excel"></i> Export Excel
         </a>

@@ -71,7 +71,7 @@ require_once '../../includes/header.php';
 <div class="card">
     <div class="card-body p-0">
         <div class="table-responsive">
-            <table class="table table-hover align-middle mb-0" id="formulaTemplatesTable">
+            <table class="table table-hover align-middle mb-0 js-datatable" id="formulaTemplatesTable" data-table-order='[[0,"asc"]]'>
                 <thead class="table-light">
                     <tr>
                         <th>Name</th>

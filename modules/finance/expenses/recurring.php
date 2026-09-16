@@ -85,7 +85,7 @@ unset($exp);
     <div class="card shadow-sm">
         <div class="card-body">
             <div class="table-responsive">
-                <table class="table table-hover">
+                <table class="table table-hover js-datatable">
                     <thead class="table-light">
                         <tr>
                             <th>Name</th>

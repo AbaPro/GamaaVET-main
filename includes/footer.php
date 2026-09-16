@@ -29,20 +29,15 @@
 
         <!-- Bootstrap 5 JS Bundle with Popper -->
         <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+        <script src="<?php echo BASE_URL; ?>assets/js/table-tools.js"></script>
         <script>
-            document.addEventListener('DOMContentLoaded', function() {
-                if (window.jQuery && typeof jQuery.fn.DataTable !== 'undefined') {
-                    jQuery('.js-datatable').each(function() {
-                        if (!jQuery.fn.dataTable.isDataTable(this)) {
-                            jQuery(this).DataTable({
-                                pageLength: 25,
-                                lengthMenu: [10, 25, 50, 100],
-                                order: []
-                            });
-                        }
-                    });
-                }
+            // Tables are already rendered when the shared footer is included. Initializing
+            // here also ensures page-specific document-ready handlers reuse this instance.
+            if (window.GamaaTableTools) {
+                window.GamaaTableTools.init();
+            }
 
+            document.addEventListener('DOMContentLoaded', function() {
                 // Global table row click logic
                 if (window.jQuery) {
                     function isImageLink($link, href) {

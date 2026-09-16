@@ -57,9 +57,9 @@ if (isset($_GET['ticket']) && is_numeric($_GET['ticket']) && hasPermission('tick
 
 $roleSlug = $_SESSION['role_slug'] ?? null;
 if ($roleSlug === 'admin') {
-    $result = $conn->prepare("SELECT * FROM notifications ORDER BY created_at DESC LIMIT 200");
+    $result = $conn->prepare("SELECT * FROM notifications ORDER BY created_at DESC");
 } else {
-    $result = $conn->prepare("SELECT * FROM notifications WHERE (created_for_role_id = ? OR created_for_user_id = ?) ORDER BY created_at DESC LIMIT 200");
+    $result = $conn->prepare("SELECT * FROM notifications WHERE (created_for_role_id = ? OR created_for_user_id = ?) ORDER BY created_at DESC");
     $result->bind_param('ii', $roleId, $userId);
 }
 $result->execute();
@@ -77,7 +77,7 @@ require_once '../../includes/header.php';
 
 <div class="card">
   <div class="table-responsive">
-    <table class="table table-hover mb-0">
+    <table class="table table-hover mb-0 js-datatable">
       <thead class="table-light">
         <tr>
           <th>When</th>

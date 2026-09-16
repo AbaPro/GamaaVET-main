@@ -169,7 +169,7 @@ $canViewComponentName = hasPermission('manufacturing.component.name.view');
 <div class="card">
     <div class="card-body p-0">
         <div class="table-responsive">
-            <table class="table table-hover mb-0" id="formulasTable">
+            <table class="table table-hover mb-0 js-datatable" id="formulasTable" data-table-order='[[0,"asc"]]'>
                 <thead class="table-light">
                     <tr>
                         <th>Name</th>

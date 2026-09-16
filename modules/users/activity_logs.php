@@ -71,7 +71,7 @@ if ($conditions) {
     $sql .= ' WHERE ' . implode(' AND ', $conditions);
 }
 
-$sql .= ' ORDER BY al.created_at DESC LIMIT 200';
+$sql .= ' ORDER BY al.created_at DESC';
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $logs = $stmt->fetchAll(PDO::FETCH_ASSOC);

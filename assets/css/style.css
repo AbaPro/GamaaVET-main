@@ -37,6 +37,28 @@ table.js-datatable tbody tr .dropdown-menu {
   cursor: auto;
 }
 
+/* Shared listing-table selection and CSV export tools */
+.table-export-toolbar {
+  min-height: 31px;
+}
+
+table.js-datatable .table-select-column {
+  width: 42px !important;
+  min-width: 42px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+table.js-datatable .table-select-column::before,
+table.js-datatable .table-select-column::after {
+  display: none !important;
+}
+
+table.js-datatable input.js-table-select-all,
+table.js-datatable input.js-table-row-select {
+  cursor: pointer !important;
+}
+
 /* Add a subtle hover effect to make it feel more interactive */
 table.table-hover tbody tr:hover td {
   background-color: rgba(0, 0, 0, 0.04) !important;

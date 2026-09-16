@@ -292,7 +292,7 @@ $ariaSort = static function (string $column) use ($sortBy, $sortDir): string {
             </div>
         </form>
         <div class="table-responsive">
-            <table class="table table-hover">
+            <table class="table table-hover js-datatable">
                 <thead>
                     <tr>
                         <th width="40"><input type="checkbox" class="form-check-input" id="selectAll"></th>

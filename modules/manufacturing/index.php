@@ -182,7 +182,7 @@ if (!empty($stepIds)) {
 <div class="card">
     <div class="card-body p-0">
         <div class="table-responsive">
-            <table class="table table-hover mb-0" id="manufacturingTable">
+            <table class="table table-hover mb-0 js-datatable" id="manufacturingTable" data-table-order='[[0,"desc"]]' data-table-non-orderable='[7,8,9,10]'>
                 <thead class="table-light">
                     <tr>
                         <th>Order #</th>
