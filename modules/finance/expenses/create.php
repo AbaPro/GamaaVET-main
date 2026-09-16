@@ -36,6 +36,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $recurrence_interval = $_POST['recurrence_interval'] ?? null;
         $account_id = !empty($_POST['account_id']) ? (int)$_POST['account_id'] : null;
         $currency = in_array($_POST['currency'] ?? '', ['EGP', 'USD', 'EUR', 'SAR']) ? $_POST['currency'] : 'EGP';
+
+        $account_stmt = $pdo->prepare("SELECT id FROM accounts WHERE id = ? AND is_active = 1 AND slug <> 'curva'");
+        $account_stmt->execute([$account_id]);
+        if (!$account_id || !$account_stmt->fetchColumn()) {
+            throw new Exception('Please select an available account.');
+        }
         
         $status = 'pending';
         $paid_amount = 0;
@@ -154,7 +160,7 @@ $categories = $pdo->query("SELECT * FROM expense_categories ORDER BY name ASC")-
 $vendors    = $pdo->query("SELECT id, name FROM vendors ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
 $safes      = $pdo->query("SELECT id, name, balance FROM safes WHERE " . getAccountScopeSql() . " ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
 $banks      = $pdo->query("SELECT id, bank_name, account_number, balance FROM bank_accounts WHERE " . getAccountScopeSql() . " ORDER BY bank_name ASC")->fetchAll(PDO::FETCH_ASSOC);
-$accounts   = $pdo->query("SELECT * FROM accounts WHERE is_active = 1 ORDER BY id ASC")->fetchAll(PDO::FETCH_ASSOC);
+$accounts   = $pdo->query("SELECT * FROM accounts WHERE is_active = 1 AND slug <> 'curva' ORDER BY id ASC")->fetchAll(PDO::FETCH_ASSOC);
 $currencies = $pdo->query("SELECT * FROM currencies ORDER BY is_default DESC, code ASC")->fetchAll(PDO::FETCH_ASSOC);
 
 // Pre-select account from session login_region

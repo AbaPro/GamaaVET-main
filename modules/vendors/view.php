@@ -185,7 +185,7 @@ $orders_result = $orders_stmt->get_result();
                                             </span>
                                         </td>
                                         <td>
-                                            <a href="../purchases/orders/view.php?id=<?php echo $order['id']; ?>" class="btn btn-sm btn-outline-primary">
+                                            <a href="../purchases/po_details.php?id=<?php echo $order['id']; ?>" class="btn btn-sm btn-outline-primary">
                                                 <i class="fas fa-eye"></i> View
                                             </a>
                                         </td>
@@ -301,7 +301,7 @@ document.addEventListener('DOMContentLoaded', function () {
                         </div>
                         <div class="border-top pt-3">
                             <div class="mb-2"><strong>Notes:</strong> ${po.notes ? escapeHtml(po.notes) : '<span class="text-muted">No notes</span>'}</div>
-                            <a href="../purchases/orders/view.php?id=${po.id}" class="btn btn-sm btn-primary">Open Full PO</a>
+                            <a href="../purchases/po_details.php?id=${po.id}" class="btn btn-sm btn-primary">Open Full PO</a>
                         </div>
                     `;
                 })

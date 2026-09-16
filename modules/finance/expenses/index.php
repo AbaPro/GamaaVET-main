@@ -98,17 +98,6 @@ if (!empty($_GET['currency'])) {
 $where_sql = !empty($where) ? "WHERE " . implode(" AND ", $where) : "";
 
 // ── Per-currency summary cards ─────────────────────────────────────────────
-$summary_sql = "SELECT e.currency,
-    SUM(e.amount) as total_amount,
-    SUM(e.paid_amount) as total_paid,
-    SUM(e.amount - e.paid_amount) as total_pending
-    FROM expenses e $where_sql
-    GROUP BY e.currency
-    ORDER BY e.currency ASC";
-$stmt = $pdo->prepare($summary_sql);
-$stmt->execute($params);
-$summaries = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
 // ── Main expense listing ───────────────────────────────────────────────────
 $sql = "SELECT e.*, ec.name as category_name, u.name as creator_name, v.name as vendor_name,
                a.name as account_name,
@@ -123,6 +112,31 @@ $sql = "SELECT e.*, ec.name as category_name, u.name as creator_name, v.name as 
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $expenses = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Build the cards from the exact rows rendered in the table. Previously the
+// cards queried expenses directly while the table applied required joins, so
+// an expense with missing related data could inflate the cards but stay hidden.
+$summaries_by_currency = [];
+foreach ($expenses as $expense) {
+    $currency = $expense['currency'] ?: 'EGP';
+
+    if (!isset($summaries_by_currency[$currency])) {
+        $summaries_by_currency[$currency] = [
+            'currency'      => $currency,
+            'total_amount'  => 0.0,
+            'total_paid'    => 0.0,
+            'total_pending' => 0.0,
+        ];
+    }
+
+    $amount = (float)$expense['amount'];
+    $paid   = (float)$expense['paid_amount'];
+    $summaries_by_currency[$currency]['total_amount'] += $amount;
+    $summaries_by_currency[$currency]['total_paid'] += $paid;
+    $summaries_by_currency[$currency]['total_pending'] += $amount - $paid;
+}
+ksort($summaries_by_currency);
+$summaries = array_values($summaries_by_currency);
 
 $currency_symbols = ['EGP' => 'ج.م', 'USD' => '$', 'EUR' => '€', 'SAR' => 'ر.س'];
 ?>
