@@ -65,7 +65,7 @@ $stmt = $pdo->prepare("
     LEFT JOIN bank_accounts pb ON pop.payment_source_type = 'bank' AND pb.id = pop.payment_source_id
     LEFT JOIN personal_accounts pp ON pop.payment_source_type = 'personal' AND pp.id = pop.payment_source_id
     WHERE pop.purchase_order_id = ?
-    ORDER BY pop.created_at DESC
+    ORDER BY pop.transaction_date DESC, pop.created_at DESC
 ");
 $stmt->execute([$po_id]);
 $payments = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -284,7 +284,7 @@ require_once '../../includes/header.php';
                             <tbody>
                                 <?php foreach ($payments as $payment) : ?>
                                     <tr>
-                                        <td><?= date('M d, Y', strtotime($payment['created_at'])) ?></td>
+                                        <td><?= date('M d, Y', strtotime($payment['transaction_date'])) ?></td>
                                         <td><?= number_format($payment['amount'], 2) ?></td>
                                         <td><?= ucfirst($payment['payment_method']) ?></td>
                                         <td><?= e($payment['payment_method'] === 'wallet' ? 'Vendor Wallet' : ($payment['payment_source_name'] ? ucfirst($payment['payment_source_type']) . ' — ' . $payment['payment_source_name'] : 'Not recorded')); ?></td>
@@ -415,6 +415,8 @@ require_once '../../includes/header.php';
         if (undoBtn) {
             undoBtn.addEventListener('click', function() {
                 if (confirm('Are you sure you want to UNDO the receipt? This will subtract received quantities from inventory and reset the PO status to "Ordered". This cannot be reversed.')) {
+                    const transactionDate = prompt('Transaction date (YYYY-MM-DD):', '<?= date('Y-m-d'); ?>');
+                    if (!transactionDate) return;
                     const form = document.createElement('form');
                     form.method = 'POST';
                     form.action = 'undo_receipt.php';
@@ -423,8 +425,14 @@ require_once '../../includes/header.php';
                     input.type = 'hidden';
                     input.name = 'po_id';
                     input.value = this.dataset.poId;
+
+                    const dateInput = document.createElement('input');
+                    dateInput.type = 'hidden';
+                    dateInput.name = 'transaction_date';
+                    dateInput.value = transactionDate;
                     
                     form.appendChild(input);
+                    form.appendChild(dateInput);
                     document.body.appendChild(form);
                     form.submit();
                 }

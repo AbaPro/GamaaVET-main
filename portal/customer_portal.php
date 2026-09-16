@@ -565,10 +565,10 @@ $portalOrderStatusBadgeMap = [
 ];
 
 $walletStmt = $pdo->prepare("
-    SELECT id, amount, type, notes, created_at
+    SELECT id, amount, type, notes, transaction_date, created_at
     FROM customer_wallet_transactions
     WHERE customer_id = ?
-    ORDER BY created_at DESC
+    ORDER BY transaction_date DESC, created_at DESC
     LIMIT 50
 ");
 $walletStmt->execute([$customerId]);
@@ -1280,7 +1280,7 @@ if (!empty($orders)) {
                 <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
                   <?php foreach ($walletMoves as $move): ?>
                     <tr class="hover:bg-slate-50 dark:hover:bg-slate-950/60 transition">
-                      <td class="px-4 py-3"><?= date('Y-m-d', strtotime($move['created_at'])); ?></td>
+                      <td class="px-4 py-3"><?= date('Y-m-d', strtotime($move['transaction_date'])); ?></td>
                       <?php
                         $typeLabel = $walletTypeLabels[$move['type']] ?? $move['type'];
                         $typeBadge = $walletTypeBadges[$move['type']] ?? 'bg-slate-100 text-slate-700';

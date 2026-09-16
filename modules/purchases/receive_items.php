@@ -51,6 +51,13 @@ $allowedInventoryIds = array_fill_keys(array_map('intval', array_column($invento
 // Handle item receipt
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $uploadedReceiptImages = [];
+    $transactionDate = normalizeTransactionDate($_POST['transaction_date'] ?? '');
+
+    if ($transactionDate === null) {
+        $_SESSION['error'] = 'Enter a valid transaction date.';
+        header("Location: receive_items.php?po_id=" . $po_id);
+        exit();
+    }
 
     try {
         $pdo->beginTransaction();
@@ -176,14 +183,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
             $stmt = $pdo->prepare("
                 INSERT INTO vendor_wallet_transactions
-                (vendor_id, amount, type, reference_id, reference_type, notes, created_by)
-                VALUES (?, ?, 'withdrawal', ?, 'purchase_order', ?, ?)
+                (vendor_id, amount, type, reference_id, reference_type, notes, transaction_date, created_by)
+                VALUES (?, ?, 'withdrawal', ?, 'purchase_order', ?, ?, ?)
             ");
             $stmt->execute([
                 $po['vendor_id'],
                 $received_value,
                 $po_id,
                 'Goods received against PO #' . $po_id . ($notes !== '' ? ' - ' . $notes : ''),
+                $transactionDate,
                 $_SESSION['user_id']
             ]);
         }
@@ -294,6 +302,11 @@ require_once '../../includes/header.php';
                 </div>
                 
                 <div class="mt-4">
+                    <div class="form-group mb-3">
+                        <label for="transaction_date" class="form-label">Transaction Date</label>
+                        <input type="date" class="form-control" id="transaction_date" name="transaction_date" value="<?= date('Y-m-d'); ?>" required>
+                        <small class="text-muted">Used for the vendor wallet movement created by this receipt.</small>
+                    </div>
                     <div class="form-group">
                         <label for="notes" class="form-label">Receiving Notes</label>
                         <textarea class="form-control" id="notes" name="notes" rows="2"></textarea>

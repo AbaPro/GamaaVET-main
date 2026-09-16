@@ -35,7 +35,7 @@ $sql_payments = "SELECT ep.*, u.name as recorder_name, s.name as safe_name, b.ba
                  LEFT JOIN safes s ON ep.safe_id = s.id
                  LEFT JOIN bank_accounts b ON ep.bank_account_id = b.id
                  WHERE ep.expense_id = ?
-                 ORDER BY ep.created_at DESC";
+                 ORDER BY ep.transaction_date DESC, ep.created_at DESC";
 $stmt = $pdo->prepare($sql_payments);
 $stmt->execute([$expense_id]);
 $payments = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -184,7 +184,7 @@ require_once '../../../includes/header.php';
                             <tbody>
                                 <?php foreach ($payments as $p): ?>
                                 <tr>
-                                    <td class="ps-3 small"><?= date('M j, Y g:i A', strtotime($p['created_at'])) ?></td>
+                                    <td class="ps-3 small"><?= date('M j, Y', strtotime($p['transaction_date'])) ?></td>
                                     <td><?= ucfirst($p['payment_method']) ?></td>
                                     <td>
                                         <?php if ($p['safe_name']): ?>

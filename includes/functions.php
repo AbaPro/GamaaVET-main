@@ -579,6 +579,24 @@ function formatDateTime($datetime) {
     return date('M j, Y g:i A', strtotime($datetime));
 }
 
+/**
+ * Return a strict YYYY-MM-DD transaction date, or null when the submitted
+ * value is not a real calendar date. Transaction dates are deliberately kept
+ * separate from created_at, which remains the immutable audit timestamp.
+ */
+function normalizeTransactionDate($value) {
+    $value = trim((string)$value);
+    if ($value === '') return null;
+
+    $date = DateTimeImmutable::createFromFormat('!Y-m-d', $value);
+    $errors = DateTimeImmutable::getLastErrors();
+    if (!$date || ($errors !== false && ($errors['warning_count'] > 0 || $errors['error_count'] > 0))) {
+        return null;
+    }
+
+    return $date->format('Y-m-d') === $value ? $value : null;
+}
+
 function hasPermission($permissionKey) {
     if (!isLoggedIn()) return false;
 

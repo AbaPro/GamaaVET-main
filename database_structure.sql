@@ -184,6 +184,7 @@ CREATE TABLE `customer_wallet_transactions` (
   `reference_id` int(11) DEFAULT NULL,
   `reference_type` varchar(50) DEFAULT NULL,
   `notes` text DEFAULT NULL,
+  `transaction_date` date NOT NULL DEFAULT (CURRENT_DATE),
   `created_by` int(11) NOT NULL,
   `created_at` timestamp NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -201,6 +202,7 @@ CREATE TABLE `finance_transfers` (
   `to_type` enum('safe','bank','personal') NOT NULL,
   `to_id` int(11) NOT NULL,
   `amount` decimal(10,2) NOT NULL,
+  `transaction_date` date NOT NULL DEFAULT (CURRENT_DATE),
   `notes` text DEFAULT NULL,
   `image_path` varchar(255) DEFAULT NULL,
   `created_by` int(11) NOT NULL,
@@ -313,6 +315,7 @@ CREATE TABLE `order_payments` (
   `payment_method` enum('cash','transfer','wallet') NOT NULL,
   `reference` varchar(100) DEFAULT NULL,
   `notes` text DEFAULT NULL,
+  `transaction_date` date NOT NULL DEFAULT (CURRENT_DATE),
   `created_by` int(11) NOT NULL,
   `created_at` timestamp NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -422,6 +425,7 @@ CREATE TABLE `purchase_order_payments` (
   `payment_method` enum('cash','transfer','wallet') NOT NULL,
   `reference` varchar(100) DEFAULT NULL,
   `notes` text DEFAULT NULL,
+  `transaction_date` date NOT NULL DEFAULT (CURRENT_DATE),
   `screenshot_path` varchar(255) DEFAULT NULL,
   `created_by` int(11) NOT NULL,
   `created_at` timestamp NULL DEFAULT current_timestamp()
@@ -644,6 +648,7 @@ CREATE TABLE `vendor_wallet_transactions` (
   `reference_id` int(11) DEFAULT NULL,
   `reference_type` varchar(50) DEFAULT NULL,
   `notes` text DEFAULT NULL,
+  `transaction_date` date NOT NULL DEFAULT (CURRENT_DATE),
   `created_by` int(11) NOT NULL,
   `created_at` timestamp NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;

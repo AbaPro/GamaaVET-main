@@ -70,6 +70,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $payment_method = $payment['payment_method'];
                 $reference = $payment['reference'] ?? '';
                 $notes = $payment['notes'] ?? '';
+                $transaction_date = normalizeTransactionDate($payment['transaction_date'] ?? '');
+
+                if ($transaction_date === null) {
+                    throw new Exception("Please enter a valid transaction date for every payment.");
+                }
                 
                 $safe_id = null;
                 $bank_account_id = null;
@@ -105,8 +110,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 // Insert payment record
                 $stmt = $pdo->prepare("
                     INSERT INTO order_payments 
-                    (order_id, amount, payment_method, reference, notes, safe_id, bank_account_id, created_by)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (order_id, amount, payment_method, reference, notes, transaction_date, safe_id, bank_account_id, created_by)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ");
                 $stmt->execute([
                     $order_id,
@@ -114,6 +119,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     $payment_method,
                     $reference,
                     $notes,
+                    $transaction_date,
                     $safe_id,
                     $bank_account_id,
                     $_SESSION['user_id']
@@ -126,17 +132,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
                     // This payment already moved money, so its audit transfer is
                     // recorded as system-approved rather than entering the manual workflow.
-                    $financeTransferReference = 'FT-' . date('Ymd') . '-' . strtoupper(generateRandomString(6));
+                    $financeTransferReference = 'FT-' . date('Ymd', strtotime($transaction_date)) . '-' . strtoupper(generateRandomString(6));
                     $financeReason = 'Customer payment for order ' . $order['internal_id'];
                     $financeNotes = 'Order Payment Reference: ' . $reference;
                     $stmtTrans = $pdo->prepare("
                         INSERT INTO finance_transfers
                             (transfer_reference, from_type, from_id, to_type, to_id, amount,
-                             status, reason, notes, assigned_approver_id, approved_by, approved_at, created_by)
-                        VALUES (?, 'personal', 0, 'safe', ?, ?, 'approved', ?, ?, ?, ?, NOW(), ?)
+                             transaction_date, status, reason, notes, assigned_approver_id, approved_by, approved_at, created_by)
+                        VALUES (?, 'personal', 0, 'safe', ?, ?, ?, 'approved', ?, ?, ?, ?, NOW(), ?)
                     ");
                     $stmtTrans->execute([
-                        $financeTransferReference, $safe_id, $amount, $financeReason, $financeNotes,
+                        $financeTransferReference, $safe_id, $amount, $transaction_date, $financeReason, $financeNotes,
                         $_SESSION['user_id'], $_SESSION['user_id'], $_SESSION['user_id']
                     ]);
                     $financeTransferId = (int)$pdo->lastInsertId();
@@ -150,17 +156,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     $stmtBank = $pdo->prepare("UPDATE bank_accounts SET balance = balance + ? WHERE id = ?");
                     $stmtBank->execute([$amount, $bank_account_id]);
 
-                    $financeTransferReference = 'FT-' . date('Ymd') . '-' . strtoupper(generateRandomString(6));
+                    $financeTransferReference = 'FT-' . date('Ymd', strtotime($transaction_date)) . '-' . strtoupper(generateRandomString(6));
                     $financeReason = 'Customer payment for order ' . $order['internal_id'];
                     $financeNotes = 'Order Payment Reference: ' . $reference;
                     $stmtTrans = $pdo->prepare("
                         INSERT INTO finance_transfers
                             (transfer_reference, from_type, from_id, to_type, to_id, amount,
-                             status, reason, notes, assigned_approver_id, approved_by, approved_at, created_by)
-                        VALUES (?, 'personal', 0, 'bank', ?, ?, 'approved', ?, ?, ?, ?, NOW(), ?)
+                             transaction_date, status, reason, notes, assigned_approver_id, approved_by, approved_at, created_by)
+                        VALUES (?, 'personal', 0, 'bank', ?, ?, ?, 'approved', ?, ?, ?, ?, NOW(), ?)
                     ");
                     $stmtTrans->execute([
-                        $financeTransferReference, $bank_account_id, $amount, $financeReason, $financeNotes,
+                        $financeTransferReference, $bank_account_id, $amount, $transaction_date, $financeReason, $financeNotes,
                         $_SESSION['user_id'], $_SESSION['user_id'], $_SESSION['user_id']
                     ]);
                     $financeTransferId = (int)$pdo->lastInsertId();
@@ -199,14 +205,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     // Record wallet transaction
                     $stmt = $pdo->prepare("
                         INSERT INTO customer_wallet_transactions
-                        (customer_id, amount, type, reference_id, reference_type, notes, payment_method, created_by)
-                        VALUES (?, ?, 'payment', ?, 'order', ?, 'wallet', ?)
+                        (customer_id, amount, type, reference_id, reference_type, notes, transaction_date, payment_method, created_by)
+                        VALUES (?, ?, 'payment', ?, 'order', ?, ?, 'wallet', ?)
                     ");
                     $stmt->execute([
                         $order['customer_id'],
                         $amount,
                         $order_id,
                         $notes,
+                        $transaction_date,
                         $_SESSION['user_id']
                     ]);
                 }
@@ -269,7 +276,7 @@ require_once '../../includes/header.php';
                                 </option>
                             </select>
                         </div>
-                        <div class="col-md-3 payment-destination-container">
+                        <div class="col-md-2 payment-destination-container">
                             <!-- Populated via JS based on payment method -->
                             <label class="form-label destination-label">Destination</label>
                             <select class="form-select destination-select" disabled>
@@ -277,6 +284,10 @@ require_once '../../includes/header.php';
                             </select>
                         </div>
                         <div class="col-md-2">
+                            <label class="form-label">Transaction Date*</label>
+                            <input type="date" class="form-control" name="payments[0][transaction_date]" value="<?= date('Y-m-d'); ?>" required>
+                        </div>
+                        <div class="col-md-1">
                             <label class="form-label">Reference*</label>
                             <input type="text" class="form-control" name="payments[0][reference]" required>
                         </div>
@@ -451,13 +462,17 @@ $(document).ready(function() {
                         </option>
                     </select>
                 </div>
-                <div class="col-md-3 payment-destination-container">
+                <div class="col-md-2 payment-destination-container">
                     <label class="form-label destination-label">Safe</label>
                     <select class="form-select destination-select" name="payments[${paymentIndex}][safe_id]" required>
                         ${safesOptions}
                     </select>
                 </div>
                 <div class="col-md-2">
+                    <label class="form-label">Transaction Date*</label>
+                    <input type="date" class="form-control" name="payments[${paymentIndex}][transaction_date]" value="<?= date('Y-m-d'); ?>" required>
+                </div>
+                <div class="col-md-1">
                     <label class="form-label">Reference*</label>
                     <input type="text" class="form-control" name="payments[${paymentIndex}][reference]" required>
                 </div>

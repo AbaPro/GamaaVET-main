@@ -64,7 +64,7 @@ $transactions = [];
 // Customer bank transfers are incoming account movements. Their automatically
 // generated finance-transfer mirrors are excluded below to prevent duplication.
 $orderPaymentStmt = $conn->prepare("
-    SELECT op.id, op.amount, op.reference, op.notes, op.created_at,
+    SELECT op.id, op.amount, op.reference, op.notes, op.transaction_date, op.created_at,
            u.name AS created_by_name,
            o.id AS order_id, o.internal_id AS order_number, o.currency AS source_currency,
            c.name AS customer_name
@@ -81,6 +81,7 @@ while ($row = $orderPayments->fetch_assoc()) {
     $transactions[] = [
         'sort_id' => (int)$row['id'],
         'source_key' => 'order_payment_' . $row['id'],
+        'transaction_date' => $row['transaction_date'],
         'created_at' => $row['created_at'],
         'type' => 'Customer Payment',
         'direction' => 'in',
@@ -99,7 +100,7 @@ $orderPaymentStmt->close();
 // Manual customer-wallet payments sent by bank transfer also credit the selected
 // bank account, but do not create an order_payment or finance_transfer row.
 $walletPaymentStmt = $conn->prepare("
-    SELECT wt.id, wt.amount, wt.notes, wt.created_at,
+    SELECT wt.id, wt.amount, wt.notes, wt.transaction_date, wt.created_at,
            u.name AS created_by_name,
            c.id AS customer_id, c.name AS customer_name
     FROM customer_wallet_transactions wt
@@ -116,6 +117,7 @@ while ($row = $walletPayments->fetch_assoc()) {
     $transactions[] = [
         'sort_id' => (int)$row['id'],
         'source_key' => 'wallet_payment_' . $row['id'],
+        'transaction_date' => $row['transaction_date'],
         'created_at' => $row['created_at'],
         'type' => 'Customer Wallet Payment',
         'direction' => 'in',
@@ -134,7 +136,7 @@ $walletPaymentStmt->close();
 // Expense payments are outgoing account movements. Linked PO payment rows are
 // alternate records of the same movement and are intentionally not duplicated.
 $expensePaymentStmt = $conn->prepare("
-    SELECT ep.id, ep.amount, ep.reference, ep.notes, ep.created_at,
+    SELECT ep.id, ep.amount, ep.reference, ep.notes, ep.transaction_date, ep.created_at,
            u.name AS created_by_name,
            e.id AS expense_id, e.name AS expense_name, e.notes AS expense_notes, e.currency AS source_currency,
            v.name AS vendor_name
@@ -156,6 +158,7 @@ while ($row = $expensePayments->fetch_assoc()) {
     $transactions[] = [
         'sort_id' => (int)$row['id'],
         'source_key' => 'expense_payment_' . $row['id'],
+        'transaction_date' => $row['transaction_date'],
         'created_at' => $row['created_at'],
         'type' => 'Expense Payment',
         'direction' => 'out',
@@ -213,6 +216,7 @@ while ($row = $transferRows->fetch_assoc()) {
     $transferEvents[(int)$row['id']] = [
         'sort_id' => (int)$row['id'],
         'source_key' => 'transfer_' . $row['id'],
+        'transaction_date' => $row['transaction_date'],
         'created_at' => $row['created_at'],
         'type' => 'Finance Transfer',
         'direction' => $direction,
@@ -251,6 +255,7 @@ foreach (poPaymentSourceHistory('bank', $bankId) as $payment) {
     $transactions[] = [
         'source_key' => 'po_payment_' . $payment['id'],
         'sort_id' => (int)$payment['id'],
+        'transaction_date' => $payment['transaction_date'],
         'created_at' => $payment['created_at'],
         'type' => 'PO Payment', 'direction' => 'out',
         'amount' => (float)$payment['amount'],
@@ -268,6 +273,7 @@ foreach (financeAccountBalanceAdjustments('bank', $bankId) as $adjustment) {
     $transactions[] = [
         'source_key' => 'balance_adjustment_' . $adjustment['id'],
         'sort_id' => (int)$adjustment['id'],
+        'transaction_date' => $adjustment['transaction_date'],
         'created_at' => $adjustment['created_at'],
         'type' => 'Balance Adjustment',
         'direction' => $change > 0 ? 'in' : ($change < 0 ? 'out' : 'neutral'),
@@ -283,6 +289,10 @@ foreach (financeAccountBalanceAdjustments('bank', $bankId) as $adjustment) {
 }
 
 usort($transactions, function ($left, $right) {
+    $dateComparison = strcmp($right['transaction_date'], $left['transaction_date']);
+    if ($dateComparison !== 0) {
+        return $dateComparison;
+    }
     $dateComparison = strcmp($right['created_at'], $left['created_at']);
     if ($dateComparison !== 0) {
         return $dateComparison;
@@ -312,7 +322,7 @@ $filterDateTo = preg_match('/^\d{4}-\d{2}-\d{2}$/', $_GET['date_to'] ?? '') ? $_
 $transactionTypes = array_values(array_unique(array_column($transactions, 'type')));
 sort($transactionTypes);
 $visibleTransactions = array_values(array_filter($transactions, function ($transaction) use ($filterDirection, $filterType, $filterDateFrom, $filterDateTo) {
-    $date = substr((string)$transaction['created_at'], 0, 10);
+    $date = $transaction['transaction_date'];
     if ($filterDirection !== '' && $transaction['direction'] !== $filterDirection) return false;
     if ($filterType !== '' && $transaction['type'] !== $filterType) return false;
     if ($filterDateFrom !== '' && $date < $filterDateFrom) return false;
@@ -386,7 +396,8 @@ require_once '../../includes/header.php';
         <form method="post" class="row g-3 align-items-end" onsubmit="return confirm('Set this bank account to the entered balance?');">
             <input type="hidden" name="csrf_token" value="<?= e($formToken); ?>"><input type="hidden" name="set_finance_account_balance" value="1">
             <div class="col-md-3"><label class="form-label">New Balance (<?= e($currency); ?>)*</label><input type="number" class="form-control" name="new_balance" value="<?= e(number_format((float)$bank['balance'], 2, '.', '')); ?>" min="-999999999999.99" max="999999999999.99" step="0.01" required></div>
-            <div class="col-md-7"><label class="form-label">Reconciliation Reason*</label><input type="text" class="form-control" name="adjustment_reason" maxlength="500" placeholder="Example: Matched September bank statement" required></div>
+            <div class="col-md-2"><label class="form-label">Transaction Date*</label><input type="date" class="form-control" name="transaction_date" value="<?= date('Y-m-d'); ?>" required></div>
+            <div class="col-md-5"><label class="form-label">Reconciliation Reason*</label><input type="text" class="form-control" name="adjustment_reason" maxlength="500" placeholder="Example: Matched September bank statement" required></div>
             <div class="col-md-2"><button type="submit" class="btn btn-warning w-100">Set Balance</button></div>
         </form>
         <?php else: ?><div class="alert alert-warning mb-0">Apply migration <code>20260916_finance_account_details_and_adjustments.sql</code> to enable audited balance updates.</div><?php endif; ?>
@@ -428,8 +439,8 @@ require_once '../../includes/header.php';
                     <?php if ($visibleTransactions): ?>
                         <?php foreach ($visibleTransactions as $transaction): ?>
                             <tr>
-                                <td data-order="<?= e(strtotime($transaction['created_at'])); ?>">
-                                    <?= date('M d, Y H:i', strtotime($transaction['created_at'])); ?>
+                                <td data-order="<?= e(strtotime($transaction['transaction_date'])); ?>">
+                                    <?= date('M d, Y', strtotime($transaction['transaction_date'])); ?>
                                 </td>
                                 <td>
                                     <?php if ($transaction['direction'] === 'in'): ?>

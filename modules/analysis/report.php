@@ -722,14 +722,14 @@ $definitions = [
             $salesWhere = [$customerScope];
             $salesTypes = '';
             $salesParams = [];
-            analysisAddDateFilters($salesWhere, $salesTypes, $salesParams, 'DATE(op.created_at)', $filters);
+            analysisAddDateFilters($salesWhere, $salesTypes, $salesParams, 'op.transaction_date', $filters);
 
             $purchaseWhere = [];
             $purchaseTypes = '';
             $purchaseParams = [];
-            analysisAddDateFilters($purchaseWhere, $purchaseTypes, $purchaseParams, 'DATE(pop.created_at)', $filters);
+            analysisAddDateFilters($purchaseWhere, $purchaseTypes, $purchaseParams, 'pop.transaction_date', $filters);
 
-            $sql = "SELECT DATE_FORMAT(op.created_at, '%Y-%m') AS period,
+            $sql = "SELECT DATE_FORMAT(op.transaction_date, '%Y-%m') AS period,
                            'Customer receipt' AS direction,
                            op.payment_method AS method,
                            o.currency,
@@ -740,9 +740,9 @@ $definitions = [
                     JOIN customers c ON c.id = o.customer_id
                     LEFT JOIN factories f ON f.id = c.factory_id
                     WHERE " . implode(' AND ', $salesWhere) . "
-                    GROUP BY DATE_FORMAT(op.created_at, '%Y-%m'), op.payment_method, o.currency
+                    GROUP BY DATE_FORMAT(op.transaction_date, '%Y-%m'), op.payment_method, o.currency
                     UNION ALL
-                    SELECT DATE_FORMAT(pop.created_at, '%Y-%m') AS period,
+                    SELECT DATE_FORMAT(pop.transaction_date, '%Y-%m') AS period,
                            'Vendor payment' AS direction,
                            pop.payment_method AS method,
                            'EGP' AS currency,
@@ -752,7 +752,7 @@ $definitions = [
             if ($purchaseWhere) {
                 $sql .= ' WHERE ' . implode(' AND ', $purchaseWhere);
             }
-            $sql .= " GROUP BY DATE_FORMAT(pop.created_at, '%Y-%m'), pop.payment_method
+            $sql .= " GROUP BY DATE_FORMAT(pop.transaction_date, '%Y-%m'), pop.payment_method
                       ORDER BY period DESC, direction, method";
             return analysisRunQuery(
                 $conn,

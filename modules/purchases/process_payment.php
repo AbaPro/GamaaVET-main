@@ -45,12 +45,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $selectedPaymentMethod = $payment_method;
     $reference = $_POST['reference'] ?? '';
     $notes = $_POST['notes'] ?? '';
+    $transactionDate = normalizeTransactionDate($_POST['transaction_date'] ?? '');
 
     // Validate amount
     if (!is_string($_POST['csrf_token'] ?? null) || !hash_equals($_SESSION['po_payment_token'], $_POST['csrf_token'])) {
         $_SESSION['error'] = 'Invalid request. Refresh and try again.';
     } elseif (!in_array($payment_method, ['cash', 'transfer', 'wallet'], true)) {
         $_SESSION['error'] = 'Invalid payment method.';
+    } elseif ($transactionDate === null) {
+        $_SESSION['error'] = 'Enter a valid transaction date.';
     } elseif ($payment_method !== 'wallet' && !isset($paymentSources[$selectedSource])) {
         $_SESSION['error'] = 'Select an available payment source.';
     } elseif (!is_finite($amount) || $amount <= 0 || $amount > $balance) {
@@ -94,8 +97,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             // Insert payment record
             $stmt = $pdo->prepare("
                 INSERT INTO purchase_order_payments
-                (purchase_order_id, amount, payment_method, reference, notes, created_by, payment_source_type, payment_source_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (purchase_order_id, amount, payment_method, reference, notes, transaction_date, created_by, payment_source_type, payment_source_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ");
             $stmt->execute([
                 $po_id,
@@ -103,6 +106,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $payment_method,
                 $reference,
                 $notes,
+                $transactionDate,
                 $_SESSION['user_id'],
                 $sourceType,
                 $sourceId
@@ -141,14 +145,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 // Record wallet transaction
                 $stmt = $pdo->prepare("
                     INSERT INTO vendor_wallet_transactions
-                    (vendor_id, amount, type, reference_id, reference_type, notes, created_by)
-                    VALUES (?, ?, 'payment', ?, 'purchase_order', ?, ?)
+                    (vendor_id, amount, type, reference_id, reference_type, notes, transaction_date, created_by)
+                    VALUES (?, ?, 'payment', ?, 'purchase_order', ?, ?, ?)
                 ");
                 $stmt->execute([
                     $po['vendor_id'],
                     $amount,
                     $po_id,
                     $notes,
+                    $transactionDate,
                     $_SESSION['user_id']
                 ]);
             }
@@ -222,6 +227,11 @@ require_once '../../includes/header.php';
                                 Vendor Wallet (Balance: <?= number_format($po['wallet_balance'], 2) ?>)
                             </option>
                         </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label for="transaction_date" class="form-label">Transaction Date</label>
+                        <input type="date" class="form-control" id="transaction_date" name="transaction_date"
+                               value="<?= e($_POST['transaction_date'] ?? date('Y-m-d')); ?>" required>
                     </div>
                     <div class="col-md-12" id="payment-source-field">
                         <label for="payment_source" class="form-label">Pay From*</label>

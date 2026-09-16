@@ -23,6 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $toType = (string)($_POST['to_type'] ?? '');
     $toId = (int)($_POST['to_id'] ?? 0);
     $amount = round((float)($_POST['amount'] ?? 0), 2);
+    $transactionDate = normalizeTransactionDate($_POST['transaction_date'] ?? '');
     $reason = trim(strip_tags((string)($_POST['reason'] ?? '')));
     $notes = trim(strip_tags((string)($_POST['notes'] ?? '')));
     $purchaseOrderId = !empty($_POST['purchase_order_id']) ? (int)$_POST['purchase_order_id'] : null;
@@ -33,6 +34,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!in_array($fromType, $accountTypes, true) || !in_array($toType, $accountTypes, true)) {
         setAlert('danger', 'Select valid sender and receiver account types.');
+        redirect('transfers.php');
+    }
+    if ($transactionDate === null) {
+        setAlert('danger', 'Enter a valid transaction date.');
         redirect('transfers.php');
     }
     $fromAccount = $fromId > 0 ? financeTransferGetAccount($fromType, $fromId) : null;
@@ -93,7 +98,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    $reference = 'FT-' . date('Ymd') . '-' . strtoupper(generateRandomString(6));
+    $reference = 'FT-' . date('Ymd', strtotime($transactionDate)) . '-' . strtoupper(generateRandomString(6));
     $conn->begin_transaction();
 
     try {
@@ -112,18 +117,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt = $conn->prepare("
             INSERT INTO finance_transfers
                 (transfer_reference, from_type, from_id, to_type, to_id, amount,
-                 status, reason, notes, purchase_order_id, ticket_id,
+                 transaction_date, status, reason, notes, purchase_order_id, ticket_id,
                  assigned_approver_id, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
         ");
         $stmt->bind_param(
-            'ssisidssiiii',
+            'ssisidsssiiii',
             $reference,
             $fromType,
             $fromId,
             $toType,
             $toId,
             $amount,
+            $transactionDate,
             $reason,
             $notes,
             $purchaseOrderId,
@@ -184,7 +190,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect('transfers.php');
 }
 
-$transferSql = financeTransferSelectSql() . ' ORDER BY f.created_at DESC, f.id DESC';
+$transferSql = financeTransferSelectSql() . ' ORDER BY f.transaction_date DESC, f.created_at DESC, f.id DESC';
 $result = $conn->query($transferSql);
 
 $transferImages = [];
@@ -310,7 +316,7 @@ require_once '../../includes/header.php';
                             <td><?= e($row['requested_by_name'] ?: 'System'); ?></td>
                             <td><?= e($approvalDisplay); ?></td>
                             <td><?= renderAttachmentThumbnails($transferImages[(int)$row['id']] ?? []); ?></td>
-                            <td><?= date('M d, Y H:i', strtotime($row['created_at'])); ?></td>
+                            <td><?= date('M d, Y', strtotime($row['transaction_date'])); ?></td>
                             <td>
                                 <a href="transfer_details.php?id=<?= (int)$row['id']; ?>" class="btn btn-sm btn-outline-info mb-1">Details</a>
                                 <?php if ($mayApprove): ?>
@@ -362,6 +368,10 @@ require_once '../../includes/header.php';
                         <div class="col-md-3">
                             <label class="form-label">Amount <span class="text-danger">*</span></label>
                             <input type="number" class="form-control" name="amount" min="0.01" step="0.01" required>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Transaction Date <span class="text-danger">*</span></label>
+                            <input type="date" class="form-control" name="transaction_date" value="<?= date('Y-m-d'); ?>" required>
                         </div>
                         <div class="col-md-3">
                             <label class="form-label">Approver <span class="text-danger">*</span></label>

@@ -12,6 +12,12 @@ if (!hasPermission('purchases.receive')) {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['po_id'])) {
     $po_id = (int)$_POST['po_id'];
+    $transactionDate = normalizeTransactionDate($_POST['transaction_date'] ?? '');
+
+    if ($transactionDate === null) {
+        setAlert('danger', 'Enter a valid transaction date.');
+        redirect('po_details.php?id=' . $po_id);
+    }
     
     try {
         $pdo->beginTransaction();
@@ -84,14 +90,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['po_id'])) {
 
             $stmt = $pdo->prepare("
                 INSERT INTO vendor_wallet_transactions
-                (vendor_id, amount, type, reference_id, reference_type, notes, created_by)
-                VALUES (?, ?, 'refund', ?, 'purchase_order', ?, ?)
+                (vendor_id, amount, type, reference_id, reference_type, notes, transaction_date, created_by)
+                VALUES (?, ?, 'refund', ?, 'purchase_order', ?, ?, ?)
             ");
             $stmt->execute([
                 $po['vendor_id'],
                 $reversed_value,
                 $po_id,
                 'Reversal of goods received against PO #' . $po_id,
+                $transactionDate,
                 $_SESSION['user_id']
             ]);
         }

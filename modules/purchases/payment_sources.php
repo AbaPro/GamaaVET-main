@@ -48,7 +48,7 @@ function refundPoPaymentSource(array $payment) {
 
 function poPaymentSourceHistory($type, $id) {
     global $pdo;
-    $stmt = $pdo->prepare('SELECT p.*, v.name AS vendor_name, u.name AS created_by_name FROM purchase_order_payments p JOIN purchase_orders po ON po.id = p.purchase_order_id JOIN vendors v ON v.id = po.vendor_id LEFT JOIN users u ON u.id = p.created_by WHERE p.payment_source_type = ? AND p.payment_source_id = ? ORDER BY p.created_at DESC, p.id DESC');
+    $stmt = $pdo->prepare('SELECT p.*, v.name AS vendor_name, u.name AS created_by_name FROM purchase_order_payments p JOIN purchase_orders po ON po.id = p.purchase_order_id JOIN vendors v ON v.id = po.vendor_id LEFT JOIN users u ON u.id = p.created_by WHERE p.payment_source_type = ? AND p.payment_source_id = ? ORDER BY p.transaction_date DESC, p.created_at DESC, p.id DESC');
     $stmt->execute([$type, $id]);
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }

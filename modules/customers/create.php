@@ -57,6 +57,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $postal_code = sanitize($_POST['postal_code']);
     $country = sanitize($_POST['country']);
     $is_default_address = isset($_POST['is_default_address']) ? 1 : 0;
+    $openingBalanceDate = normalizeTransactionDate($_POST['opening_balance_date'] ?? '');
+
+    if ($wallet_balance > 0 && $openingBalanceDate === null) {
+        setAlert('danger', 'Enter a valid date for the initial wallet balance.');
+        redirect('index.php');
+    }
     
     // Start transaction
     $conn->begin_transaction();
@@ -106,10 +112,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // If wallet balance is positive, add initial deposit transaction
         if ($wallet_balance > 0) {
             $wallet_sql = "INSERT INTO customer_wallet_transactions 
-                           (customer_id, amount, type, created_by) 
-                           VALUES (?, ?, 'deposit', ?)";
+                           (customer_id, amount, type, transaction_date, created_by)
+                           VALUES (?, ?, 'deposit', ?, ?)";
             $wallet_stmt = $conn->prepare($wallet_sql);
-            $wallet_stmt->bind_param("idi", $customer_id, $wallet_balance, $_SESSION['user_id']);
+            $wallet_stmt->bind_param("idsi", $customer_id, $wallet_balance, $openingBalanceDate, $_SESSION['user_id']);
             $wallet_stmt->execute();
             $wallet_stmt->close();
         }

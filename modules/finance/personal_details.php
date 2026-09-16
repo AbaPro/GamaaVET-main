@@ -40,7 +40,7 @@ $transferStmt = $conn->prepare(
     financeTransferSelectSql()
     . " WHERE (f.from_type = 'personal' AND f.from_id = ?)
           OR (f.to_type = 'personal' AND f.to_id = ?)
-        ORDER BY f.created_at DESC, f.id DESC"
+        ORDER BY f.transaction_date DESC, f.created_at DESC, f.id DESC"
 );
 $transferStmt->bind_param('ii', $personalAccountId, $personalAccountId);
 $transferStmt->execute();
@@ -65,7 +65,7 @@ require_once __DIR__ . '/../purchases/payment_sources.php';
 foreach (poPaymentSourceHistory('personal', $personalAccountId) as $payment) {
     $transfers[] = [
         'id' => 0, 'po_payment_id' => $payment['id'],
-        'created_at' => $payment['created_at'], 'transfer_reference' => 'PO Payment #' . $payment['id'],
+        'transaction_date' => $payment['transaction_date'], 'created_at' => $payment['created_at'], 'transfer_reference' => 'PO Payment #' . $payment['id'],
         'status' => 'approved', 'from_type' => 'personal', 'from_id' => $personalAccountId,
         'to_type' => 'vendor', 'to_id' => 0, 'to_account_name' => $payment['vendor_name'],
         'amount' => $payment['amount'], 'reason' => $payment['notes'], 'notes' => $payment['reference'],
@@ -74,7 +74,9 @@ foreach (poPaymentSourceHistory('personal', $personalAccountId) as $payment) {
     ];
 }
 usort($transfers, function ($a, $b) {
-    return strcmp($b['created_at'], $a['created_at']) ?: (($b['po_payment_id'] ?? $b['id']) <=> ($a['po_payment_id'] ?? $a['id']));
+    return strcmp($b['transaction_date'], $a['transaction_date'])
+        ?: strcmp($b['created_at'], $a['created_at'])
+        ?: (($b['po_payment_id'] ?? $b['id']) <=> ($a['po_payment_id'] ?? $a['id']));
 });
 
 $totalReceived = 0.0;
@@ -156,7 +158,7 @@ require_once '../../includes/header.php';
                     <?php if ($transfers): ?>
                         <?php foreach ($transfers as $transfer): ?>
                             <tr>
-                                <td data-order="<?= (int)strtotime($transfer['created_at']); ?>"><?= date('M d, Y H:i', strtotime($transfer['created_at'])); ?></td>
+                                <td data-order="<?= (int)strtotime($transfer['transaction_date']); ?>"><?= date('M d, Y', strtotime($transfer['transaction_date'])); ?></td>
                                 <td><a href="<?= isset($transfer['po_payment_id']) ? '../purchases/po_details.php?id=' . (int)$transfer['purchase_order_id'] : 'transfer_details.php?id=' . (int)$transfer['id']; ?>" class="fw-semibold"><?= e($transfer['transfer_reference']); ?></a></td>
                                 <td><span class="badge bg-<?= $statusColors[$transfer['status']] ?? 'secondary'; ?>"><?= e(ucfirst($transfer['status'])); ?></span></td>
                                 <td>

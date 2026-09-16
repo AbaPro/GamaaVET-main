@@ -42,8 +42,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['payment_id'])) {
             $stmt->execute([$amount, $vendor_id]);
 
             // Delete related wallet transaction
-            $stmt = $pdo->prepare("DELETE FROM vendor_wallet_transactions WHERE vendor_id = ? AND amount = ? AND type = 'payment' AND reference_id = ? AND reference_type = 'purchase_order' ORDER BY created_at DESC LIMIT 1");
-            $stmt->execute([$vendor_id, $amount, $po_id]);
+            $stmt = $pdo->prepare("DELETE FROM vendor_wallet_transactions WHERE vendor_id = ? AND amount = ? AND type = 'payment' AND reference_id = ? AND reference_type = 'purchase_order' AND transaction_date = ? ORDER BY created_at DESC LIMIT 1");
+            $stmt->execute([$vendor_id, $amount, $po_id, $payment['transaction_date']]);
         }
 
         refundPoPaymentSource($payment);

@@ -101,7 +101,7 @@ $where_sql = !empty($where) ? "WHERE " . implode(" AND ", $where) : "";
 // ── Main expense listing ───────────────────────────────────────────────────
 $sql = "SELECT e.*, ec.name as category_name, u.name as creator_name, v.name as vendor_name,
                a.name as account_name,
-               (SELECT MAX(ep.created_at) FROM expense_payments ep WHERE ep.expense_id = e.id) as last_payment_date
+               (SELECT MAX(ep.transaction_date) FROM expense_payments ep WHERE ep.expense_id = e.id) as last_payment_date
         FROM expenses e
         JOIN expense_categories ec ON e.category_id = ec.id
         JOIN users u ON e.created_by = u.id

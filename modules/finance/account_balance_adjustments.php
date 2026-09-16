@@ -112,6 +112,7 @@ function handleFinanceAccountBalanceSettlement($type, $accountId, $canSetBalance
     $accountId = (int)$accountId;
     $newBalanceInput = trim((string)($_POST['new_balance'] ?? ''));
     $reason = trim(strip_tags((string)($_POST['adjustment_reason'] ?? '')));
+    $transactionDate = normalizeTransactionDate($_POST['transaction_date'] ?? '');
 
     if (!$config || $accountId <= 0) {
         setAlert('danger', 'Invalid finance account.');
@@ -123,6 +124,10 @@ function handleFinanceAccountBalanceSettlement($type, $accountId, $canSetBalance
     }
     if ($reason === '') {
         setAlert('danger', 'A reason is required when setting an account balance.');
+        redirect($returnUrl);
+    }
+    if ($transactionDate === null) {
+        setAlert('danger', 'Enter a valid transaction date.');
         redirect($returnUrl);
     }
     $reasonLength = function_exists('mb_strlen') ? mb_strlen($reason, 'UTF-8') : strlen($reason);
@@ -162,10 +167,10 @@ function handleFinanceAccountBalanceSettlement($type, $accountId, $canSetBalance
 
         $adjustmentStmt = $conn->prepare("
             INSERT INTO finance_account_balance_adjustments
-                (account_type, account_id, previous_balance, new_balance, currency, reason, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (account_type, account_id, previous_balance, new_balance, currency, reason, transaction_date, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ");
-        $adjustmentStmt->bind_param('siddssi', $type, $accountId, $previousBalance, $newBalance, $currency, $reason, $userId);
+        $adjustmentStmt->bind_param('siddsssi', $type, $accountId, $previousBalance, $newBalance, $currency, $reason, $transactionDate, $userId);
         $adjustmentStmt->execute();
         $adjustmentId = $adjustmentStmt->insert_id;
         $adjustmentStmt->close();
@@ -205,7 +210,7 @@ function financeAccountBalanceAdjustments($type, $accountId) {
         FROM finance_account_balance_adjustments a
         LEFT JOIN users u ON u.id = a.created_by
         WHERE a.account_type = ? AND a.account_id = ?
-        ORDER BY a.created_at DESC, a.id DESC
+        ORDER BY a.transaction_date DESC, a.created_at DESC, a.id DESC
     ");
     $stmt->bind_param('si', $type, $accountId);
     $stmt->execute();

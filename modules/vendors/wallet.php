@@ -36,7 +36,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $amount = sanitize($_POST['amount']);
     $type = sanitize($_POST['type']);
     $notes = sanitize($_POST['notes']);
+    $transactionDate = normalizeTransactionDate($_POST['transaction_date'] ?? '');
     $user_id = $_SESSION['user_id'];
+
+    if ($transactionDate === null) {
+        setAlert('danger', 'Enter a valid transaction date.');
+        redirect("wallet.php?id=$vendor_id");
+    }
 
     $attachmentError = null;
     $uploadedAttachments = uploadImageAttachments(
@@ -57,10 +63,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         // Insert wallet transaction
         $transaction_sql = "INSERT INTO vendor_wallet_transactions
-                           (vendor_id, amount, type, notes, created_by)
-                           VALUES (?, ?, ?, ?, ?)";
+                           (vendor_id, amount, type, notes, transaction_date, created_by)
+                           VALUES (?, ?, ?, ?, ?, ?)";
         $transaction_stmt = $conn->prepare($transaction_sql);
-        $transaction_stmt->bind_param("idssi", $vendor_id, $amount, $type, $notes, $user_id);
+        $transaction_stmt->bind_param("idsssi", $vendor_id, $amount, $type, $notes, $transactionDate, $user_id);
         $transaction_stmt->execute();
         $transaction_id = $transaction_stmt->insert_id;
         $transaction_stmt->close();
@@ -107,7 +113,7 @@ $transactions_sql = "SELECT wt.*, u.name as created_by_name
                      FROM vendor_wallet_transactions wt 
                      LEFT JOIN users u ON wt.created_by = u.id 
                      WHERE wt.vendor_id = ? 
-                     ORDER BY wt.created_at DESC";
+                     ORDER BY wt.transaction_date DESC, wt.created_at DESC";
 $transactions_stmt = $conn->prepare($transactions_sql);
 $transactions_stmt->bind_param("i", $vendor_id);
 $transactions_stmt->execute();
@@ -157,6 +163,10 @@ $waStmt->close();
                         <input type="number" class="form-control" id="amount" name="amount" min="0.01" step="0.01" required>
                     </div>
                     <div class="mb-3">
+                        <label for="transaction_date" class="form-label">Transaction Date*</label>
+                        <input type="date" class="form-control" id="transaction_date" name="transaction_date" value="<?php echo date('Y-m-d'); ?>" required>
+                    </div>
+                    <div class="mb-3">
                         <label for="notes" class="form-label">Notes</label>
                         <textarea class="form-control" id="notes" name="notes" rows="2"></textarea>
                     </div>
@@ -193,7 +203,7 @@ $waStmt->close();
                     <?php if ($transactions_result->num_rows > 0): ?>
                         <?php while ($transaction = $transactions_result->fetch_assoc()): ?>
                             <tr>
-                                <td><?php echo date('M d, Y H:i', strtotime($transaction['created_at'])); ?></td>
+                                <td><?php echo date('M d, Y', strtotime($transaction['transaction_date'])); ?></td>
                                 <td>
                                     <span class="badge bg-<?php echo $transaction['type'] === 'deposit' || $transaction['type'] === 'refund' ? 'success' : 'danger'; ?>">
                                         <?php echo ucfirst($transaction['type']); ?>

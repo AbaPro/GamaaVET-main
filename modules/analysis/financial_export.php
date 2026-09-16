@@ -265,8 +265,8 @@ $cbDateTo = $dateTo;
 $allTransactions = [];
 
 // 1. Order payments (inflows)
-$opWhere = timestampFilterClause('op.created_at', $cbDateFrom, $cbDateTo);
-$opSql = "SELECT op.amount, op.payment_method, op.reference, op.notes, op.created_at,
+$opWhere = dateFilterClause('op.transaction_date', $cbDateFrom, $cbDateTo);
+$opSql = "SELECT op.amount, op.payment_method, op.reference, op.notes, op.transaction_date,
                  c.name as customer_name
           FROM order_payments op
           LEFT JOIN orders o ON op.order_id = o.id
@@ -274,7 +274,7 @@ $opSql = "SELECT op.amount, op.payment_method, op.reference, op.notes, op.create
 if (!empty($opWhere)) {
     $opSql .= ' WHERE ' . implode(' AND ', $opWhere);
 }
-$opSql .= ' ORDER BY op.created_at DESC';
+$opSql .= ' ORDER BY op.transaction_date DESC, op.created_at DESC';
 $opResult = $conn->query($opSql);
 if (!$opResult) {
     appendQueryErrorRow($cbData, 'Order payments query failed: ' . $conn->error, 6);
@@ -283,7 +283,7 @@ if (!$opResult) {
 if ($opResult) {
     while ($row = $opResult->fetch_assoc()) {
         $allTransactions[] = [
-            'date' => fmtDate($row['created_at']),
+            'date' => fmtDate($row['transaction_date']),
             'source' => 'Sales Receipt',
             'account' => paymentMethodLabel($row['payment_method']),
             'inflow' => fmtNum($row['amount']),
@@ -294,8 +294,8 @@ if ($opResult) {
 }
 
 // 2. Purchase order payments (outflows)
-$popWhere = timestampFilterClause('pop.created_at', $cbDateFrom, $cbDateTo);
-$popSql = "SELECT pop.amount, pop.payment_method, pop.reference, pop.notes, pop.created_at,
+$popWhere = dateFilterClause('pop.transaction_date', $cbDateFrom, $cbDateTo);
+$popSql = "SELECT pop.amount, pop.payment_method, pop.reference, pop.notes, pop.transaction_date,
                   v.name as vendor_name
            FROM purchase_order_payments pop
            LEFT JOIN purchase_orders po ON pop.purchase_order_id = po.id
@@ -303,7 +303,7 @@ $popSql = "SELECT pop.amount, pop.payment_method, pop.reference, pop.notes, pop.
 if (!empty($popWhere)) {
     $popSql .= ' WHERE ' . implode(' AND ', $popWhere);
 }
-$popSql .= ' ORDER BY pop.created_at DESC';
+$popSql .= ' ORDER BY pop.transaction_date DESC, pop.created_at DESC';
 $popResult = $conn->query($popSql);
 if (!$popResult) {
     appendQueryErrorRow($cbData, 'Purchase payments query failed: ' . $conn->error, 6);
@@ -312,7 +312,7 @@ if (!$popResult) {
 if ($popResult) {
     while ($row = $popResult->fetch_assoc()) {
         $allTransactions[] = [
-            'date' => fmtDate($row['created_at']),
+            'date' => fmtDate($row['transaction_date']),
             'source' => 'PO Payment',
             'account' => paymentMethodLabel($row['payment_method']),
             'inflow' => 0,
@@ -323,8 +323,8 @@ if ($popResult) {
 }
 
 // 3. Expense payments (outflows)
-$epWhere = timestampFilterClause('ep.created_at', $cbDateFrom, $cbDateTo);
-$epSql = "SELECT ep.amount, ep.payment_method, ep.reference, ep.notes, ep.created_at,
+$epWhere = dateFilterClause('ep.transaction_date', $cbDateFrom, $cbDateTo);
+$epSql = "SELECT ep.amount, ep.payment_method, ep.reference, ep.notes, ep.transaction_date,
                  e.name as expense_name, e.category_id,
                  s.name as safe_name, ba.bank_name
           FROM expense_payments ep
@@ -334,7 +334,7 @@ $epSql = "SELECT ep.amount, ep.payment_method, ep.reference, ep.notes, ep.create
 if (!empty($epWhere)) {
     $epSql .= ' WHERE ' . implode(' AND ', $epWhere);
 }
-$epSql .= ' ORDER BY ep.created_at DESC';
+$epSql .= ' ORDER BY ep.transaction_date DESC, ep.created_at DESC';
 $epResult = $conn->query($epSql);
 if (!$epResult) {
     appendQueryErrorRow($cbData, 'Expense payments query failed: ' . $conn->error, 6);
@@ -347,7 +347,7 @@ if ($epResult) {
         if (!empty($row['safe_name'])) $accountParts[] = $row['safe_name'];
         if (!empty($row['bank_name'])) $accountParts[] = $row['bank_name'];
         $allTransactions[] = [
-            'date' => fmtDate($row['created_at']),
+            'date' => fmtDate($row['transaction_date']),
             'source' => 'Expense',
             'account' => implode(' / ', $accountParts),
             'inflow' => 0,
@@ -358,14 +358,14 @@ if ($epResult) {
 }
 
 // 4. Finance transfers
-$ftWhere = timestampFilterClause('ft.created_at', $cbDateFrom, $cbDateTo);
+$ftWhere = dateFilterClause('ft.transaction_date', $cbDateFrom, $cbDateTo);
 $ftWhere[] = "ft.status = 'approved'";
-$ftSql = "SELECT ft.amount, ft.from_type, ft.from_id, ft.to_type, ft.to_id, ft.reason, ft.notes, ft.created_at
+$ftSql = "SELECT ft.amount, ft.from_type, ft.from_id, ft.to_type, ft.to_id, ft.reason, ft.notes, ft.transaction_date
           FROM finance_transfers ft";
 if (!empty($ftWhere)) {
     $ftSql .= ' WHERE ' . implode(' AND ', $ftWhere);
 }
-$ftSql .= ' ORDER BY ft.created_at DESC';
+$ftSql .= ' ORDER BY ft.transaction_date DESC, ft.created_at DESC';
 $ftResult = $conn->query($ftSql);
 if (!$ftResult) {
     appendQueryErrorRow($cbData, 'Finance transfers query failed: ' . $conn->error, 6);
@@ -399,7 +399,7 @@ if ($ftResult) {
         }
 
         $allTransactions[] = [
-            'date' => fmtDate($row['created_at']),
+            'date' => fmtDate($row['transaction_date']),
             'source' => 'Transfer',
             'account' => $fromLabel . ' -> ' . $toLabel,
             'inflow' => 0,

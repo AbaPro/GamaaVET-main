@@ -63,8 +63,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $safe_id = !empty($_POST['safe_id']) ? (int)$_POST['safe_id'] : null;
             $bank_account_id = !empty($_POST['bank_account_id']) ? (int)$_POST['bank_account_id'] : null;
             $reference = $_POST['payment_reference'] ?? '';
+            $transactionDate = normalizeTransactionDate($_POST['payment_transaction_date'] ?? '');
 
             if ($pay_amount > 0) {
+                if ($transactionDate === null) {
+                    throw new Exception("Please enter a valid payment transaction date.");
+                }
                 if ($pay_amount > $amount) {
                     throw new Exception("Payment amount cannot exceed the expense amount.");
                 }
@@ -108,8 +112,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 // Insert payment
-                $stmt = $pdo->prepare("INSERT INTO expense_payments (expense_id, amount, payment_method, safe_id, bank_account_id, reference, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)");
-                $stmt->execute([$expense_id, $pay_amount, $payment_method, $safe_id, $bank_account_id, $reference, $_SESSION['user_id']]);
+                $stmt = $pdo->prepare("INSERT INTO expense_payments (expense_id, amount, payment_method, safe_id, bank_account_id, reference, transaction_date, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+                $stmt->execute([$expense_id, $pay_amount, $payment_method, $safe_id, $bank_account_id, $reference, $transactionDate, $_SESSION['user_id']]);
 
                 // Update expense status/paid_amount
                 $new_status = ($pay_amount >= $amount) ? 'paid' : 'partially-paid';
@@ -122,8 +126,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt->execute([$pay_amount, $po_id]);
                     
                     // Add PO payment record
-                    $stmt = $pdo->prepare("INSERT INTO purchase_order_payments (purchase_order_id, amount, payment_method, reference, notes, safe_id, bank_account_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-                    $stmt->execute([$po_id, $pay_amount, $payment_method, $reference, 'Payment via expense: ' . $name, $safe_id, $bank_account_id, $_SESSION['user_id']]);
+                    $stmt = $pdo->prepare("INSERT INTO purchase_order_payments (purchase_order_id, amount, payment_method, reference, notes, transaction_date, safe_id, bank_account_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                    $stmt->execute([$po_id, $pay_amount, $payment_method, $reference, 'Payment via expense: ' . $name, $transactionDate, $safe_id, $bank_account_id, $_SESSION['user_id']]);
                 }
 
                 // Update Vendor Wallet if applicable
@@ -140,8 +144,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                      $stmt->execute([$pay_amount, $vendor_id]);
 
                      // Record Wallet Transaction History
-                     $stmt = $pdo->prepare("INSERT INTO vendor_wallet_transactions (vendor_id, amount, type, notes, created_by) VALUES (?, ?, 'payment', ?, ?)");
-                     $stmt->execute([$vendor_id, $pay_amount, 'Payment for expense: ' . $name, $_SESSION['user_id']]);
+                     $stmt = $pdo->prepare("INSERT INTO vendor_wallet_transactions (vendor_id, amount, type, notes, transaction_date, created_by) VALUES (?, ?, 'payment', ?, ?, ?)");
+                     $stmt->execute([$vendor_id, $pay_amount, 'Payment for expense: ' . $name, $transactionDate, $_SESSION['user_id']]);
                 }
             }
         }
@@ -281,6 +285,10 @@ require_once '../../../includes/header.php';
                         <div class="mb-3">
                             <label class="form-label">Payment Amount</label>
                             <input type="number" name="pay_amount" id="pay_amount" class="form-control" step="0.01">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Transaction Date</label>
+                            <input type="date" name="payment_transaction_date" class="form-control" value="<?= date('Y-m-d'); ?>">
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Method</label>

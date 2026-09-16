@@ -43,8 +43,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['payment_id'])) {
             
             // Preserve the related audit transfer as reversed instead of deleting it.
             $financeTransferNote = 'Order Payment Reference: ' . $payment['reference'];
-            $stmt = $pdo->prepare("SELECT id FROM finance_transfers WHERE from_type = 'personal' AND from_id = 0 AND to_type = 'safe' AND to_id = ? AND amount = ? AND notes = ? AND status = 'approved' ORDER BY created_at DESC LIMIT 1");
-            $stmt->execute([$payment['safe_id'], $amount, $financeTransferNote]);
+            $stmt = $pdo->prepare("SELECT id FROM finance_transfers WHERE from_type = 'personal' AND from_id = 0 AND to_type = 'safe' AND to_id = ? AND amount = ? AND notes = ? AND transaction_date = ? AND status = 'approved' ORDER BY created_at DESC LIMIT 1");
+            $stmt->execute([$payment['safe_id'], $amount, $financeTransferNote, $payment['transaction_date']]);
             $financeTransferId = $stmt->fetchColumn();
 
         } elseif ($method === 'transfer' && !empty($payment['bank_account_id'])) {
@@ -53,8 +53,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['payment_id'])) {
 
             // Preserve the related audit transfer as reversed instead of deleting it.
             $financeTransferNote = 'Order Payment Reference: ' . $payment['reference'];
-            $stmt = $pdo->prepare("SELECT id FROM finance_transfers WHERE from_type = 'personal' AND from_id = 0 AND to_type = 'bank' AND to_id = ? AND amount = ? AND notes = ? AND status = 'approved' ORDER BY created_at DESC LIMIT 1");
-            $stmt->execute([$payment['bank_account_id'], $amount, $financeTransferNote]);
+            $stmt = $pdo->prepare("SELECT id FROM finance_transfers WHERE from_type = 'personal' AND from_id = 0 AND to_type = 'bank' AND to_id = ? AND amount = ? AND notes = ? AND transaction_date = ? AND status = 'approved' ORDER BY created_at DESC LIMIT 1");
+            $stmt->execute([$payment['bank_account_id'], $amount, $financeTransferNote, $payment['transaction_date']]);
             $financeTransferId = $stmt->fetchColumn();
 
         } elseif ($method === 'wallet') {
@@ -69,8 +69,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['payment_id'])) {
                 $stmt->execute([$amount, $customer_id]);
 
                 // Delete related wallet transaction
-                $stmt = $pdo->prepare("DELETE FROM customer_wallet_transactions WHERE customer_id = ? AND amount = ? AND type = 'payment' AND reference_id = ? AND reference_type = 'order' ORDER BY created_at DESC LIMIT 1");
-                $stmt->execute([$customer_id, $amount, $order_id]);
+                $stmt = $pdo->prepare("DELETE FROM customer_wallet_transactions WHERE customer_id = ? AND amount = ? AND type = 'payment' AND reference_id = ? AND reference_type = 'order' AND transaction_date = ? ORDER BY created_at DESC LIMIT 1");
+                $stmt->execute([$customer_id, $amount, $order_id, $payment['transaction_date']]);
             }
         }
 

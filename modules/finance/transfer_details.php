@@ -110,6 +110,7 @@ require_once '../../includes/header.php';
             <div class="card-header bg-white py-3"><h5 class="mb-0">Reason and Supporting Documents</h5></div>
             <div class="card-body">
                 <dl class="row mb-0">
+                    <dt class="col-sm-3">Transaction Date</dt><dd class="col-sm-9"><?= date('M d, Y', strtotime($transfer['transaction_date'])); ?></dd>
                     <dt class="col-sm-3">Reason</dt><dd class="col-sm-9"><?= nl2br(e($transfer['reason'])); ?></dd>
                     <dt class="col-sm-3">Notes</dt><dd class="col-sm-9"><?= $transfer['notes'] ? nl2br(e($transfer['notes'])) : '-'; ?></dd>
                     <dt class="col-sm-3">Purchase Order</dt>

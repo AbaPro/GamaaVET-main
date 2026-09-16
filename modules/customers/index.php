@@ -394,6 +394,10 @@ $salesPersons = $isAdmin ? getActiveSalesPersons() : [];
                                     <label for="wallet_balance" class="form-label">Initial Wallet Balance</label>
                                     <input type="number" class="form-control" id="wallet_balance" name="wallet_balance" min="0" step="0.01" value="0">
                                 </div>
+                                <div class="col-md-6 mb-3">
+                                    <label for="opening_balance_date" class="form-label">Opening Balance Date</label>
+                                    <input type="date" class="form-control" id="opening_balance_date" name="opening_balance_date" value="<?= date('Y-m-d'); ?>">
+                                </div>
                             </div>
                         </div>
                         <div class="tab-pane fade" id="contact" role="tabpanel">

@@ -75,7 +75,7 @@ $stmt = $pdo->prepare("
     LEFT JOIN safes s ON op.safe_id = s.id
     LEFT JOIN bank_accounts b ON op.bank_account_id = b.id
     WHERE op.order_id = ?
-    ORDER BY op.created_at DESC
+    ORDER BY op.transaction_date DESC, op.created_at DESC
 ");
 $stmt->execute([$order_id]);
 $payments = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -591,7 +591,7 @@ require_once '../../includes/header.php';
                             <tbody>
                                 <?php foreach ($payments as $payment) : ?>
                                     <tr>
-                                        <td><?= date('M d, Y', strtotime($payment['created_at'])) ?></td>
+                                        <td><?= date('M d, Y', strtotime($payment['transaction_date'])) ?></td>
                                         <td><?= number_format($payment['amount'], 2) ?></td>
                                         <td><?= ucfirst($payment['payment_method']) ?></td>
                                         <td>

@@ -57,6 +57,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['set_wallet_balance'])
 
     $newBalanceInput = trim((string)($_POST['wallet_balance'] ?? ''));
     $adjustmentReason = trim(strip_tags((string)($_POST['adjustment_reason'] ?? '')));
+    $transactionDate = normalizeTransactionDate($_POST['transaction_date'] ?? '');
 
     if (!preg_match('/^-?\d{1,8}(?:\.\d{1,2})?$/', $newBalanceInput)) {
         setAlert('danger', 'Enter a valid wallet balance between -99,999,999.99 and 99,999,999.99.');
@@ -65,6 +66,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['set_wallet_balance'])
 
     if ($adjustmentReason === '') {
         setAlert('danger', 'A reason is required when setting the wallet balance directly.');
+        redirect('wallet.php?id=' . $customer_id);
+    }
+    if ($transactionDate === null) {
+        setAlert('danger', 'Enter a valid transaction date.');
         redirect('wallet.php?id=' . $customer_id);
     }
 
@@ -106,10 +111,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['set_wallet_balance'])
 
         $adjustmentStmt = $conn->prepare("
             INSERT INTO customer_wallet_balance_adjustments
-                (customer_id, previous_balance, new_balance, reason, created_by)
-            VALUES (?, ?, ?, ?, ?)
+                (customer_id, previous_balance, new_balance, reason, transaction_date, created_by)
+            VALUES (?, ?, ?, ?, ?, ?)
         ");
-        $adjustmentStmt->bind_param('iddsi', $customer_id, $previousBalance, $newBalance, $adjustmentReason, $userId);
+        $adjustmentStmt->bind_param('iddssi', $customer_id, $previousBalance, $newBalance, $adjustmentReason, $transactionDate, $userId);
         $adjustmentStmt->execute();
         $adjustmentId = $adjustmentStmt->insert_id;
         $adjustmentStmt->close();
@@ -166,11 +171,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $payment_method = sanitize($_POST['payment_method'] ?? 'cash');
     $safe_id = !empty($_POST['safe_id']) ? (int)$_POST['safe_id'] : null;
     $bank_account_id = !empty($_POST['bank_account_id']) ? (int)$_POST['bank_account_id'] : null;
+    $transactionDate = normalizeTransactionDate($_POST['transaction_date'] ?? '');
     $user_id = $_SESSION['user_id'];
     $isDebit = in_array($type, ['payment', 'withdrawal'], true);
 
     $validationError = null;
-    if (!in_array($payment_method, ['cash', 'transfer'], true)) {
+    if ($transactionDate === null) {
+        $validationError = 'Enter a valid transaction date.';
+    } elseif (!in_array($payment_method, ['cash', 'transfer'], true)) {
         $validationError = 'Select a valid payment method.';
     } elseif ($payment_method === 'cash' && (!$safe_id || !isSafeInCurrentAccount($safe_id))) {
         $validationError = 'Select a cash safe available for this brand.';
@@ -199,10 +207,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         // Insert wallet transaction
         $transaction_sql = "INSERT INTO customer_wallet_transactions
-                           (customer_id, amount, type, notes, payment_method, safe_id, bank_account_id, reference_type, created_by)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, 'manual', ?)";
+                           (customer_id, amount, type, notes, transaction_date, payment_method, safe_id, bank_account_id, reference_type, created_by)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'manual', ?)";
         $transaction_stmt = $conn->prepare($transaction_sql);
-        $transaction_stmt->bind_param("idsssiii", $customer_id, $amount, $type, $notes, $payment_method, $safe_id, $bank_account_id, $user_id);
+        $transaction_stmt->bind_param("idssssiii", $customer_id, $amount, $type, $notes, $transactionDate, $payment_method, $safe_id, $bank_account_id, $user_id);
         $transaction_stmt->execute();
         $transaction_id = $transaction_stmt->insert_id;
         $transaction_stmt->close();
@@ -256,7 +264,7 @@ $transactions_sql = "SELECT wt.*, u.name as created_by_name,
                      LEFT JOIN safes s ON wt.safe_id = s.id
                      LEFT JOIN bank_accounts ba ON wt.bank_account_id = ba.id
                      WHERE wt.customer_id = ?
-                     ORDER BY wt.created_at DESC";
+                     ORDER BY wt.transaction_date DESC, wt.created_at DESC";
 $transactions_stmt = $conn->prepare($transactions_sql);
 $transactions_stmt->bind_param("i", $customer_id);
 $transactions_stmt->execute();
@@ -281,7 +289,7 @@ $orderPaymentsStmt = $conn->prepare("
     LEFT JOIN safes s ON s.id = op.safe_id
     LEFT JOIN bank_accounts ba ON ba.id = op.bank_account_id
     WHERE o.customer_id = ?
-    ORDER BY op.created_at DESC, op.id DESC
+    ORDER BY op.transaction_date DESC, op.created_at DESC, op.id DESC
 ");
 $orderPaymentsStmt->bind_param('i', $customer_id);
 $orderPaymentsStmt->execute();
@@ -310,7 +318,7 @@ if ($walletBalanceAdjustmentStorageReady) {
         FROM customer_wallet_balance_adjustments wa
         LEFT JOIN users u ON wa.created_by = u.id
         WHERE wa.customer_id = ?
-        ORDER BY wa.created_at DESC, wa.id DESC
+        ORDER BY wa.transaction_date DESC, wa.created_at DESC, wa.id DESC
     ");
     $adjustmentsStmt->bind_param('i', $customer_id);
     $adjustmentsStmt->execute();
@@ -325,6 +333,7 @@ foreach ($wallet_transactions as $txn) {
     $ledgerEvents[] = [
         'kind' => 'transaction',
         'id' => (int)$txn['id'],
+        'transaction_date' => $txn['transaction_date'],
         'created_at' => $txn['created_at'],
         'amount' => (float)$txn['amount'],
         'is_credit' => in_array($txn['type'], ['deposit', 'refund'], true),
@@ -334,11 +343,16 @@ foreach ($walletBalanceAdjustments as $adjustment) {
     $ledgerEvents[] = [
         'kind' => 'adjustment',
         'id' => (int)$adjustment['id'],
+        'transaction_date' => $adjustment['transaction_date'],
         'created_at' => $adjustment['created_at'],
         'previous_balance' => (float)$adjustment['previous_balance'],
     ];
 }
 usort($ledgerEvents, function ($left, $right) {
+    $dateComparison = strcmp($right['transaction_date'], $left['transaction_date']);
+    if ($dateComparison !== 0) {
+        return $dateComparison;
+    }
     $dateComparison = strcmp($right['created_at'], $left['created_at']);
     if ($dateComparison !== 0) {
         return $dateComparison;
@@ -411,6 +425,10 @@ require_once '../../includes/header.php';
                         <input type="number" class="form-control" id="amount" name="amount" min="0.01" step="0.01" required>
                     </div>
                     <div class="mb-3">
+                        <label for="transaction_date" class="form-label">Transaction Date*</label>
+                        <input type="date" class="form-control" id="transaction_date" name="transaction_date" value="<?php echo date('Y-m-d'); ?>" required>
+                    </div>
+                    <div class="mb-3">
                         <label for="payment_method" class="form-label">Payment Method</label>
                         <select class="form-select" id="payment_method" name="payment_method">
                             <option value="cash">Cash</option>
@@ -479,6 +497,10 @@ require_once '../../includes/header.php';
                                   placeholder="Why is the stored balance being corrected?"
                                   required></textarea>
                     </div>
+                    <div class="mb-3">
+                        <label for="adjustment_transaction_date" class="form-label">Transaction Date*</label>
+                        <input type="date" class="form-control" id="adjustment_transaction_date" name="transaction_date" value="<?php echo date('Y-m-d'); ?>" required>
+                    </div>
                     <button type="submit" class="btn btn-warning">Update Balance</button>
                 </form>
             </div>
@@ -516,7 +538,7 @@ require_once '../../includes/header.php';
                     <?php if (!empty($wallet_transactions)): ?>
                         <?php foreach ($wallet_transactions as $transaction): ?>
                             <tr>
-                                <td><?php echo date('M d, Y H:i', strtotime($transaction['created_at'])); ?></td>
+                                <td><?php echo date('M d, Y', strtotime($transaction['transaction_date'])); ?></td>
                                 <td>
                                     <span class="badge bg-<?php echo $transaction['type'] === 'deposit' || $transaction['type'] === 'refund' ? 'success' : 'danger'; ?>">
                                         <?php echo ucfirst($transaction['type']); ?>
@@ -570,7 +592,7 @@ require_once '../../includes/header.php';
                     <?php if (!empty($orderPayments)): ?>
                         <?php foreach ($orderPayments as $payment): ?>
                             <tr>
-                                <td><?php echo date('M d, Y H:i', strtotime($payment['created_at'])); ?></td>
+                                <td><?php echo date('M d, Y', strtotime($payment['transaction_date'])); ?></td>
                                 <td>
                                     <a href="../sales/order_details.php?id=<?php echo (int)$payment['order_id']; ?>">
                                         <?php echo e($payment['order_number']); ?>
@@ -618,7 +640,7 @@ require_once '../../includes/header.php';
                         <?php foreach ($walletBalanceAdjustments as $adjustment): ?>
                             <?php $balanceChange = (float)$adjustment['new_balance'] - (float)$adjustment['previous_balance']; ?>
                             <tr>
-                                <td><?php echo date('M d, Y H:i', strtotime($adjustment['created_at'])); ?></td>
+                                <td><?php echo date('M d, Y', strtotime($adjustment['transaction_date'])); ?></td>
                                 <td><?php echo number_format($adjustment['previous_balance'], 2); ?></td>
                                 <td><?php echo number_format($adjustment['new_balance'], 2); ?></td>
                                 <td class="<?php echo $balanceChange >= 0 ? 'text-success' : 'text-danger'; ?>">
