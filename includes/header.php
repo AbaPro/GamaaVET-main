@@ -374,7 +374,7 @@
                             || hasPermission('finance.vendor_wallet.view')
                         ));
                     ?>
-                    <?php if ($canFinance): ?>
+                    <?php if ($canFinance && $login_region !== 'curva'): ?>
                         <li class="nav-item dropdown">
                             <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
                                 <i class="fas fa-coins me-1"></i> Finance

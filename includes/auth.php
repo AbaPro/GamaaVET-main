@@ -95,6 +95,8 @@ if (in_array($current_page, $protected_pages) || strpos($_SERVER['REQUEST_URI'],
 if (isLoggedIn() && ($_SESSION['login_region'] ?? 'factory') !== 'factory') {
     $requestPath = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?: '';
     $requestBasename = basename($requestPath);
+    $isCureVetFinanceRoute = ($_SESSION['login_region'] ?? '') === 'curva'
+        && strpos($requestPath, '/modules/finance/') !== false;
     $isCustomerTypeRoute = strpos($requestPath, '/modules/customers/') !== false
         && in_array($requestBasename, ['types.php', 'types_create.php', 'types_edit.php'], true);
     $isFactoryFinanceRoute = strpos($requestPath, '/modules/finance/') !== false
@@ -108,6 +110,7 @@ if (isLoggedIn() && ($_SESSION['login_region'] ?? 'factory') !== 'factory') {
         || strpos($requestPath, '/modules/roles/') !== false
         || $isCustomerTypeRoute
         || $isFactoryFinanceRoute
+        || $isCureVetFinanceRoute
         || (strpos($requestPath, '/modules/users/') !== false && $requestBasename !== 'profile.php');
     if ($isFactoryOnlyRoute) {
         setAlert('danger', 'This operation is available only in the Factory channel.');
