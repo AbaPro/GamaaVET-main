@@ -38,6 +38,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['payment_id'])) {
 
         // 3. Reverse impact on financial accounts (Safe/Bank)
         if ($method === 'cash' && !empty($payment['safe_id'])) {
+            if (!isSafeInCurrentAccount((int)$payment['safe_id'])) {
+                throw new Exception('The payment safe is not available for this brand.');
+            }
             $stmt = $pdo->prepare("UPDATE safes SET balance = balance - ? WHERE id = ?");
             $stmt->execute([$amount, $payment['safe_id']]);
             
@@ -48,6 +51,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['payment_id'])) {
             $financeTransferId = $stmt->fetchColumn();
 
         } elseif ($method === 'transfer' && !empty($payment['bank_account_id'])) {
+            if (!isBankAccountInCurrentAccount((int)$payment['bank_account_id'])) {
+                throw new Exception('The payment bank account is not available for this brand.');
+            }
             $stmt = $pdo->prepare("UPDATE bank_accounts SET balance = balance - ? WHERE id = ?");
             $stmt->execute([$amount, $payment['bank_account_id']]);
 

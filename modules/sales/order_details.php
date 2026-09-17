@@ -66,14 +66,17 @@ $canProcessPayments = hasPermission('finance.customer_payment.process');
 $canViewPaymentHistory = $canViewOrderPrices && (hasPermission('sales.orders.payments.history') || $canProcessPayments || $canDeletePayments);
 $canViewPhoneNumbers = hasPermission('contacts.phone.view');
 
-// Fetch payments
+// Fetch payments without exposing another brand's safe or bank name if legacy
+// data contains a cross-brand reference.
+$safeScope = getAccountScopeSql('s');
+$bankScope = getAccountScopeSql('b');
 $stmt = $pdo->prepare("
     SELECT op.*, u.name AS created_by_name,
            s.name AS safe_name, b.bank_name AS bank_name
     FROM order_payments op
     JOIN users u ON op.created_by = u.id
-    LEFT JOIN safes s ON op.safe_id = s.id
-    LEFT JOIN bank_accounts b ON op.bank_account_id = b.id
+    LEFT JOIN safes s ON op.safe_id = s.id AND $safeScope
+    LEFT JOIN bank_accounts b ON op.bank_account_id = b.id AND $bankScope
     WHERE op.order_id = ?
     ORDER BY op.transaction_date DESC, op.created_at DESC
 ");

@@ -11,23 +11,33 @@ if (!hasPermission('finance.expenses.view')) {
 $page_title = 'Expenses Tracking';
 require_once '../../../includes/header.php';
 
+$region_slug = $_SESSION['login_region'] ?? 'factory';
+$currentAccountId = getCurrentAccountId();
+
 // Fetch filter data
 $categories = $pdo->query("SELECT * FROM expense_categories ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
-$vendors    = $pdo->query("SELECT id, name FROM vendors ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
-$all_users  = $pdo->query("SELECT id, name FROM users WHERE is_active = 1 ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
-$accounts   = $pdo->query("SELECT * FROM accounts WHERE is_active = 1 ORDER BY id ASC")->fetchAll(PDO::FETCH_ASSOC);
+$vendors    = $region_slug === 'factory' ? $pdo->query("SELECT id, name FROM vendors ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC) : [];
+$all_users  = $region_slug === 'factory'
+    ? $pdo->query("SELECT id, name FROM users WHERE is_active = 1 ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC)
+    : [['id' => (int)$_SESSION['user_id'], 'name' => $_SESSION['user_name'] ?? 'Current user']];
+if ($region_slug === 'factory' && hasPermission('finance.expenses.all_accounts')) {
+    $accounts = $pdo->query("SELECT * FROM accounts WHERE is_active = 1 ORDER BY id ASC")->fetchAll(PDO::FETCH_ASSOC);
+} else {
+    $accountStmt = $pdo->prepare('SELECT * FROM accounts WHERE id = ? AND is_active = 1');
+    $accountStmt->execute([$currentAccountId]);
+    $accounts = $accountStmt->fetchAll(PDO::FETCH_ASSOC);
+}
 
 // Build Filter Query
 $where  = [];
 $params = [];
 
 // ── Account auto-filter based on login_region ──────────────────────────────
-$region_slug = $_SESSION['login_region'] ?? 'factory';
 $acc_stmt = $pdo->prepare("SELECT id FROM accounts WHERE slug = ?");
 $acc_stmt->execute([$region_slug]);
 $session_account_id = $acc_stmt->fetchColumn();
 
-if (!hasPermission('finance.expenses.all_accounts')) {
+if ($region_slug !== 'factory' || !hasPermission('finance.expenses.all_accounts')) {
     if ($region_slug === 'factory') {
         $where[]  = "(e.account_id IS NULL OR e.account_id = ?)";
         $params[] = $session_account_id ?: 1;
@@ -149,9 +159,9 @@ $currency_symbols = ['EGP' => 'ج.م', 'USD' => '$', 'EUR' => '€', 'SAR' => '�
             <?php endif; ?>
         </h1>
         <div>
-            <a href="categories.php" class="btn btn-outline-secondary me-2">
+            <?php if ($region_slug === 'factory'): ?><a href="categories.php" class="btn btn-outline-secondary me-2">
                 <i class="fas fa-tags me-1"></i> Categories
-            </a>
+            </a><?php endif; ?>
             <a href="recurring.php" class="btn btn-outline-secondary me-2">
                 <i class="fas fa-redo me-1"></i> Recurring
             </a>
@@ -301,7 +311,7 @@ $currency_symbols = ['EGP' => 'ج.م', 'USD' => '$', 'EUR' => '€', 'SAR' => '�
                         <?php endforeach; ?>
                     </select>
                 </div>
-                <?php if (hasPermission('finance.expenses.all_accounts')): ?>
+                <?php if ($region_slug === 'factory' && hasPermission('finance.expenses.all_accounts')): ?>
                 <div class="col-md-2">
                     <label class="form-label">Account</label>
                     <select name="account_id" class="form-select">

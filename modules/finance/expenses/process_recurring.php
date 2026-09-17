@@ -16,6 +16,9 @@ try {
 
     // Fetch recurring expenses where the next occurrence is due
     $sql = "SELECT * FROM expenses WHERE is_recurring = 1";
+    if (php_sapi_name() !== 'cli') {
+        $sql .= ' AND ' . getAccountScopeSql();
+    }
     $stmt = $pdo->query($sql);
     $recurring = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -42,8 +45,8 @@ try {
         // If next_date is today or in the past, and it hasn't been cloned yet for that date
         if ($next_date && $next_date <= $today) {
             // Check if already cloned
-            $checkStmt = $pdo->prepare("SELECT id FROM expenses WHERE name = ? AND expense_date = ? AND category_id = ?");
-            $checkStmt->execute([$exp['name'], $next_date, $exp['category_id']]);
+            $checkStmt = $pdo->prepare("SELECT id FROM expenses WHERE name = ? AND expense_date = ? AND category_id = ? AND account_id <=> ?");
+            $checkStmt->execute([$exp['name'], $next_date, $exp['category_id'], $exp['account_id']]);
             if (!$checkStmt->fetch()) {
                 // Clone it (preserve account_id and currency from original)
                 $insertStmt = $pdo->prepare("INSERT INTO expenses (account_id, category_id, vendor_id, po_id, name, amount, currency, expense_date, notes, status, created_by, is_recurring, recurrence_interval) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");

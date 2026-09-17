@@ -24,15 +24,57 @@ function financeTransferGetAccount($type, $id, $forUpdate = false) {
     if (!$config || $id <= 0) return null;
 
     $currencySql = $config['currency'] ? "`{$config['currency']}`" : "'EGP'";
+    $scope = getAccountScopeSql();
     $sql = "SELECT id, `{$config['name']}` AS account_name, `{$config['balance']}` AS balance,
                    $currencySql AS currency
-            FROM `{$config['table']}` WHERE id = ?" . ($forUpdate ? ' FOR UPDATE' : '');
+            FROM `{$config['table']}` WHERE id = ? AND $scope" . ($forUpdate ? ' FOR UPDATE' : '');
     $stmt = $conn->prepare($sql);
     $stmt->bind_param('i', $id);
     $stmt->execute();
     $row = $stmt->get_result()->fetch_assoc();
     $stmt->close();
     return $row ?: null;
+}
+
+/**
+ * SQL condition ensuring both ends of a transfer belong to the current brand.
+ * A personal id of zero is the external/customer-payment pseudo account and is
+ * allowed only when the opposite endpoint is a real in-scope account.
+ */
+function financeTransferScopeSql($transferAlias = 'f') {
+    $accountScope = getAccountScopeSql('scope_account');
+    $sideScope = static function ($typeColumn, $idColumn) use ($accountScope) {
+        return "(
+            ($typeColumn = 'safe' AND EXISTS (
+                SELECT 1 FROM safes scope_account WHERE scope_account.id = $idColumn AND $accountScope
+            )) OR
+            ($typeColumn = 'bank' AND EXISTS (
+                SELECT 1 FROM bank_accounts scope_account WHERE scope_account.id = $idColumn AND $accountScope
+            )) OR
+            ($typeColumn = 'personal' AND $idColumn = 0) OR
+            ($typeColumn = 'personal' AND EXISTS (
+                SELECT 1 FROM personal_accounts scope_account WHERE scope_account.id = $idColumn AND $accountScope
+            ))
+        )";
+    };
+
+    $fromScope = $sideScope("$transferAlias.from_type", "$transferAlias.from_id");
+    $toScope = $sideScope("$transferAlias.to_type", "$transferAlias.to_id");
+    return "($fromScope AND $toScope AND ($transferAlias.from_id > 0 OR $transferAlias.to_id > 0))";
+}
+
+function isFinanceTransferInCurrentAccount($transferId) {
+    global $conn;
+
+    $transferId = (int)$transferId;
+    if ($transferId <= 0) return false;
+    $scope = financeTransferScopeSql('f');
+    $stmt = $conn->prepare("SELECT f.id FROM finance_transfers f WHERE f.id = ? AND $scope LIMIT 1");
+    $stmt->bind_param('i', $transferId);
+    $stmt->execute();
+    $allowed = $stmt->get_result()->num_rows === 1;
+    $stmt->close();
+    return $allowed;
 }
 
 function financeTransferAdjustBalance($type, $id, $delta) {

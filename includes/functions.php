@@ -886,16 +886,23 @@ function getAccountScopeSql($alias = '') {
 }
 
 /**
- * True when the given safe id is visible in the current brand scope.
+ * True when a finance account belongs to the currently selected brand.
+ * Legacy NULL account_id rows belong to the Factory channel only.
  */
-function isSafeInCurrentAccount($safeId) {
+function isFinanceAccountInCurrentAccount($type, $accountId) {
     global $conn;
-    $safeId = (int)$safeId;
-    if ($safeId <= 0) return false;
+
+    $tables = [
+        'safe' => 'safes',
+        'bank' => 'bank_accounts',
+        'personal' => 'personal_accounts',
+    ];
+    $accountId = (int)$accountId;
+    if (!isset($tables[$type]) || $accountId <= 0) return false;
 
     $scope = getAccountScopeSql();
-    $stmt = $conn->prepare("SELECT id FROM safes WHERE id = ? AND $scope LIMIT 1");
-    $stmt->bind_param('i', $safeId);
+    $stmt = $conn->prepare("SELECT id FROM `{$tables[$type]}` WHERE id = ? AND $scope LIMIT 1");
+    $stmt->bind_param('i', $accountId);
     $stmt->execute();
     $allowed = $stmt->get_result()->num_rows === 1;
     $stmt->close();
@@ -904,21 +911,21 @@ function isSafeInCurrentAccount($safeId) {
 }
 
 /**
+ * True when the given safe id is visible in the current brand scope.
+ */
+function isSafeInCurrentAccount($safeId) {
+    return isFinanceAccountInCurrentAccount('safe', $safeId);
+}
+
+/**
  * True when the given bank account id is visible in the current brand scope.
  */
 function isBankAccountInCurrentAccount($bankAccountId) {
-    global $conn;
-    $bankAccountId = (int)$bankAccountId;
-    if ($bankAccountId <= 0) return false;
+    return isFinanceAccountInCurrentAccount('bank', $bankAccountId);
+}
 
-    $scope = getAccountScopeSql();
-    $stmt = $conn->prepare("SELECT id FROM bank_accounts WHERE id = ? AND $scope LIMIT 1");
-    $stmt->bind_param('i', $bankAccountId);
-    $stmt->execute();
-    $allowed = $stmt->get_result()->num_rows === 1;
-    $stmt->close();
-
-    return $allowed;
+function isPersonalAccountInCurrentAccount($personalAccountId) {
+    return isFinanceAccountInCurrentAccount('personal', $personalAccountId);
 }
 
 /**
@@ -1475,6 +1482,59 @@ function canViewProductCost($productType) {
 }
 
 // Notifications helpers
+function isNotificationVisibleInCurrentChannel(array $notification) {
+    global $conn;
+
+    if (($_SESSION['login_region'] ?? 'factory') === 'factory') {
+        return true;
+    }
+
+    $entityType = (string)($notification['entity_type'] ?? '');
+    $entityId = (int)($notification['entity_id'] ?? 0);
+    if ($entityId <= 0) {
+        return false;
+    }
+
+    if ($entityType === 'order') {
+        return canAccessOrder($entityId);
+    }
+    if ($entityType === 'product') {
+        return canAccessProduct($entityId);
+    }
+    if ($entityType === 'inventory_transfer') {
+        return canAccessInventoryTransfer($entityId);
+    }
+    if ($entityType === 'expense') {
+        $scope = getAccountScopeSql();
+        $stmt = $conn->prepare("SELECT id FROM expenses WHERE id = ? AND $scope LIMIT 1");
+        $stmt->bind_param('i', $entityId);
+        $stmt->execute();
+        $visible = $stmt->get_result()->num_rows === 1;
+        $stmt->close();
+        return $visible;
+    }
+    if ($entityType === 'finance_transfer') {
+        $stmt = $conn->prepare('SELECT from_type, from_id, to_type, to_id FROM finance_transfers WHERE id = ? LIMIT 1');
+        $stmt->bind_param('i', $entityId);
+        $stmt->execute();
+        $transfer = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if (!$transfer) return false;
+
+        foreach (['from', 'to'] as $side) {
+            $type = $transfer[$side . '_type'];
+            $id = (int)$transfer[$side . '_id'];
+            if ($type === 'personal' && $id === 0) continue;
+            if (!isFinanceAccountInCurrentAccount($type, $id)) return false;
+        }
+        return (int)$transfer['from_id'] > 0 || (int)$transfer['to_id'] > 0;
+    }
+
+    // Notifications without a channel-resolvable entity may contain Factory
+    // names, amounts, references, or operational details.
+    return false;
+}
+
 function getUnreadNotificationsCount() {
     global $conn;
     if (!isLoggedIn()) return 0;
@@ -1485,6 +1545,20 @@ function getUnreadNotificationsCount() {
     $userId = $_SESSION['user_id'];
     $roleSlug = $_SESSION['role_slug'] ?? null;
     
+    if (($_SESSION['login_region'] ?? 'factory') !== 'factory') {
+        if ($roleSlug === 'admin') {
+            $stmt = $conn->prepare('SELECT type, module, entity_type, entity_id FROM notifications WHERE is_read = 0');
+        } else {
+            if ($roleId === null) return 0;
+            $stmt = $conn->prepare('SELECT type, module, entity_type, entity_id FROM notifications WHERE is_read = 0 AND (created_for_role_id = ? OR created_for_user_id = ?)');
+            $stmt->bind_param('ii', $roleId, $userId);
+        }
+        $stmt->execute();
+        $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+        return count(array_filter($rows, 'isNotificationVisibleInCurrentChannel'));
+    }
+
     if ($roleSlug === 'admin') {
         $sql = "SELECT COUNT(*) AS c FROM notifications WHERE is_read = 0";
         $res = $conn->query($sql)->fetch_assoc();

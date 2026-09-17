@@ -70,13 +70,12 @@ $outstanding_stmt->execute();
 $outstanding_balance = (float)$outstanding_stmt->get_result()->fetch_assoc()['outstanding'];
 $outstanding_stmt->close();
 
-// Get recent orders (limit 5)
+// Get all orders for this customer (paginated client-side via js-datatable)
 $orders_sql = "SELECT o.id, o.internal_id, o.order_date, o.total_amount, o.paid_amount, o.status,
-               (SELECT SUM(quantity) FROM order_items WHERE order_id = o.id) as total_quantity 
-               FROM orders o 
-               WHERE o.customer_id = ? 
-               ORDER BY o.order_date DESC 
-               LIMIT 5";
+               (SELECT SUM(quantity) FROM order_items WHERE order_id = o.id) as total_quantity
+               FROM orders o
+               WHERE o.customer_id = ?
+               ORDER BY o.order_date DESC";
 $orders_stmt = $conn->prepare($orders_sql);
 $orders_stmt->bind_param("i", $customer_id);
 $orders_stmt->execute();
@@ -235,7 +234,7 @@ if (($_SESSION['login_region'] ?? 'factory') === 'factory') {
     <div class="col-md-12">
         <div class="card">
             <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="card-title mb-0">Recent Orders</h5>
+                <h5 class="card-title mb-0">Orders</h5>
                 <a href="../sales/create_order.php?customer_id=<?php echo $customer_id; ?>" class="btn btn-sm btn-primary">
                     <i class="fas fa-plus"></i> New Order
                 </a>
@@ -277,7 +276,7 @@ if (($_SESSION['login_region'] ?? 'factory') === 'factory') {
                                 <?php endwhile; ?>
                             <?php else: ?>
                                 <tr>
-                                    <td colspan="7" class="text-center">No recent orders found</td>
+                                    <td colspan="7" class="text-center">No orders found</td>
                                 </tr>
                             <?php endif; ?>
                         </tbody>

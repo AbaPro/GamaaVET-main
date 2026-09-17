@@ -4,7 +4,7 @@ require_once '../config/database.php';
 
 header('Content-Type: application/json');
 
-if (!hasPermission('purchases.view')) {
+if (($_SESSION['login_region'] ?? 'factory') !== 'factory' || !hasPermission('purchases.view')) {
     echo json_encode(['success' => false, 'message' => 'Unauthorized']);
     exit;
 }

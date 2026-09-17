@@ -98,7 +98,7 @@ if (isLoggedIn() && ($_SESSION['login_region'] ?? 'factory') !== 'factory') {
     $isCustomerTypeRoute = strpos($requestPath, '/modules/customers/') !== false
         && in_array($requestBasename, ['types.php', 'types_create.php', 'types_edit.php'], true);
     $isFactoryFinanceRoute = strpos($requestPath, '/modules/finance/') !== false
-        && in_array($requestBasename, ['po.php', 'vendors.php'], true);
+        && in_array($requestBasename, ['po.php', 'vendors.php', 'categories.php'], true);
     $isFactoryOnlyRoute = strpos($requestPath, '/modules/manufacturing/') !== false
         || strpos($requestPath, '/modules/purchases/') !== false
         || strpos($requestPath, '/modules/vendors/') !== false

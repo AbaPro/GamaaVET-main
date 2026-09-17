@@ -10,6 +10,7 @@ if (!hasPermission('finance.expenses.view')) {
 
 $expense_id = $_GET['id'] ?? 0;
 
+$expenseScope = getAccountScopeSql('e');
 $sql = "SELECT e.*, ec.name as category_name, u.name as creator_name, v.name as vendor_name,
                po.id as po_id, po.status as po_status, a.name as account_name
         FROM expenses e
@@ -18,7 +19,7 @@ $sql = "SELECT e.*, ec.name as category_name, u.name as creator_name, v.name as 
         LEFT JOIN vendors v ON e.vendor_id = v.id
         LEFT JOIN purchase_orders po ON e.po_id = po.id
         LEFT JOIN accounts a ON e.account_id = a.id
-        WHERE e.id = ?";
+        WHERE e.id = ? AND $expenseScope";
 $stmt = $pdo->prepare($sql);
 $stmt->execute([$expense_id]);
 $expense = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -29,11 +30,13 @@ if (!$expense) {
 }
 
 // Fetch Payments
+$safeScope = getAccountScopeSql('s');
+$bankScope = getAccountScopeSql('b');
 $sql_payments = "SELECT ep.*, u.name as recorder_name, s.name as safe_name, b.bank_name, b.account_number
                  FROM expense_payments ep
                  JOIN users u ON ep.created_by = u.id
-                 LEFT JOIN safes s ON ep.safe_id = s.id
-                 LEFT JOIN bank_accounts b ON ep.bank_account_id = b.id
+                 LEFT JOIN safes s ON ep.safe_id = s.id AND $safeScope
+                 LEFT JOIN bank_accounts b ON ep.bank_account_id = b.id AND $bankScope
                  WHERE ep.expense_id = ?
                  ORDER BY ep.transaction_date DESC, ep.created_at DESC";
 $stmt = $pdo->prepare($sql_payments);
@@ -123,13 +126,13 @@ require_once '../../../includes/header.php';
                             <td class="text-muted">Created By:</td>
                             <td class="text-end"><?= htmlspecialchars($expense['creator_name']) ?></td>
                         </tr>
-                        <?php if ($expense['vendor_name']): ?>
+                        <?php if (($_SESSION['login_region'] ?? 'factory') === 'factory' && $expense['vendor_name']): ?>
                         <tr>
                             <td class="text-muted">Vendor:</td>
                             <td class="text-end fw-bold"><?= htmlspecialchars($expense['vendor_name']) ?></td>
                         </tr>
                         <?php endif; ?>
-                        <?php if ($expense['po_id']): ?>
+                        <?php if (($_SESSION['login_region'] ?? 'factory') === 'factory' && $expense['po_id']): ?>
                         <tr>
                             <td class="text-muted">PO Link:</td>
                             <td class="text-end">

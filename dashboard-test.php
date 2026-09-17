@@ -2,6 +2,10 @@
 require_once 'includes/auth.php';
 require_once 'includes/functions.php';
 
+if (($_SESSION['login_region'] ?? 'factory') !== 'factory') {
+    redirect('modules/sales/');
+}
+
 $page_title = 'Dashboard';
 require_once 'includes/header-test.php';
 ?>

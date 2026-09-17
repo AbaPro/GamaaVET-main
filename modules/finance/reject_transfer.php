@@ -16,6 +16,10 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST' || empty($_POST['id'])) {
 $transferId = (int)$_POST['id'];
 $reason = trim(strip_tags((string)($_POST['rejection_reason'] ?? '')));
 $userId = (int)($_SESSION['user_id'] ?? 0);
+if (!isFinanceTransferInCurrentAccount($transferId)) {
+    setAlert('danger', 'Finance transfer not found.');
+    redirect('transfers.php');
+}
 if ($reason === '') {
     setAlert('danger', 'Rejection reason is required.');
     redirect('transfer_details.php?id=' . $transferId);

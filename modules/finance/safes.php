@@ -20,9 +20,17 @@ $page_title = 'Safes';
 $formToken = financeAccountFormToken();
 handleFinanceAccountDeletion('safe', $canDelete, 'safes.php');
 
-$accounts = $conn->query("SELECT id, name FROM accounts WHERE is_active = 1 AND slug <> 'curva' ORDER BY id ASC")->fetch_all(MYSQLI_ASSOC);
+$currentAccountId = getCurrentAccountId();
+$accountStmt = $conn->prepare('SELECT id, name FROM accounts WHERE id = ? AND is_active = 1 LIMIT 1');
+$accountStmt->bind_param('i', $currentAccountId);
+$accountStmt->execute();
+$accounts = $accountStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+$accountStmt->close();
 $allowedAccountIds = array_fill_keys(array_map('intval', array_column($accounts, 'id')), true);
-$locations = $conn->query('SELECT id, name, address, is_active FROM locations ORDER BY is_active DESC, name')->fetch_all(MYSQLI_ASSOC);
+$showLocations = ($_SESSION['login_region'] ?? 'factory') === 'factory';
+$locations = $showLocations
+    ? $conn->query('SELECT id, name, address, is_active FROM locations ORDER BY is_active DESC, name')->fetch_all(MYSQLI_ASSOC)
+    : [];
 $allowedLocationIds = array_fill_keys(array_map('intval', array_column($locations, 'id')), true);
 $currencies = financeAccountCurrencies();
 
@@ -36,7 +44,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_safe'])) {
     $name = trim(strip_tags((string)($_POST['name'] ?? '')));
     $currency = strtoupper(trim((string)($_POST['currency'] ?? 'EGP')));
     $accountId = (int)($_POST['account_id'] ?? 0);
-    $locationId = !empty($_POST['location_id']) ? (int)$_POST['location_id'] : null;
+    $locationId = $showLocations && !empty($_POST['location_id']) ? (int)$_POST['location_id'] : null;
     $notes = trim(strip_tags((string)($_POST['notes'] ?? '')));
 
     if ($name === '') {
@@ -70,10 +78,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_safe'])) {
     $name = trim(strip_tags((string)($_POST['name'] ?? '')));
     $currency = strtoupper(trim((string)($_POST['currency'] ?? 'EGP')));
     $accountId = (int)($_POST['account_id'] ?? 0);
-    $locationId = !empty($_POST['location_id']) ? (int)$_POST['location_id'] : null;
+    $locationId = $showLocations && !empty($_POST['location_id']) ? (int)$_POST['location_id'] : null;
     $notes = trim(strip_tags((string)($_POST['notes'] ?? '')));
 
-    if (!$safeId || $name === '') {
+    if (!$safeId || !isSafeInCurrentAccount($safeId) || $name === '') {
         setAlert('danger', 'Safe name is required.');
     } elseif (!$accountId || !isset($allowedAccountIds[$accountId])) {
         setAlert('danger', 'Please select an available brand.');
@@ -82,7 +90,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_safe'])) {
     } elseif (!isset($currencies[$currency])) {
         setAlert('danger', 'Please select an available currency.');
     } else {
-        $existingStmt = $conn->prepare('SELECT balance, currency FROM safes WHERE id = ? LIMIT 1');
+        $scope = getAccountScopeSql();
+        $existingStmt = $conn->prepare("SELECT balance, currency FROM safes WHERE id = ? AND $scope LIMIT 1");
         $existingStmt->bind_param('i', $safeId);
         $existingStmt->execute();
         $existing = $existingStmt->get_result()->fetch_assoc();
@@ -105,19 +114,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_safe'])) {
     redirect('safes.php');
 }
 
-$selectedLocation = isset($_GET['location_id']) && $_GET['location_id'] !== '' ? (int)$_GET['location_id'] : 0;
+$selectedLocation = $showLocations && isset($_GET['location_id']) && $_GET['location_id'] !== '' ? (int)$_GET['location_id'] : 0;
 if ($selectedLocation && !isset($allowedLocationIds[$selectedLocation])) {
     $selectedLocation = 0;
 }
 
+$safeScope = getAccountScopeSql('s');
 $safeSql = "
     SELECT s.*, a.name AS account_name, l.name AS location_name, l.address AS location_address
     FROM safes s
     LEFT JOIN accounts a ON a.id = s.account_id
     LEFT JOIN locations l ON l.id = s.location_id
+    WHERE $safeScope
 ";
 if ($selectedLocation) {
-    $safeSql .= ' WHERE s.location_id = ?';
+    $safeSql .= ' AND s.location_id = ?';
 }
 $safeSql .= ' ORDER BY l.name, s.name';
 
@@ -155,11 +166,11 @@ require_once '../../includes/header.php';
 </div>
 
 <div class="card border-0 shadow-sm mb-4"><div class="card-body py-3">
-    <form method="get" class="row g-2 align-items-end">
+    <?php if ($showLocations): ?><form method="get" class="row g-2 align-items-end">
         <div class="col-md-5"><label for="locationFilter" class="form-label mb-1">Filter by Location</label><select class="form-select" id="locationFilter" name="location_id"><option value="">All locations</option><?php foreach ($locations as $location): ?><option value="<?= (int)$location['id']; ?>" <?= $selectedLocation === (int)$location['id'] ? 'selected' : ''; ?>><?= e($location['name']); ?><?= !$location['is_active'] ? ' (inactive)' : ''; ?></option><?php endforeach; ?></select></div>
         <div class="col-auto"><button type="submit" class="btn btn-primary"><i class="fas fa-filter me-1"></i>Apply</button></div>
         <?php if ($selectedLocation): ?><div class="col-auto"><a href="safes.php" class="btn btn-outline-secondary">Clear</a></div><?php endif; ?>
-    </form>
+    </form><?php else: ?><div class="text-muted">Only <?= e($accounts[0]['name'] ?? 'this brand'); ?> cash accounts are shown.</div><?php endif; ?>
 </div></div>
 
 <?php if ($summaries): ?>
@@ -178,12 +189,12 @@ require_once '../../includes/header.php';
 
 <div class="card border-0 shadow-sm"><div class="card-body"><div class="table-responsive">
     <table class="table js-datatable table-striped table-hover align-middle mb-0">
-        <thead><tr><th>ID</th><th>Name</th><th>Location</th><th>Currency</th><th>Brand</th><th class="text-end">Balance</th><th>Actions</th></tr></thead>
+        <thead><tr><th>ID</th><th>Name</th><?php if ($showLocations): ?><th>Location</th><?php endif; ?><th>Currency</th><th>Brand</th><th class="text-end">Balance</th><th>Actions</th></tr></thead>
         <tbody><?php foreach ($safeRows as $row): ?>
             <tr>
                 <td><?= (int)$row['id']; ?></td>
                 <td><a href="safe_details.php?id=<?= (int)$row['id']; ?>" class="fw-semibold text-decoration-none"><i class="fas fa-vault me-1"></i><?= e($row['name']); ?></a><?php if ($row['notes']): ?><div class="small text-muted text-truncate" style="max-width:260px"><?= e($row['notes']); ?></div><?php endif; ?></td>
-                <td><?= $row['location_name'] ? e($row['location_name']) : '<span class="text-muted">Unassigned</span>'; ?><?php if ($row['location_address']): ?><div class="small text-muted"><?= e($row['location_address']); ?></div><?php endif; ?></td>
+                <?php if ($showLocations): ?><td><?= $row['location_name'] ? e($row['location_name']) : '<span class="text-muted">Unassigned</span>'; ?><?php if ($row['location_address']): ?><div class="small text-muted"><?= e($row['location_address']); ?></div><?php endif; ?></td><?php endif; ?>
                 <td><span class="badge bg-light text-dark border"><?= e($row['currency'] ?: 'EGP'); ?></span></td>
                 <td><?= e($row['account_name'] ?: 'GammaVet'); ?></td>
                 <td class="text-end fw-semibold <?= (float)$row['balance'] < 0 ? 'text-danger' : 'text-success'; ?>"><?= e(formatCurrency((float)$row['balance'], $row['currency'] ?: 'EGP')); ?></td>
@@ -204,7 +215,7 @@ require_once '../../includes/header.php';
     <div class="modal-header"><h5 class="modal-title">Add Safe</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
     <div class="modal-body">
         <div class="mb-3"><label class="form-label">Safe Name*</label><input type="text" class="form-control" name="name" maxlength="100" required></div>
-        <div class="mb-3"><label class="form-label">Location</label><select class="form-select" name="location_id"><option value="">Unassigned</option><?php foreach ($locations as $location): if (!$location['is_active']) continue; ?><option value="<?= (int)$location['id']; ?>"><?= e($location['name']); ?></option><?php endforeach; ?></select></div>
+        <?php if ($showLocations): ?><div class="mb-3"><label class="form-label">Location</label><select class="form-select" name="location_id"><option value="">Unassigned</option><?php foreach ($locations as $location): if (!$location['is_active']) continue; ?><option value="<?= (int)$location['id']; ?>"><?= e($location['name']); ?></option><?php endforeach; ?></select></div><?php endif; ?>
         <div class="mb-3"><label class="form-label">Currency*</label><select class="form-select" name="currency" required><?php foreach ($currencies as $currency): ?><option value="<?= e($currency['code']); ?>"><?= e($currency['code'] . ' — ' . $currency['name']); ?></option><?php endforeach; ?></select></div>
         <div class="mb-3"><label class="form-label">Brand*</label><select class="form-select" name="account_id" required><?php foreach ($accounts as $account): ?><option value="<?= (int)$account['id']; ?>"><?= e($account['name']); ?></option><?php endforeach; ?></select></div>
         <div><label class="form-label">Notes</label><textarea class="form-control" name="notes" rows="2"></textarea></div>
@@ -219,7 +230,7 @@ require_once '../../includes/header.php';
     <div class="modal-header"><h5 class="modal-title">Edit <?= e($row['name']); ?></h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
     <div class="modal-body">
         <div class="mb-3"><label class="form-label">Safe Name*</label><input type="text" class="form-control" name="name" value="<?= e($row['name']); ?>" maxlength="100" required></div>
-        <div class="mb-3"><label class="form-label">Location</label><select class="form-select" name="location_id"><option value="">Unassigned</option><?php foreach ($locations as $location): ?><option value="<?= (int)$location['id']; ?>" <?= (int)$row['location_id'] === (int)$location['id'] ? 'selected' : ''; ?>><?= e($location['name']); ?><?= !$location['is_active'] ? ' (inactive)' : ''; ?></option><?php endforeach; ?></select></div>
+        <?php if ($showLocations): ?><div class="mb-3"><label class="form-label">Location</label><select class="form-select" name="location_id"><option value="">Unassigned</option><?php foreach ($locations as $location): ?><option value="<?= (int)$location['id']; ?>" <?= (int)$row['location_id'] === (int)$location['id'] ? 'selected' : ''; ?>><?= e($location['name']); ?><?= !$location['is_active'] ? ' (inactive)' : ''; ?></option><?php endforeach; ?></select></div><?php endif; ?>
         <div class="mb-3"><label class="form-label">Currency*</label><select class="form-select" name="currency" required><?php foreach ($currencies as $currency): ?><option value="<?= e($currency['code']); ?>" <?= $currency['code'] === ($row['currency'] ?: 'EGP') ? 'selected' : ''; ?>><?= e($currency['code'] . ' — ' . $currency['name']); ?></option><?php endforeach; ?></select><div class="form-text">Currency can change only before any financial activity.</div></div>
         <div class="mb-3"><label class="form-label">Brand*</label><select class="form-select" name="account_id" required><?php foreach ($accounts as $account): ?><option value="<?= (int)$account['id']; ?>" <?= (int)$account['id'] === (int)$row['account_id'] ? 'selected' : ''; ?>><?= e($account['name']); ?></option><?php endforeach; ?></select></div>
         <div><label class="form-label">Notes</label><textarea class="form-control" name="notes" rows="2"><?= e($row['notes']); ?></textarea></div>

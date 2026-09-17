@@ -15,7 +15,8 @@ if (!$transferId) {
     redirect('transfers.php');
 }
 
-$stmt = $conn->prepare(financeTransferSelectSql() . ' WHERE f.id = ? LIMIT 1');
+$transferScope = financeTransferScopeSql('f');
+$stmt = $conn->prepare(financeTransferSelectSql() . " WHERE f.id = ? AND $transferScope LIMIT 1");
 $stmt->bind_param('i', $transferId);
 $stmt->execute();
 $transfer = $stmt->get_result()->fetch_assoc();
@@ -113,7 +114,7 @@ require_once '../../includes/header.php';
                     <dt class="col-sm-3">Transaction Date</dt><dd class="col-sm-9"><?= date('M d, Y', strtotime($transfer['transaction_date'])); ?></dd>
                     <dt class="col-sm-3">Reason</dt><dd class="col-sm-9"><?= nl2br(e($transfer['reason'])); ?></dd>
                     <dt class="col-sm-3">Notes</dt><dd class="col-sm-9"><?= $transfer['notes'] ? nl2br(e($transfer['notes'])) : '-'; ?></dd>
-                    <dt class="col-sm-3">Purchase Order</dt>
+                    <?php if (($_SESSION['login_region'] ?? 'factory') === 'factory'): ?><dt class="col-sm-3">Purchase Order</dt>
                     <dd class="col-sm-9">
                         <?php if ($transfer['purchase_order_id']): ?>
                             <a href="../purchases/po_details.php?id=<?= (int)$transfer['purchase_order_id']; ?>">PO #<?= (int)$transfer['purchase_order_id']; ?> — <?= e($transfer['purchase_order_vendor']); ?></a>
@@ -124,7 +125,7 @@ require_once '../../includes/header.php';
                         <?php if ($transfer['ticket_id']): ?>
                             <a href="../tickets/view.php?id=<?= (int)$transfer['ticket_id']; ?>">Ticket #<?= (int)$transfer['ticket_id']; ?> — <?= e($transfer['ticket_title']); ?></a>
                         <?php else: ?>-<?php endif; ?>
-                    </dd>
+                    </dd><?php endif; ?>
                     <dt class="col-sm-3">Images</dt><dd class="col-sm-9"><?= renderAttachmentThumbnails($images); ?></dd>
                 </dl>
             </div>

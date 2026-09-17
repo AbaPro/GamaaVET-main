@@ -15,6 +15,10 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST' || empty($_POST['id'])) {
 
 $transferId = (int)$_POST['id'];
 $userId = (int)($_SESSION['user_id'] ?? 0);
+if (!isFinanceTransferInCurrentAccount($transferId)) {
+    setAlert('danger', 'Finance transfer not found.');
+    redirect('transfers.php');
+}
 $conn->begin_transaction();
 
 try {

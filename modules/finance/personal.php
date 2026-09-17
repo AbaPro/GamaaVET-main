@@ -13,7 +13,12 @@ if (!$canCreate && !$canDelete) {
 
 handleFinanceAccountDeletion('personal', $canDelete, 'personal.php');
 
-$accounts = $conn->query("SELECT id, name FROM accounts WHERE is_active = 1 AND slug <> 'curva' ORDER BY id")->fetch_all(MYSQLI_ASSOC);
+$currentAccountId = getCurrentAccountId();
+$accountStmt = $conn->prepare('SELECT id, name FROM accounts WHERE id = ? AND is_active = 1 LIMIT 1');
+$accountStmt->bind_param('i', $currentAccountId);
+$accountStmt->execute();
+$accounts = $accountStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+$accountStmt->close();
 $allowedAccountIds = array_fill_keys(array_map('intval', array_column($accounts, 'id')), true);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_personal_account'])) {
@@ -47,6 +52,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_personal_accou
             $holderStmt->execute();
             $validHolder = $holderStmt->get_result()->num_rows === 1;
             $holderStmt->close();
+            $loginRegion = $_SESSION['login_region'] ?? 'factory';
+            if ($validHolder && $loginRegion !== 'factory') {
+                $validHolder = userHasPermissionKey($holderUserId, 'region.' . $loginRegion);
+            }
             if (!$validHolder) {
                 setAlert('danger', 'Selected staff member already has an account or is unavailable.');
                 redirect('personal.php');
@@ -78,6 +87,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_personal_accou
     redirect('personal.php');
 }
 
+$personalScope = getAccountScopeSql('pa');
 $result = $conn->query("
     SELECT pa.*, a.name AS account_name,
            COALESCE(r.name, u.role) AS holder_role
@@ -85,7 +95,7 @@ $result = $conn->query("
     LEFT JOIN accounts a ON a.id = pa.account_id
     LEFT JOIN users u ON u.id = pa.holder_user_id
     LEFT JOIN roles r ON r.id = u.role_id
-    WHERE pa.is_active = 1
+    WHERE pa.is_active = 1 AND $personalScope
     ORDER BY pa.name
 ");
 $availableHolders = $conn->query("
@@ -95,6 +105,13 @@ $availableHolders = $conn->query("
     WHERE u.is_active = 1 AND pa.id IS NULL
     ORDER BY u.name
 ")->fetch_all(MYSQLI_ASSOC);
+$loginRegion = $_SESSION['login_region'] ?? 'factory';
+if ($loginRegion !== 'factory') {
+    $regionPermission = 'region.' . $loginRegion;
+    $availableHolders = array_values(array_filter($availableHolders, static function ($holder) use ($regionPermission) {
+        return userHasPermissionKey((int)$holder['id'], $regionPermission);
+    }));
+}
 
 $page_title = 'Personal Accounts';
 require_once '../../includes/header.php';

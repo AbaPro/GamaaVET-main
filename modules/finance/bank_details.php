@@ -19,10 +19,11 @@ if (!$bankId) {
     redirect('banks.php');
 }
 
+$bankScope = getAccountScopeSql('b');
 $bankStmt = $conn->prepare("SELECT b.*, a.name AS account_name
                             FROM bank_accounts b
                             LEFT JOIN accounts a ON a.id = b.account_id
-                            WHERE b.id = ?
+                            WHERE b.id = ? AND $bankScope
                             LIMIT 1");
 $bankStmt->bind_param('i', $bankId);
 $bankStmt->execute();
@@ -63,6 +64,7 @@ $transactions = [];
 
 // Customer bank transfers are incoming account movements. Their automatically
 // generated finance-transfer mirrors are excluded below to prevent duplication.
+$customerScope = getCustomerChannelScopeSql('c', 'customer_factory');
 $orderPaymentStmt = $conn->prepare("
     SELECT op.id, op.amount, op.reference, op.notes, op.transaction_date, op.created_at,
            u.name AS created_by_name,
@@ -71,8 +73,9 @@ $orderPaymentStmt = $conn->prepare("
     FROM order_payments op
     JOIN orders o ON o.id = op.order_id
     JOIN customers c ON c.id = o.customer_id
+    LEFT JOIN factories customer_factory ON customer_factory.id = c.factory_id
     LEFT JOIN users u ON u.id = op.created_by
-    WHERE op.payment_method = 'transfer' AND op.bank_account_id = ?
+    WHERE op.payment_method = 'transfer' AND op.bank_account_id = ? AND $customerScope
 ");
 $orderPaymentStmt->bind_param('i', $bankId);
 $orderPaymentStmt->execute();
@@ -105,10 +108,12 @@ $walletPaymentStmt = $conn->prepare("
            c.id AS customer_id, c.name AS customer_name
     FROM customer_wallet_transactions wt
     JOIN customers c ON c.id = wt.customer_id
+    LEFT JOIN factories customer_factory ON customer_factory.id = c.factory_id
     LEFT JOIN users u ON u.id = wt.created_by
     WHERE wt.type = 'payment'
       AND wt.payment_method = 'transfer'
       AND wt.bank_account_id = ?
+      AND $customerScope
 ");
 $walletPaymentStmt->bind_param('i', $bankId);
 $walletPaymentStmt->execute();
@@ -135,6 +140,7 @@ $walletPaymentStmt->close();
 
 // Expense payments are outgoing account movements. Linked PO payment rows are
 // alternate records of the same movement and are intentionally not duplicated.
+$expenseScope = getAccountScopeSql('e');
 $expensePaymentStmt = $conn->prepare("
     SELECT ep.id, ep.amount, ep.reference, ep.notes, ep.transaction_date, ep.created_at,
            u.name AS created_by_name,
@@ -144,7 +150,7 @@ $expensePaymentStmt = $conn->prepare("
     JOIN expenses e ON e.id = ep.expense_id
     LEFT JOIN vendors v ON v.id = e.vendor_id
     LEFT JOIN users u ON u.id = ep.created_by
-    WHERE ep.payment_method = 'transfer' AND ep.bank_account_id = ?
+    WHERE ep.payment_method = 'transfer' AND ep.bank_account_id = ? AND $expenseScope
 ");
 $expensePaymentStmt->bind_param('i', $bankId);
 $expensePaymentStmt->execute();
@@ -174,6 +180,7 @@ while ($row = $expensePayments->fetch_assoc()) {
 }
 $expensePaymentStmt->close();
 
+$transferScope = financeTransferScopeSql('f');
 $transferStmt = $conn->prepare("
     SELECT f.*,
            u.name AS created_by_name,
@@ -193,6 +200,7 @@ $transferStmt = $conn->prepare("
     LEFT JOIN personal_accounts to_personal ON f.to_type = 'personal' AND f.to_id = to_personal.id
     WHERE ((f.from_type = 'bank' AND f.from_id = ?)
         OR (f.to_type = 'bank' AND f.to_id = ?))
+      AND $transferScope
       AND f.status = 'approved'
       AND NOT (
           f.from_type = 'personal'

@@ -17,6 +17,7 @@ if (!$personalAccountId) {
     redirect('personal.php');
 }
 
+$personalScope = getAccountScopeSql('pa');
 $accountStmt = $conn->prepare("
     SELECT pa.*, a.name AS account_name,
            COALESCE(r.name, u.role) AS holder_role
@@ -24,7 +25,7 @@ $accountStmt = $conn->prepare("
     LEFT JOIN accounts a ON a.id = pa.account_id
     LEFT JOIN users u ON u.id = pa.holder_user_id
     LEFT JOIN roles r ON r.id = u.role_id
-    WHERE pa.id = ?
+    WHERE pa.id = ? AND $personalScope
     LIMIT 1
 ");
 $accountStmt->bind_param('i', $personalAccountId);
@@ -36,10 +37,12 @@ if (!$account) {
     redirect('personal.php');
 }
 
+$transferScope = financeTransferScopeSql('f');
 $transferStmt = $conn->prepare(
     financeTransferSelectSql()
-    . " WHERE (f.from_type = 'personal' AND f.from_id = ?)
-          OR (f.to_type = 'personal' AND f.to_id = ?)
+    . " WHERE ((f.from_type = 'personal' AND f.from_id = ?)
+          OR (f.to_type = 'personal' AND f.to_id = ?))
+        AND $transferScope
         ORDER BY f.transaction_date DESC, f.created_at DESC, f.id DESC"
 );
 $transferStmt->bind_param('ii', $personalAccountId, $personalAccountId);
@@ -61,8 +64,10 @@ if ($transfers) {
     }
 }
 
-require_once __DIR__ . '/../purchases/payment_sources.php';
-foreach (poPaymentSourceHistory('personal', $personalAccountId) as $payment) {
+if (($_SESSION['login_region'] ?? 'factory') === 'factory') {
+    require_once __DIR__ . '/../purchases/payment_sources.php';
+}
+foreach (($_SESSION['login_region'] ?? 'factory') === 'factory' ? poPaymentSourceHistory('personal', $personalAccountId) : [] as $payment) {
     $transfers[] = [
         'id' => 0, 'po_payment_id' => $payment['id'],
         'transaction_date' => $payment['transaction_date'], 'created_at' => $payment['created_at'], 'transfer_reference' => 'PO Payment #' . $payment['id'],

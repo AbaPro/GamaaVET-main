@@ -20,7 +20,12 @@ $page_title = 'Bank Accounts';
 $formToken = financeAccountFormToken();
 handleFinanceAccountDeletion('bank', $canDelete, 'banks.php');
 
-$accounts = $conn->query("SELECT id, name FROM accounts WHERE is_active = 1 AND slug <> 'curva' ORDER BY id ASC")->fetch_all(MYSQLI_ASSOC);
+$currentAccountId = getCurrentAccountId();
+$accountStmt = $conn->prepare('SELECT id, name FROM accounts WHERE id = ? AND is_active = 1 LIMIT 1');
+$accountStmt->bind_param('i', $currentAccountId);
+$accountStmt->execute();
+$accounts = $accountStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+$accountStmt->close();
 $allowedAccountIds = array_fill_keys(array_map('intval', array_column($accounts, 'id')), true);
 $currencies = financeAccountCurrencies();
 
@@ -79,14 +84,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_bank_account']))
     $iban = trim(strip_tags((string)($_POST['iban'] ?? '')));
     $notes = trim(strip_tags((string)($_POST['notes'] ?? '')));
 
-    if (!$bankId || $bankName === '' || $accountNumber === '') {
+    if (!$bankId || !isBankAccountInCurrentAccount($bankId) || $bankName === '' || $accountNumber === '') {
         setAlert('danger', 'Bank name and account number are required.');
     } elseif (!$accountId || !isset($allowedAccountIds[$accountId])) {
         setAlert('danger', 'Please select an available brand.');
     } elseif (!isset($currencies[$currency])) {
         setAlert('danger', 'Please select an available currency.');
     } else {
-        $existingStmt = $conn->prepare('SELECT balance, currency FROM bank_accounts WHERE id = ? LIMIT 1');
+        $scope = getAccountScopeSql();
+        $existingStmt = $conn->prepare("SELECT balance, currency FROM bank_accounts WHERE id = ? AND $scope LIMIT 1");
         $existingStmt->bind_param('i', $bankId);
         $existingStmt->execute();
         $existing = $existingStmt->get_result()->fetch_assoc();
@@ -114,10 +120,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_bank_account']))
     redirect('banks.php');
 }
 
+$bankScope = getAccountScopeSql('b');
 $bankRows = $conn->query("
     SELECT b.*, a.name AS account_name
     FROM bank_accounts b
     LEFT JOIN accounts a ON a.id = b.account_id
+    WHERE $bankScope
     ORDER BY b.bank_name, b.account_number
 ")->fetch_all(MYSQLI_ASSOC);
 

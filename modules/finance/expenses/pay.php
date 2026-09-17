@@ -10,7 +10,8 @@ if (!hasPermission('finance.expenses.manage')) {
 
 $expense_id = $_GET['id'] ?? 0;
 
-$stmt = $pdo->prepare("SELECT e.*, ec.name as category_name, v.name as vendor_name FROM expenses e JOIN expense_categories ec ON e.category_id = ec.id LEFT JOIN vendors v ON e.vendor_id = v.id WHERE e.id = ?");
+$expenseScope = getAccountScopeSql('e');
+$stmt = $pdo->prepare("SELECT e.*, ec.name as category_name, v.name as vendor_name FROM expenses e JOIN expense_categories ec ON e.category_id = ec.id LEFT JOIN vendors v ON e.vendor_id = v.id WHERE e.id = ? AND $expenseScope");
 $stmt->execute([$expense_id]);
 $expense = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -34,7 +35,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $reference = $_POST['reference'] ?? '';
     $transactionDate = normalizeTransactionDate($_POST['transaction_date'] ?? '');
 
-    if ($transactionDate === null) {
+    if (($_SESSION['login_region'] ?? 'factory') !== 'factory' && !in_array($payment_method, ['cash', 'transfer'], true)) {
+        setAlert('danger', 'Selected payment method is not available for this brand.');
+    } elseif ($transactionDate === null) {
         setAlert('danger', 'Enter a valid transaction date.');
     } elseif ($pay_amount <= 0 || $pay_amount > $balance) {
         setAlert('danger', 'Invalid payment amount.');
@@ -86,7 +89,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->execute([$new_paid_amount, $new_status, $expense_id]);
             
             // If PO is linked
-            if ($expense['po_id']) {
+            if (($_SESSION['login_region'] ?? 'factory') === 'factory' && $expense['po_id']) {
                  $stmt = $pdo->prepare("UPDATE purchase_orders SET paid_amount = paid_amount + ? WHERE id = ?");
                  $stmt->execute([$pay_amount, $expense['po_id']]);
                  
@@ -95,7 +98,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             
             // Vendor Wallet
-            if ($expense['vendor_id'] && $payment_method == 'wallet') {
+            if (($_SESSION['login_region'] ?? 'factory') === 'factory' && $expense['vendor_id'] && $payment_method == 'wallet') {
                  $vStmt = $pdo->prepare("SELECT wallet_balance FROM vendors WHERE id = ?");
                  $vStmt->execute([$expense['vendor_id']]);
                  $v_balance = $vStmt->fetchColumn();
@@ -137,7 +140,7 @@ require_once '../../../includes/header.php';
                     <div class="mb-4">
                         <h5><?= htmlspecialchars($expense['name']) ?></h5>
                         <p class="text-muted mb-0">Category: <?= htmlspecialchars($expense['category_name']) ?></p>
-                        <?php if ($expense['vendor_name']): ?>
+                        <?php if (($_SESSION['login_region'] ?? 'factory') === 'factory' && $expense['vendor_name']): ?>
                             <p class="text-muted">Vendor: <?= htmlspecialchars($expense['vendor_name']) ?></p>
                         <?php endif; ?>
                         <div class="d-flex justify-content-between border-top pt-2">
@@ -161,7 +164,7 @@ require_once '../../../includes/header.php';
                             <select name="payment_method" id="payment_method" class="form-select" required>
                                 <option value="cash">Cash</option>
                                 <option value="transfer">Bank Transfer</option>
-                                <?php if ($expense['vendor_id']): ?>
+                                <?php if (($_SESSION['login_region'] ?? 'factory') === 'factory' && $expense['vendor_id']): ?>
                                 <option value="wallet">Vendor Wallet</option>
                                 <?php endif; ?>
                             </select>

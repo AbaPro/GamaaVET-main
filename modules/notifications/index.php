@@ -16,6 +16,15 @@ $userId = $_SESSION['user_id'];
 
 if (isset($_GET['mark']) && is_numeric($_GET['mark'])) {
     $nid = (int)$_GET['mark'];
+    $visibleStmt = $conn->prepare('SELECT * FROM notifications WHERE id = ? LIMIT 1');
+    $visibleStmt->bind_param('i', $nid);
+    $visibleStmt->execute();
+    $visibleNotification = $visibleStmt->get_result()->fetch_assoc();
+    $visibleStmt->close();
+    if (!$visibleNotification || !isNotificationVisibleInCurrentChannel($visibleNotification)) {
+        setAlert('danger', 'Notification not found.');
+        redirect('index.php');
+    }
     $roleSlug = $_SESSION['role_slug'] ?? null;
     
     if ($roleSlug === 'admin') {
@@ -38,7 +47,7 @@ if (isset($_GET['ticket']) && is_numeric($_GET['ticket']) && hasPermission('tick
     $nStmt->execute();
     $n = $nStmt->get_result()->fetch_assoc();
     $nStmt->close();
-    if ($n) {
+    if ($n && isNotificationVisibleInCurrentChannel($n)) {
         // Assign to purchasing supervisor if exists; else to admin
         $assignRoleId = $conn->query("SELECT id FROM roles WHERE slug='purchasing_supervisor'")->fetch_assoc()['id'] ?? null;
         if (!$assignRoleId) {
@@ -65,6 +74,9 @@ if ($roleSlug === 'admin') {
 $result->execute();
 $notifications = $result->get_result()->fetch_all(MYSQLI_ASSOC);
 $result->close();
+if (($_SESSION['login_region'] ?? 'factory') !== 'factory') {
+    $notifications = array_values(array_filter($notifications, 'isNotificationVisibleInCurrentChannel'));
+}
 
 $page_title = 'Notifications';
 require_once '../../includes/header.php';

@@ -19,11 +19,12 @@ if (!$safeId) {
     redirect('safes.php');
 }
 
+$safeScope = getAccountScopeSql('s');
 $safeStmt = $conn->prepare("SELECT s.*, a.name AS account_name, l.name AS location_name, l.address AS location_address
                             FROM safes s
                             LEFT JOIN accounts a ON a.id = s.account_id
                             LEFT JOIN locations l ON l.id = s.location_id
-                            WHERE s.id = ?
+                            WHERE s.id = ? AND $safeScope
                             LIMIT 1");
 $safeStmt->bind_param('i', $safeId);
 $safeStmt->execute();
@@ -39,6 +40,7 @@ $canSetBalance = hasPermission('finance.safes.balance.edit');
 $formToken = financeAccountFormToken();
 handleFinanceAccountBalanceSettlement('safe', $safeId, $canSetBalance, 'safe_details.php?id=' . $safeId);
 $currency = $safe['currency'] ?: 'EGP';
+$showLocation = ($_SESSION['login_region'] ?? 'factory') === 'factory';
 
 function safeHistoryCounterpartyName($row, $side) {
     $type = $row[$side . '_type'] ?? '';
@@ -64,6 +66,7 @@ $transactions = [];
 
 // Customer order payments put cash into the safe. The matching automatically
 // generated finance-transfer row is excluded below so each payment appears once.
+$customerScope = getCustomerChannelScopeSql('c', 'customer_factory');
 $orderPaymentStmt = $conn->prepare("
     SELECT op.id, op.amount, op.reference, op.notes, op.transaction_date, op.created_at,
            op.created_by, u.name AS created_by_name,
@@ -72,8 +75,9 @@ $orderPaymentStmt = $conn->prepare("
     FROM order_payments op
     JOIN orders o ON o.id = op.order_id
     JOIN customers c ON c.id = o.customer_id
+    LEFT JOIN factories customer_factory ON customer_factory.id = c.factory_id
     LEFT JOIN users u ON u.id = op.created_by
-    WHERE op.payment_method = 'cash' AND op.safe_id = ?
+    WHERE op.payment_method = 'cash' AND op.safe_id = ? AND $customerScope
 ");
 $orderPaymentStmt->bind_param('i', $safeId);
 $orderPaymentStmt->execute();
@@ -105,10 +109,12 @@ $walletPaymentStmt = $conn->prepare("
            c.id AS customer_id, c.name AS customer_name
     FROM customer_wallet_transactions wt
     JOIN customers c ON c.id = wt.customer_id
+    LEFT JOIN factories customer_factory ON customer_factory.id = c.factory_id
     LEFT JOIN users u ON u.id = wt.created_by
     WHERE wt.type = 'payment'
       AND wt.payment_method = 'cash'
       AND wt.safe_id = ?
+      AND $customerScope
 ");
 $walletPaymentStmt->bind_param('i', $safeId);
 $walletPaymentStmt->execute();
@@ -135,6 +141,7 @@ $walletPaymentStmt->close();
 
 // Expense payments take cash out of the safe. A linked purchase-order payment is
 // another view of this same payment, so expense_payments is the canonical row here.
+$expenseScope = getAccountScopeSql('e');
 $expensePaymentStmt = $conn->prepare("
     SELECT ep.id, ep.amount, ep.reference, ep.notes, ep.transaction_date, ep.created_at,
            u.name AS created_by_name,
@@ -144,7 +151,7 @@ $expensePaymentStmt = $conn->prepare("
     JOIN expenses e ON e.id = ep.expense_id
     LEFT JOIN vendors v ON v.id = e.vendor_id
     LEFT JOIN users u ON u.id = ep.created_by
-    WHERE ep.payment_method = 'cash' AND ep.safe_id = ?
+    WHERE ep.payment_method = 'cash' AND ep.safe_id = ? AND $expenseScope
 ");
 $expensePaymentStmt->bind_param('i', $safeId);
 $expensePaymentStmt->execute();
@@ -174,6 +181,7 @@ while ($row = $expensePayments->fetch_assoc()) {
 }
 $expensePaymentStmt->close();
 
+$transferScope = financeTransferScopeSql('f');
 $transferStmt = $conn->prepare("
     SELECT f.*,
            u.name AS created_by_name,
@@ -193,6 +201,7 @@ $transferStmt = $conn->prepare("
     LEFT JOIN personal_accounts to_personal ON f.to_type = 'personal' AND f.to_id = to_personal.id
     WHERE ((f.from_type = 'safe' AND f.from_id = ?)
         OR (f.to_type = 'safe' AND f.to_id = ?))
+      AND $transferScope
       AND f.status = 'approved'
       AND NOT (
           f.from_type = 'personal'
@@ -338,7 +347,7 @@ require_once '../../includes/header.php';
 <div class="d-flex justify-content-between align-items-start mb-4">
     <div>
         <h2 class="mb-1"><?= e($safe['name']); ?></h2>
-        <div class="text-muted">Safe Ledger · <?= e($safe['location_name'] ?: 'Unassigned location'); ?> · <?= e($safe['account_name'] ?: 'GammaVet'); ?> · <?= e($currency); ?></div>
+        <div class="text-muted">Safe Ledger<?= $showLocation ? ' · ' . e($safe['location_name'] ?: 'Unassigned location') : ''; ?> · <?= e($safe['account_name'] ?: 'GammaVet'); ?> · <?= e($currency); ?></div>
     </div>
     <a href="safes.php" class="btn btn-outline-secondary">
         <i class="fas fa-arrow-left me-1"></i>Back to Safes
@@ -386,7 +395,7 @@ require_once '../../includes/header.php';
 <div class="card border-0 shadow-sm mb-4">
     <div class="card-header bg-white py-3"><h5 class="mb-0"><i class="fas fa-circle-info me-2"></i>Safe Details</h5></div>
     <div class="card-body"><div class="row g-3">
-        <div class="col-md-3"><div class="small text-muted">Location</div><div class="fw-semibold"><?= $safe['location_name'] ? e($safe['location_name']) : 'Unassigned'; ?></div><?php if ($safe['location_address']): ?><div class="small text-muted"><?= e($safe['location_address']); ?></div><?php endif; ?></div>
+        <?php if ($showLocation): ?><div class="col-md-3"><div class="small text-muted">Location</div><div class="fw-semibold"><?= $safe['location_name'] ? e($safe['location_name']) : 'Unassigned'; ?></div><?php if ($safe['location_address']): ?><div class="small text-muted"><?= e($safe['location_address']); ?></div><?php endif; ?></div><?php endif; ?>
         <div class="col-md-3"><div class="small text-muted">Currency</div><div class="fw-semibold"><?= e($currency); ?></div></div>
         <div class="col-md-3"><div class="small text-muted">Brand</div><div class="fw-semibold"><?= e($safe['account_name'] ?: 'GammaVet'); ?></div></div>
         <div class="col-md-3"><div class="small text-muted">Safe ID</div><div class="fw-semibold">#<?= (int)$safeId; ?></div></div>

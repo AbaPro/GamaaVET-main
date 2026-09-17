@@ -252,7 +252,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect('wallet.php?id=' . $customer_id);
 }
 
-// Get wallet transactions with payment method info
+// Get wallet transactions with payment method info. Account names are joined
+// only when the destination belongs to the active brand.
+$safeScope = getAccountScopeSql('s');
+$bankScope = getAccountScopeSql('ba');
 $transactions_sql = "SELECT wt.*, u.name as created_by_name,
                             CASE
                                 WHEN wt.payment_method = 'cash' THEN s.name
@@ -261,8 +264,8 @@ $transactions_sql = "SELECT wt.*, u.name as created_by_name,
                             END as destination_name
                      FROM customer_wallet_transactions wt
                      LEFT JOIN users u ON wt.created_by = u.id
-                     LEFT JOIN safes s ON wt.safe_id = s.id
-                     LEFT JOIN bank_accounts ba ON wt.bank_account_id = ba.id
+                     LEFT JOIN safes s ON wt.safe_id = s.id AND $safeScope
+                     LEFT JOIN bank_accounts ba ON wt.bank_account_id = ba.id AND $bankScope
                      WHERE wt.customer_id = ?
                      ORDER BY wt.transaction_date DESC, wt.created_at DESC";
 $transactions_stmt = $conn->prepare($transactions_sql);
@@ -286,8 +289,8 @@ $orderPaymentsStmt = $conn->prepare("
     FROM order_payments op
     JOIN orders o ON o.id = op.order_id
     LEFT JOIN users u ON u.id = op.created_by
-    LEFT JOIN safes s ON s.id = op.safe_id
-    LEFT JOIN bank_accounts ba ON ba.id = op.bank_account_id
+    LEFT JOIN safes s ON s.id = op.safe_id AND $safeScope
+    LEFT JOIN bank_accounts ba ON ba.id = op.bank_account_id AND $bankScope
     WHERE o.customer_id = ?
     ORDER BY op.transaction_date DESC, op.created_at DESC, op.id DESC
 ");

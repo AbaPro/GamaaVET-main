@@ -32,6 +32,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $createdBy = (int)($_SESSION['user_id'] ?? 0);
     $uploadedImages = [];
 
+    if (($_SESSION['login_region'] ?? 'factory') !== 'factory') {
+        $purchaseOrderId = null;
+        $ticketId = null;
+    }
+
     if (!in_array($fromType, $accountTypes, true) || !in_array($toType, $accountTypes, true)) {
         setAlert('danger', 'Select valid sender and receiver account types.');
         redirect('transfers.php');
@@ -67,7 +72,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         setAlert('danger', 'Reason for transfer is required.');
         redirect('transfers.php');
     }
-    if ($assignedApproverId <= 0 || !userHasPermissionKey($assignedApproverId, 'finance.transfers.approve')) {
+    $loginRegion = $_SESSION['login_region'] ?? 'factory';
+    $approverCanAccessRegion = $loginRegion === 'factory'
+        || userHasPermissionKey($assignedApproverId, 'region.' . $loginRegion);
+    if ($assignedApproverId <= 0
+        || !userHasPermissionKey($assignedApproverId, 'finance.transfers.approve')
+        || !$approverCanAccessRegion) {
         setAlert('danger', 'Select a user who is allowed to approve finance transfers.');
         redirect('transfers.php');
     }
@@ -190,7 +200,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect('transfers.php');
 }
 
-$transferSql = financeTransferSelectSql() . ' ORDER BY f.transaction_date DESC, f.created_at DESC, f.id DESC';
+$transferScope = financeTransferScopeSql('f');
+$transferSql = financeTransferSelectSql() . " WHERE $transferScope ORDER BY f.transaction_date DESC, f.created_at DESC, f.id DESC";
 $result = $conn->query($transferSql);
 
 $transferImages = [];
@@ -206,13 +217,14 @@ if ($imageResult) {
 }
 
 $safeAccounts = [];
-$safeResult = $conn->query('SELECT id, name, balance, currency FROM safes ORDER BY name');
+$accountScope = getAccountScopeSql();
+$safeResult = $conn->query("SELECT id, name, balance, currency FROM safes WHERE $accountScope ORDER BY name");
 while ($row = $safeResult->fetch_assoc()) {
     $safeAccounts[] = ['id' => (int)$row['id'], 'label' => $row['name'] . ' — ' . number_format((float)$row['balance'], 2) . ' ' . ($row['currency'] ?: 'EGP')];
 }
 
 $bankAccounts = [];
-$bankResult = $conn->query('SELECT id, bank_name, account_number, balance, currency FROM bank_accounts ORDER BY bank_name');
+$bankResult = $conn->query("SELECT id, bank_name, account_number, balance, currency FROM bank_accounts WHERE $accountScope ORDER BY bank_name");
 while ($row = $bankResult->fetch_assoc()) {
     $bankAccounts[] = [
         'id' => (int)$row['id'],
@@ -221,7 +233,7 @@ while ($row = $bankResult->fetch_assoc()) {
 }
 
 $personalAccounts = [];
-$personalResult = $conn->query('SELECT id, name, email, balance FROM personal_accounts WHERE is_active = 1 ORDER BY name');
+$personalResult = $conn->query("SELECT id, name, email, balance FROM personal_accounts WHERE is_active = 1 AND $accountScope ORDER BY name");
 while ($row = $personalResult->fetch_assoc()) {
     $personalAccounts[] = [
         'id' => (int)$row['id'],
@@ -231,13 +243,22 @@ while ($row = $personalResult->fetch_assoc()) {
 
 $accountOptions = ['safe' => $safeAccounts, 'bank' => $bankAccounts, 'personal' => $personalAccounts];
 $approvers = getUsersWithPermission('finance.transfers.approve');
-$purchaseOrders = $conn->query("
+$loginRegion = $_SESSION['login_region'] ?? 'factory';
+if ($loginRegion !== 'factory') {
+    $regionPermission = 'region.' . $loginRegion;
+    $approvers = array_values(array_filter($approvers, static function ($approver) use ($regionPermission) {
+        return userHasPermissionKey((int)$approver['id'], $regionPermission);
+    }));
+}
+$purchaseOrders = $loginRegion === 'factory' ? $conn->query("
     SELECT po.id, po.status, v.name AS vendor_name
     FROM purchase_orders po
     JOIN vendors v ON v.id = po.vendor_id
     ORDER BY po.created_at DESC
-")->fetch_all(MYSQLI_ASSOC);
-$tickets = $conn->query("SELECT id, title, status FROM tickets ORDER BY created_at DESC")->fetch_all(MYSQLI_ASSOC);
+")->fetch_all(MYSQLI_ASSOC) : [];
+$tickets = $loginRegion === 'factory'
+    ? $conn->query("SELECT id, title, status FROM tickets ORDER BY created_at DESC")->fetch_all(MYSQLI_ASSOC)
+    : [];
 
 $statusColors = ['pending' => 'warning text-dark', 'approved' => 'success', 'rejected' => 'danger', 'reversed' => 'secondary'];
 $currentUserId = (int)($_SESSION['user_id'] ?? 0);
@@ -305,6 +326,7 @@ require_once '../../includes/header.php';
                             <td><span class="badge bg-<?= $statusColors[$status] ?? 'secondary'; ?>"><?= e(ucfirst($status)); ?></span></td>
                             <td><?= e($row['reason'] ?: $row['notes']); ?></td>
                             <td>
+                                <?php if ($loginRegion === 'factory'): ?>
                                 <?php if ($row['purchase_order_id']): ?>
                                     <a href="../purchases/po_details.php?id=<?= (int)$row['purchase_order_id']; ?>">PO #<?= (int)$row['purchase_order_id']; ?></a>
                                 <?php endif; ?>
@@ -312,6 +334,7 @@ require_once '../../includes/header.php';
                                     <div><a href="../tickets/view.php?id=<?= (int)$row['ticket_id']; ?>">Ticket #<?= (int)$row['ticket_id']; ?></a></div>
                                 <?php endif; ?>
                                 <?php if (!$row['purchase_order_id'] && !$row['ticket_id']): ?><span class="text-muted">-</span><?php endif; ?>
+                                <?php else: ?><span class="text-muted">-</span><?php endif; ?>
                             </td>
                             <td><?= e($row['requested_by_name'] ?: 'System'); ?></td>
                             <td><?= e($approvalDisplay); ?></td>
@@ -382,7 +405,7 @@ require_once '../../includes/header.php';
                                 <?php endforeach; ?>
                             </select>
                         </div>
-                        <div class="col-md-3">
+                        <?php if ($loginRegion === 'factory'): ?><div class="col-md-3">
                             <label class="form-label">Link Purchase Order</label>
                             <select class="form-select js-searchable-select" name="purchase_order_id">
                                 <option value="">-- No PO --</option>
@@ -399,7 +422,7 @@ require_once '../../includes/header.php';
                                     <option value="<?= (int)$ticket['id']; ?>">#<?= (int)$ticket['id']; ?> — <?= e($ticket['title']); ?> (<?= e($ticket['status']); ?>)</option>
                                 <?php endforeach; ?>
                             </select>
-                        </div>
+                        </div><?php endif; ?>
                         <div class="col-md-6">
                             <label class="form-label">Reason for Transfer <span class="text-danger">*</span></label>
                             <textarea class="form-control" name="reason" rows="3" maxlength="2000" required></textarea>

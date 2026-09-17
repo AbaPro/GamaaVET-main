@@ -12,12 +12,13 @@ $page_title = 'Recurring Expenses';
 require_once '../../../includes/header.php';
 
 // Fetch Recurring Expenses
+$expenseScope = getAccountScopeSql('e');
 $sql = "SELECT e.*, ec.name as category_name, v.name as vendor_name, a.name as account_name
         FROM expenses e
         JOIN expense_categories ec ON e.category_id = ec.id
         LEFT JOIN vendors v ON e.vendor_id = v.id
         LEFT JOIN accounts a ON e.account_id = a.id
-        WHERE e.is_recurring = 1
+        WHERE e.is_recurring = 1 AND $expenseScope
         ORDER BY e.expense_date DESC";
 $stmt = $pdo->query($sql);
 $recurring_expenses = $stmt->fetchAll(PDO::FETCH_ASSOC);

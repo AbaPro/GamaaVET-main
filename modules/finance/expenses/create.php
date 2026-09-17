@@ -10,9 +10,12 @@ if (!hasPermission('finance.expenses.manage')) {
 
 $expense = null;
 $is_edit = false;
+$loginRegion = $_SESSION['login_region'] ?? 'factory';
+$currentAccountId = getCurrentAccountId();
 
 if (isset($_GET['edit'])) {
-    $stmt = $pdo->prepare("SELECT * FROM expenses WHERE id = ?");
+    $expenseScope = getAccountScopeSql();
+    $stmt = $pdo->prepare("SELECT * FROM expenses WHERE id = ? AND $expenseScope");
     $stmt->execute([$_GET['edit']]);
     $expense = $stmt->fetch(PDO::FETCH_ASSOC);
     if ($expense) {
@@ -31,14 +34,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $expense_date = $_POST['expense_date'];
         $vendor_id = !empty($_POST['vendor_id']) ? $_POST['vendor_id'] : null;
         $po_id = !empty($_POST['po_id']) ? $_POST['po_id'] : null;
+        if ($loginRegion !== 'factory') {
+            $vendor_id = null;
+            $po_id = null;
+        }
         $notes = $_POST['notes'] ?? '';
         $is_recurring = isset($_POST['is_recurring']) ? 1 : 0;
         $recurrence_interval = $_POST['recurrence_interval'] ?? null;
         $account_id = !empty($_POST['account_id']) ? (int)$_POST['account_id'] : null;
         $currency = in_array($_POST['currency'] ?? '', ['EGP', 'USD', 'EUR', 'SAR']) ? $_POST['currency'] : 'EGP';
 
-        $account_stmt = $pdo->prepare("SELECT id FROM accounts WHERE id = ? AND is_active = 1 AND slug <> 'curva'");
-        $account_stmt->execute([$account_id]);
+        $account_stmt = $pdo->prepare("SELECT id FROM accounts WHERE id = ? AND id = ? AND is_active = 1");
+        $account_stmt->execute([$account_id, $currentAccountId]);
         if (!$account_id || !$account_stmt->fetchColumn()) {
             throw new Exception('Please select an available account.');
         }
@@ -161,10 +168,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // Fetch Data for form
 $categories = $pdo->query("SELECT * FROM expense_categories ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
-$vendors    = $pdo->query("SELECT id, name FROM vendors ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+$vendors    = $loginRegion === 'factory' ? $pdo->query("SELECT id, name FROM vendors ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC) : [];
 $safes      = $pdo->query("SELECT id, name, balance FROM safes WHERE " . getAccountScopeSql() . " ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
 $banks      = $pdo->query("SELECT id, bank_name, account_number, balance FROM bank_accounts WHERE " . getAccountScopeSql() . " ORDER BY bank_name ASC")->fetchAll(PDO::FETCH_ASSOC);
-$accounts   = $pdo->query("SELECT * FROM accounts WHERE is_active = 1 AND slug <> 'curva' ORDER BY id ASC")->fetchAll(PDO::FETCH_ASSOC);
+$accountStmt = $pdo->prepare('SELECT * FROM accounts WHERE id = ? AND is_active = 1');
+$accountStmt->execute([$currentAccountId]);
+$accounts = $accountStmt->fetchAll(PDO::FETCH_ASSOC);
 $currencies = $pdo->query("SELECT * FROM currencies ORDER BY is_default DESC, code ASC")->fetchAll(PDO::FETCH_ASSOC);
 
 // Pre-select account from session login_region
@@ -245,7 +254,7 @@ require_once '../../../includes/header.php';
                     </div>
                 </div>
 
-                <div class="card shadow-sm mb-4">
+                <?php if ($loginRegion === 'factory'): ?><div class="card shadow-sm mb-4">
                     <div class="card-header bg-light fw-bold">Linking (Optional)</div>
                     <div class="card-body">
                         <div class="row g-3">
@@ -269,7 +278,7 @@ require_once '../../../includes/header.php';
                             </div>
                         </div>
                     </div>
-                </div>
+                </div><?php endif; ?>
             </div>
 
             <div class="col-md-4">
@@ -295,7 +304,7 @@ require_once '../../../includes/header.php';
                             <select name="payment_method" id="payment_method" class="form-select">
                                 <option value="cash">Cash</option>
                                 <option value="transfer">Bank Transfer</option>
-                                <option value="wallet">Vendor Wallet</option>
+                                <?php if ($loginRegion === 'factory'): ?><option value="wallet">Vendor Wallet</option><?php endif; ?>
                             </select>
                         </div>
                         <div id="safe_select" class="mb-3">

@@ -11,6 +11,14 @@ if (!hasPermission('finance.expenses.manage')) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $expense_id = $_POST['expense_id'] ?? 0;
 
+    $expenseScope = getAccountScopeSql();
+    $scopeStmt = $pdo->prepare("SELECT id FROM expenses WHERE id = ? AND $expenseScope");
+    $scopeStmt->execute([$expense_id]);
+    if (!$scopeStmt->fetchColumn()) {
+        setAlert('danger', 'Expense not found.');
+        redirect('index.php');
+    }
+
     try {
         $pdo->beginTransaction();
 
@@ -33,12 +41,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $eStmt->execute([$expense_id]);
             $exp = $eStmt->fetch(PDO::FETCH_ASSOC);
             
-            if ($exp && $exp['po_id']) {
+            if (($_SESSION['login_region'] ?? 'factory') === 'factory' && $exp && $exp['po_id']) {
                  $stmt = $pdo->prepare("UPDATE purchase_orders SET paid_amount = paid_amount - ? WHERE id = ?");
                  $stmt->execute([$p['amount'], $exp['po_id']]);
             }
             
-            if ($exp && $exp['vendor_id'] && $p['payment_method'] == 'wallet') {
+            if (($_SESSION['login_region'] ?? 'factory') === 'factory' && $exp && $exp['vendor_id'] && $p['payment_method'] == 'wallet') {
                  $stmt = $pdo->prepare("UPDATE vendors SET wallet_balance = wallet_balance + ? WHERE id = ?");
                  $stmt->execute([$p['amount'], $exp['vendor_id']]);
             }
