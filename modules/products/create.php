@@ -58,6 +58,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             throw new Exception('Invalid product type.');
         }
+        $unit = normalizeProductUnit($_POST['unit'] ?? '');
+        if ($type === 'material' && $unit === null) {
+            throw new Exception('A unit is required for every raw material.');
+        }
         $unit_price = isset($_POST['unit_price']) && $_POST['unit_price'] !== '' ? (float)$_POST['unit_price'] : NULL;
         $cost_price = !empty($_POST['cost_price']) ? (float)$_POST['cost_price'] : NULL;
         $min_stock_level = !empty($_POST['min_stock_level']) ? (int)$_POST['min_stock_level'] : 0;
@@ -123,17 +127,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // Insert product
         $insert_sql = "INSERT INTO products 
                       (name, sku, barcode, type, category_id, subcategory_id, customer_id,
-                       unit_price, cost_price, min_stock_level, description, image) 
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                       unit, unit_price, cost_price, min_stock_level, description, image)
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         
         $insert_stmt = $conn->prepare($insert_sql);
         if (!$insert_stmt) {
             throw new Exception("Prepare failed: " . $conn->error);
         }
         
-        $insert_stmt->bind_param("ssssiiiddiss", 
+        $insert_stmt->bind_param("ssssiiisddiss",
             $name, $sku, $barcode, $type, $category_id, $subcategory_id, $customer_id,
-            $unit_price, $cost_price, $min_stock_level, $description, $image_name);
+            $unit, $unit_price, $cost_price, $min_stock_level, $description, $image_name);
         
         if (!$insert_stmt->execute()) {
             throw new Exception("Error adding product: " . $insert_stmt->error);

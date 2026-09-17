@@ -225,6 +225,7 @@ $receiverCandidates = getUsersWithPermission('inventories.transfer.receive');
                     <thead>
                         <tr>
                             <th>Item</th>
+                            <th>Unit</th>
                             <th>Available</th>
                             <th>Quantity</th>
                             <th>Action</th>
@@ -235,7 +236,7 @@ $receiverCandidates = getUsersWithPermission('inventories.transfer.receive');
                     </tbody>
                     <tfoot>
                         <tr>
-                            <td colspan="4">
+                            <td colspan="5">
                                 <button type="button" class="btn btn-sm btn-primary" id="addTransferItem">
                                     <i class="fas fa-plus"></i> Add Item
                                 </button>
@@ -272,6 +273,7 @@ $receiverCandidates = getUsersWithPermission('inventories.transfer.receive');
                                 <th>Name</th>
                                 <th>Type</th>
                                 <th>SKU</th>
+                                <th>Unit</th>
                                 <th>Available</th>
                                 <th>Action</th>
                             </tr>
@@ -312,15 +314,17 @@ $(document).ready(function() {
                                     '<td>' + product.name + '</td>' +
                                     '<td>' + (product.type === 'material' ? 'Raw Material' : 'Final Product') + '</td>' +
                                     '<td>' + product.sku + '</td>' +
+                                    '<td>' + (product.type === 'material' ? (product.unit || 'Not set') : '-') + '</td>' +
                                     '<td>' + product.quantity + '</td>' +
                                     '<td><button type="button" class="btn btn-sm btn-primary select-product" ' +
                                     'data-id="' + product.id + '" ' +
                                     'data-name="' + product.name + '" ' +
+                                    'data-unit="' + (product.unit || '') + '" ' +
                                     'data-quantity="' + product.quantity + '">Select</button></td>' +
                                     '</tr>';
                         });
                     } else {
-                        html = '<tr><td colspan="5" class="text-center">No items found in this inventory</td></tr>';
+                        html = '<tr><td colspan="6" class="text-center">No items found in this inventory</td></tr>';
                     }
                     
                     $('#productSelectBody').html(html);
@@ -346,6 +350,7 @@ $(document).ready(function() {
     $(document).on('click', '.select-product', function() {
         var product_id = $(this).data('id');
         var product_name = $(this).data('name');
+        var product_unit = $(this).data('unit') || '-';
         var available = $(this).data('quantity');
         
         // Check if product already added
@@ -357,6 +362,7 @@ $(document).ready(function() {
         // Add to transfer items table
         var row = '<tr data-id="' + product_id + '">' +
                   '<td>' + product_name + '<input type="hidden" name="product_id[]" value="' + product_id + '"></td>' +
+                  '<td>' + product_unit + '</td>' +
                   '<td><span class="available-quantity">' + available + '</span></td>' +
                   '<td><input type="number" class="form-control form-control-sm quantity" name="quantity[]" min="0" max="' + available + '" step="0.01" required></td>' +
                   '<td><button type="button" class="btn btn-sm btn-danger remove-item"><i class="fas fa-trash"></i></button></td>' +

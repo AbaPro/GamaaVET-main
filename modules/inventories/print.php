@@ -36,7 +36,7 @@ $inventory_stmt->close();
 $productScope = getProductChannelScopeSql('p', 'c', 'f');
 
 // Get inventory products
-$products_sql = "SELECT p.id, p.name, p.sku, p.barcode, ip.quantity, p.min_stock_level, c.name AS customer_name 
+$products_sql = "SELECT p.id, p.name, p.sku, p.barcode, p.type, p.unit, ip.quantity, p.min_stock_level, c.name AS customer_name
                  FROM inventory_products ip 
                  JOIN products p ON ip.product_id = p.id 
                  LEFT JOIN customers c ON p.customer_id = c.id
@@ -93,6 +93,7 @@ header('Content-Type: text/html; charset=utf-8');
                 <th>Product Name</th>
                 <th>Customer Name</th>
                 <th>Barcode</th>
+                <th>Unit</th>
                 <th>Quantity</th>
                 <th>Min Stock</th>
                 <th>Status</th>
@@ -106,6 +107,7 @@ header('Content-Type: text/html; charset=utf-8');
                         <td><?php echo htmlspecialchars($product['name']); ?></td>
                         <td><?php echo $product['customer_name'] ? htmlspecialchars($product['customer_name']) : 'N/A'; ?></td>
                         <td><?php echo htmlspecialchars($product['barcode']); ?></td>
+                        <td><?= $product['type'] === 'material' ? htmlspecialchars(getProductUnitLabel($product['unit'] ?? '') ?: 'Not set') : '-' ?></td>
                         <td><?php echo $product['quantity']; ?></td>
                         <td><?php echo $product['min_stock_level']; ?></td>
                         <td>
@@ -119,7 +121,7 @@ header('Content-Type: text/html; charset=utf-8');
                 <?php endwhile; ?>
             <?php else: ?>
                 <tr>
-                    <td colspan="7" class="text-center">No products found in this inventory</td>
+                    <td colspan="8" class="text-center">No products found in this inventory</td>
                 </tr>
             <?php endif; ?>
         </tbody>

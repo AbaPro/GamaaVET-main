@@ -110,7 +110,7 @@ if ($isExcel) {
     $excelData = [];
     
     // Header row
-    $headers = ['SKU', 'Barcode', 'Name', 'Description', 'Type', 'Category', 'Subcategory', 'Customer'];
+    $headers = ['SKU', 'Barcode', 'Name', 'Description', 'Type', 'Unit', 'Category', 'Subcategory', 'Customer'];
     if (hasExplicitPermission('products.final.price.view')) {
         $headers[] = 'Selling Price';
     }
@@ -129,6 +129,7 @@ if ($isExcel) {
                 $row['name'],
                 $row['description'],
                 ucfirst($row['type']),
+                $row['type'] === 'material' ? getProductUnitLabel($row['unit'] ?? '') : '',
                 $row['category_name'],
                 $row['subcategory_name'],
                 $row['customer_name']
@@ -159,7 +160,7 @@ if ($isExcel) {
     $output = fopen('php://output', 'w');
     
     // Header row
-    $headers = ['SKU', 'Barcode', 'Name', 'Description', 'Type', 'Category', 'Subcategory', 'Customer'];
+    $headers = ['SKU', 'Barcode', 'Name', 'Description', 'Type', 'Unit', 'Category', 'Subcategory', 'Customer'];
 
     if (hasExplicitPermission('products.final.price.view')) {
         $headers[] = 'Selling Price';
@@ -180,6 +181,7 @@ if ($isExcel) {
                 $row['name'],
                 $row['description'],
                 ucfirst($row['type']),
+                $row['type'] === 'material' ? getProductUnitLabel($row['unit'] ?? '') : '',
                 $row['category_name'],
                 $row['subcategory_name'],
                 $row['customer_name']

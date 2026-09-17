@@ -116,6 +116,16 @@ include '../../includes/header.php';
                                             <th>Type</th>
                                             <td><?= ucfirst($product['type']) ?></td>
                                         </tr>
+                                        <?php if ($product['type'] === 'material'): ?>
+                                        <tr>
+                                            <th>Unit</th>
+                                            <td><?= htmlspecialchars(getProductUnitLabel($product['unit'] ?? '') ?: 'Not set') ?></td>
+                                        </tr>
+                                        <tr>
+                                            <th>Conversion</th>
+                                            <td><?= htmlspecialchars(getProductUnitConversionText($product['unit'] ?? '') ?: 'Not available') ?></td>
+                                        </tr>
+                                        <?php endif; ?>
                                         <?php if (canViewProductPrice($product['type'])): ?>
                                         <tr>
                                             <th>Selling Price</th>
@@ -194,7 +204,12 @@ include '../../includes/header.php';
                                             <tr>
                                                 <td><?= htmlspecialchars($item['inventory_name']) ?></td>
                                                 <td><?= htmlspecialchars($item['location']) ?></td>
-                                                <td><?= $item['quantity'] ?></td>
+                                                <td>
+                                                    <?= $item['quantity'] ?>
+                                                    <?php if ($product['type'] === 'material' && getProductUnitLabel($product['unit'] ?? '') !== ''): ?>
+                                                        <?= htmlspecialchars(getProductUnitLabel($product['unit'])) ?>
+                                                    <?php endif; ?>
+                                                </td>
                                             </tr>
                                             <?php endforeach; ?>
                                         <?php else: ?>

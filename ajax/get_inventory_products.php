@@ -25,7 +25,7 @@ if (!canAccessInventory($inventory_id)) {
 $productScope = getProductChannelScopeSql('p', 'c', 'f');
 
 // Get only products belonging to the selected Factory/direct-sales channel.
-$sql = "SELECT p.id, p.name, p.sku, p.type, ip.quantity
+$sql = "SELECT p.id, p.name, p.sku, p.type, p.unit, ip.quantity
         FROM inventory_products ip 
         JOIN products p ON ip.product_id = p.id
         LEFT JOIN customers c ON c.id = p.customer_id

@@ -16,7 +16,7 @@ require_once '../../includes/header.php';
 $inventoryScope = getInventoryChannelScopeSql('i');
 $productScope = getProductChannelScopeSql('p', 'c', 'f');
 $sql = "SELECT ip.inventory_id, i.name AS inventory_name, p.id AS product_id,
-               p.name AS product_name, p.sku, p.min_stock_level, ip.quantity
+               p.name AS product_name, p.sku, p.type, p.unit, p.min_stock_level, ip.quantity
         FROM inventory_products ip
         JOIN products p ON ip.product_id = p.id
         JOIN inventories i ON ip.inventory_id = i.id
@@ -47,6 +47,7 @@ $result = $conn->query($sql);
                         <th>Inventory</th>
                         <th>Product</th>
                         <th>SKU</th>
+                        <th>Unit</th>
                         <th>Quantity</th>
                         <th>Min Level</th>
                         <th>Status</th>
@@ -60,6 +61,7 @@ $result = $conn->query($sql);
                                 <td><?php echo htmlspecialchars($row['inventory_name']); ?></td>
                                 <td><?php echo htmlspecialchars($row['product_name']); ?></td>
                                 <td><?php echo htmlspecialchars($row['sku']); ?></td>
+                                <td><?= $row['type'] === 'material' ? htmlspecialchars(getProductUnitLabel($row['unit'] ?? '') ?: 'Not set') : '-' ?></td>
                                 <td><?php echo (int)$row['quantity']; ?></td>
                                 <td><?php echo (int)$row['min_stock_level']; ?></td>
                                 <td><span class="badge bg-danger">Low Stock</span></td>
@@ -71,7 +73,7 @@ $result = $conn->query($sql);
                         <?php endwhile; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="7" class="text-center">No low stock items found</td>
+                            <td colspan="8" class="text-center">No low stock items found</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>

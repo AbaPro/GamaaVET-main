@@ -31,6 +31,61 @@ if (!$portalOrder) {
     exit();
 }
 
+if (empty($_SESSION['portal_order_delete_token'])) {
+    $_SESSION['portal_order_delete_token'] = bin2hex(random_bytes(32));
+}
+
+// Delete the request outright. Converted requests can never be deleted (a real
+// order already exists). Approved requests require the force_delete permission.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete') {
+    $isForceDelete = $portalOrder['status'] === 'approved';
+    $requiredPermission = $isForceDelete ? 'sales.portal_orders.force_delete' : 'sales.portal_orders.delete';
+
+    if (!hasPermission($requiredPermission)) {
+        $_SESSION['error'] = "You don't have permission to delete this portal order request.";
+        header('Location: review.php?id=' . $portalOrderId);
+        exit();
+    }
+
+    $token = $_POST['csrf_token'] ?? '';
+    if (!is_string($token) || !hash_equals($_SESSION['portal_order_delete_token'], $token)) {
+        $_SESSION['error'] = 'Invalid request. Refresh the page and try again.';
+        header('Location: review.php?id=' . $portalOrderId);
+        exit();
+    }
+
+    if (!in_array($portalOrder['status'], ['pending_review', 'priced', 'rejected', 'approved'], true)) {
+        $_SESSION['error'] = 'This request can no longer be deleted.';
+        header('Location: review.php?id=' . $portalOrderId);
+        exit();
+    }
+
+    try {
+        $pdo->beginTransaction();
+
+        $deleteItems = $pdo->prepare("DELETE FROM portal_order_items WHERE portal_order_id = ?");
+        $deleteItems->execute([$portalOrderId]);
+
+        $deleteOrder = $pdo->prepare("DELETE FROM portal_orders WHERE id = ?");
+        $deleteOrder->execute([$portalOrderId]);
+
+        $pdo->commit();
+
+        logActivity(
+            $isForceDelete ? 'Force-deleted portal order request' : 'Deleted portal order request',
+            ['portal_order_id' => $portalOrderId, 'status' => $portalOrder['status']]
+        );
+        $_SESSION['success'] = 'Portal order request deleted.';
+        header('Location: list.php');
+        exit();
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        $_SESSION['error'] = 'Failed to delete request: ' . $e->getMessage();
+        header('Location: review.php?id=' . $portalOrderId);
+        exit();
+    }
+}
+
 // Save pricing (unit price / quantity per line) — allowed while still under review.
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_pricing') {
     if (!in_array($portalOrder['status'], ['pending_review', 'priced'], true)) {
@@ -342,6 +397,11 @@ $canApprove = $portalOrder['status'] === 'priced';
 $canConvert = $portalOrder['status'] === 'approved' && !$portalOrder['converted_order_id'];
 $canReject = in_array($portalOrder['status'], ['pending_review', 'priced'], true);
 $canReopen = $portalOrder['status'] === 'approved' && !$portalOrder['converted_order_id'];
+$canDelete = hasPermission('sales.portal_orders.delete')
+    && in_array($portalOrder['status'], ['pending_review', 'priced', 'rejected'], true);
+$canForceDelete = hasPermission('sales.portal_orders.force_delete')
+    && $portalOrder['status'] === 'approved'
+    && !$portalOrder['converted_order_id'];
 
 require_once '../../../includes/header.php';
 ?>
@@ -458,6 +518,22 @@ require_once '../../../includes/header.php';
             <form method="post" onsubmit="return confirm('Convert this request into a real order? This will deduct stock and cannot be undone.');">
                 <input type="hidden" name="action" value="convert">
                 <button type="submit" class="btn btn-primary">Convert to Order</button>
+            </form>
+        <?php endif; ?>
+
+        <?php if ($canDelete): ?>
+            <form method="post" class="ms-auto" onsubmit="return confirm('Permanently delete this portal order request? This cannot be undone.');">
+                <input type="hidden" name="action" value="delete">
+                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['portal_order_delete_token'], ENT_QUOTES, 'UTF-8') ?>">
+                <button type="submit" class="btn btn-outline-danger">Delete</button>
+            </form>
+        <?php endif; ?>
+
+        <?php if ($canForceDelete): ?>
+            <form method="post" class="<?= $canDelete ? '' : 'ms-auto' ?>" onsubmit="return confirm('This request has already been approved. Force delete it anyway? This cannot be undone.');">
+                <input type="hidden" name="action" value="delete">
+                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['portal_order_delete_token'], ENT_QUOTES, 'UTF-8') ?>">
+                <button type="submit" class="btn btn-danger">Force Delete</button>
             </form>
         <?php endif; ?>
     </div>

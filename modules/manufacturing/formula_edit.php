@@ -44,18 +44,18 @@ $products = [];
 $productMap = [];
 // Show material products; fall back to all products if none are typed yet
 $productScope = getProductChannelScopeSql('p', 'c', 'f');
-$productResult = $conn->query("SELECT p.id, p.name, p.sku FROM products p LEFT JOIN customers c ON c.id = p.customer_id LEFT JOIN factories f ON f.id = c.factory_id WHERE p.type = 'material' AND $productScope ORDER BY p.name");
+$productResult = $conn->query("SELECT p.id, p.name, p.sku, p.unit FROM products p LEFT JOIN customers c ON c.id = p.customer_id LEFT JOIN factories f ON f.id = c.factory_id WHERE p.type = 'material' AND $productScope ORDER BY p.name");
 if ($productResult && $productResult->num_rows > 0) {
     while ($productRow = $productResult->fetch_assoc()) {
         $products[] = $productRow;
-        $productMap[$productRow['id']] = $productRow['name'];
+        $productMap[$productRow['id']] = $productRow;
     }
 } else {
-    $productResult = $conn->query("SELECT p.id, p.name, p.sku FROM products p LEFT JOIN customers c ON c.id = p.customer_id LEFT JOIN factories f ON f.id = c.factory_id WHERE $productScope ORDER BY p.name");
+    $productResult = $conn->query("SELECT p.id, p.name, p.sku, p.unit FROM products p LEFT JOIN customers c ON c.id = p.customer_id LEFT JOIN factories f ON f.id = c.factory_id WHERE $productScope ORDER BY p.name");
     if ($productResult) {
         while ($productRow = $productResult->fetch_assoc()) {
             $products[] = $productRow;
-            $productMap[$productRow['id']] = $productRow['name'];
+            $productMap[$productRow['id']] = $productRow;
         }
     }
 }
@@ -122,6 +122,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $rawComponents = $_POST['components'] ?? [];
     $components = [];
     $componentsMissingUnit = [];
+    $componentsMissingCatalogUnit = [];
+    $componentsWithIncompatibleUnit = [];
     $hasInvalidComponent = false;
     if (!empty($rawComponents) && is_array($rawComponents)) {
         foreach ($rawComponents as $componentRow) {
@@ -132,7 +134,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 continue;
             }
             if ($componentProductId > 0 && isset($productMap[$componentProductId])) {
-                $componentName = $productMap[$componentProductId];
+                $componentName = $productMap[$componentProductId]['name'];
             } else {
                 $componentName = sanitize($componentRow['name'] ?? '');
             }
@@ -146,10 +148,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $componentsMissingUnit[] = $componentName;
             }
 
+            $componentQuantity = sanitize($componentRow['quantity'] ?? '');
+            if ($componentProductId > 0 && $componentUnit !== '') {
+                $catalogUnit = $productMap[$componentProductId]['unit'] ?? '';
+                $formulaUnit = getProductFormulaUnit($catalogUnit);
+                if ($formulaUnit === null) {
+                    $componentsMissingCatalogUnit[] = $componentName;
+                } elseif ($componentQuantity !== '' && is_numeric($componentQuantity)) {
+                    $convertedQuantity = convertProductUnitQuantity($componentQuantity, $componentUnit, $formulaUnit);
+                    if ($convertedQuantity === null) {
+                        $componentsWithIncompatibleUnit[] = $componentName;
+                    } else {
+                        $componentQuantity = rtrim(rtrim(number_format($convertedQuantity, 6, '.', ''), '0'), '.');
+                        $componentUnit = $formulaUnit;
+                    }
+                } else {
+                    $componentUnit = $formulaUnit;
+                }
+            }
+
             $components[] = [
                 'product_id' => $componentProductId > 0 ? $componentProductId : null,
                 'name' => $componentName,
-                'quantity' => sanitize($componentRow['quantity'] ?? ''),
+                'quantity' => $componentQuantity,
                 'unit' => $componentUnit,
                 'notes' => sanitize($componentRow['notes'] ?? ''),
             ];
@@ -173,6 +194,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         setAlert('danger', 'Please add at least one component.');
     } elseif (!empty($componentsMissingUnit)) {
         setAlert('danger', 'Please select a unit for every component: ' . implode(', ', $componentsMissingUnit));
+    } elseif (!empty($componentsMissingCatalogUnit)) {
+        setAlert('danger', 'Set the catalog unit for these raw materials before using them in a formula: ' . implode(', ', $componentsMissingCatalogUnit));
+    } elseif (!empty($componentsWithIncompatibleUnit)) {
+        setAlert('danger', 'The selected unit cannot convert to the catalog unit for: ' . implode(', ', $componentsWithIncompatibleUnit));
     } elseif ($hasInvalidComponent) {
         setAlert('danger', 'One or more components are outside the Factory channel.');
     } else {
@@ -396,6 +421,9 @@ if ($formula && !empty($formula['sample_images_json'])) {
                             </tbody>
                         </table>
                     </div>
+                    <div class="px-3 pb-3 small text-muted">
+                        Linked raw materials are saved in their catalog unit. For example, 1 kg converts to 1,000 g; count units cannot convert to weight.
+                    </div>
                 </div>
             </div>
 
@@ -551,6 +579,12 @@ if ($formula && !empty($formula['sample_images_json'])) {
     const preselectedProductId = <?= json_encode($formula['product_id'] ?? $_POST['product_id'] ?? ''); ?>;
     const preselectedCustomerId = <?= json_encode($formula['customer_id'] ?? $_POST['customer_id'] ?? ''); ?>;
     const canonicalUnits = ['kg', 'g', 'L', 'ml', 'pcs'];
+    const productUnitMap = { each: 'pcs', gram: 'g', kilo: 'kg' };
+    const productUnitLabels = {
+        each: 'Each (pcs; count only)',
+        gram: 'Gram (g; base mass unit)',
+        kilo: 'Kilogram (kg; 1 kg = 1,000 g)'
+    };
     const componentsBody = $('#componentsBody');
     let componentIndex = 0;
 
@@ -587,8 +621,11 @@ if ($formula && !empty($formula['sample_images_json'])) {
             } else {
                 label = escapeForAttr(product.name) + (product.sku ? ' (' + escapeForAttr(product.sku) + ')' : '');
             }
+            label += product.unit
+                ? ' — ' + escapeForAttr(productUnitLabels[product.unit] || product.unit)
+                : ' — Unit not set';
             const selected = selectedId && String(product.id) === String(selectedId) ? 'selected' : '';
-            html += `<option value="${product.id}" data-name="${escapeForAttr(product.name)}" ${selected}>${label}</option>`;
+            html += `<option value="${product.id}" data-name="${escapeForAttr(product.name)}" data-unit="${escapeForAttr(product.unit || '')}" ${selected}>${label}</option>`;
         });
         return html;
     }
@@ -644,6 +681,14 @@ if ($formula && !empty($formula['sample_images_json'])) {
         }
 
         syncComponentName(addedRow);
+        if (!unit) {
+            const componentSelect = addedRow.find('.component-product')[0];
+            const selectedOption = componentSelect ? componentSelect.options[componentSelect.selectedIndex] : null;
+            const productUnit = selectedOption ? (selectedOption.dataset.unit || '') : '';
+            if (productUnitMap[productUnit]) {
+                addedRow.find('select[name$="[unit]"]').val(productUnitMap[productUnit]);
+            }
+        }
     }
 
     function loadFinalProductsForCustomer(customerId, selectedId) {
@@ -730,6 +775,11 @@ if ($formula && !empty($formula['sample_images_json'])) {
             const row = $(this).closest('tr');
             const nameInput = row.find('.component-name');
             if ($(this).val()) {
+                const selectedOption = this.options[this.selectedIndex];
+                const productUnit = selectedOption ? (selectedOption.dataset.unit || '') : '';
+                if (productUnit && productUnitMap[productUnit]) {
+                    row.find('select[name$="[unit]"]').val(productUnitMap[productUnit]);
+                }
                 nameInput.addClass('d-none');
                 syncComponentName(row);
             } else {

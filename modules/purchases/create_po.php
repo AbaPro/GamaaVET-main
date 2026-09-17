@@ -411,6 +411,7 @@ require_once '../../includes/header.php';
                         <tr>
                             <th>SKU</th>
                             <th>Name</th>
+                            <th>Unit</th>
                             <th>Category</th>
                             <th>Stock</th>
                             <th>Action</th>
@@ -424,6 +425,7 @@ require_once '../../includes/header.php';
                                 data-subcategory-id="<?= (int)($product['subcategory_id'] ?? 0) ?>">
                                 <td><?= htmlspecialchars($product['sku']) ?></td>
                                 <td><?= htmlspecialchars($product['name']) ?></td>
+                                <td><?= htmlspecialchars(getProductUnitLabel($product['unit'] ?? '') ?: 'Not set') ?></td>
                                 <td><?= htmlspecialchars($product['category']) ?></td>
                                 <td>
                                     <?php

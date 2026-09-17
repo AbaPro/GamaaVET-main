@@ -385,8 +385,13 @@ if (isset($_SESSION['bulk_upload']['step']) && $_SESSION['bulk_upload']['step'] 
             $cost_price = isset($row['cost_price']) && $row['cost_price'] !== '' ? (float)$row['cost_price'] : null;
             $min_stock_level = isset($row['min_stock_level']) && $row['min_stock_level'] !== '' ? (int)$row['min_stock_level'] : 0;
             $description = isset($row['description']) ? sanitize($row['description']) : '';
-            $unit = isset($row['unit']) && in_array(strtolower($row['unit']), ['each', 'gram', 'kilo', '']) ? strtolower($row['unit']) : '';
-            
+            $unit = normalizeProductUnit($row['unit'] ?? '');
+            if ($type === 'material' && $unit === null) {
+                $error_count++;
+                $errors[] = "A valid unit (each, gram, or kilo) is required for raw material: $name";
+                continue;
+            }
+
             // Generate SKU if not provided
             if ($sku === '') {
                 $sku = generateUniqueSku($conn);
@@ -503,7 +508,7 @@ if ($current_step == 1) {
                             <li><strong>cost_price</strong> - Purchase/manufacturing cost (decimal)</li>
                             <li><strong>min_stock_level</strong> - Minimum stock alert threshold (integer, default: 0)</li>
                             <li><strong>description</strong> - Detailed product description (supports Arabic)</li>
-                            <li><strong>unit</strong> - Unit of measurement: <code>each</code>, <code>gram</code>, <code>kilo</code>, or leave empty</li>
+                            <li><strong>unit</strong> - Unit of measurement: <code>each</code>, <code>gram</code>, or <code>kilo</code>. Required for raw materials.</li>
                         </ul>
                         <hr>
                         <div class="alert alert-success mb-3">

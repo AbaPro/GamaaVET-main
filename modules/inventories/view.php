@@ -67,6 +67,7 @@ $sortColumns = [
     'type' => 'p.type',
     'customer' => 'customer_name',
     'barcode' => 'p.barcode',
+    'unit' => 'p.unit',
     'quantity' => 'ip.quantity',
     'min_stock' => 'p.min_stock_level',
     'status' => 'CASE WHEN ip.quantity <= COALESCE(p.min_stock_level, 0) THEN 0 ELSE 1 END',
@@ -83,7 +84,7 @@ if (!in_array($sortDir, ['asc', 'desc'], true)) {
 }
 
 // Get inventory products with filtering
-$products_sql = "SELECT p.id, p.name, p.sku, p.barcode, p.type, ip.quantity, p.min_stock_level, c.name AS customer_name
+$products_sql = "SELECT p.id, p.name, p.sku, p.barcode, p.type, p.unit, ip.quantity, p.min_stock_level, c.name AS customer_name
                  FROM inventory_products ip 
                  JOIN products p ON ip.product_id = p.id 
                  LEFT JOIN customers c ON p.customer_id = c.id
@@ -302,6 +303,7 @@ $ariaSort = static function (string $column) use ($sortBy, $sortDir): string {
                             'type' => 'Type',
                             'customer' => 'Customer',
                             'barcode' => 'Barcode',
+                            'unit' => 'Unit',
                             'quantity' => 'Quantity',
                             'min_stock' => 'Min Stock',
                             'status' => 'Status',
@@ -332,6 +334,7 @@ $ariaSort = static function (string $column) use ($sortBy, $sortDir): string {
                                 </td>
                                 <td><?php echo $product['customer_name'] ? htmlspecialchars($product['customer_name']) : '<span class="text-muted">N/A</span>'; ?></td>
                                 <td><?php echo htmlspecialchars($product['barcode']); ?></td>
+                                <td><?= $product['type'] === 'material' ? htmlspecialchars(getProductUnitLabel($product['unit'] ?? '') ?: 'Not set') : '-' ?></td>
                                 <td><?php echo $product['quantity']; ?></td>
                                 <td><?php echo $product['min_stock_level']; ?></td>
                                 <td>
@@ -360,7 +363,7 @@ $ariaSort = static function (string $column) use ($sortBy, $sortDir): string {
                         <?php endwhile; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="10" class="text-center">No items found in this inventory</td>
+                            <td colspan="11" class="text-center">No items found in this inventory</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>
@@ -429,7 +432,7 @@ $ariaSort = static function (string $column) use ($sortBy, $sortDir): string {
                             <option value="">-- Select Product --</option>
                             <?php
                             $eligibleProductScope = getProductChannelScopeSql('p', 'c', 'f');
-                            $all_products = $conn->query("SELECT p.id, p.name, p.sku, p.type, p.customer_id
+                            $all_products = $conn->query("SELECT p.id, p.name, p.sku, p.type, p.unit, p.customer_id
                                                           FROM products p
                                                           LEFT JOIN customers c ON c.id = p.customer_id
                                                           LEFT JOIN factories f ON f.id = c.factory_id
@@ -439,7 +442,8 @@ $ariaSort = static function (string $column) use ($sortBy, $sortDir): string {
                                 $type = isset($prod['type']) ? htmlspecialchars($prod['type']) : '';
                                 $customer_id = isset($prod['customer_id']) ? (int)$prod['customer_id'] : 0;
                                 $typeLabel = $prod['type'] === 'material' ? 'Raw Material' : 'Final Product';
-                                echo '<option value="' . $prod['id'] . '" data-type="' . $type . '" data-customer-id="' . $customer_id . '">' . htmlspecialchars($prod['name']) . ' (' . htmlspecialchars($prod['sku']) . ') — ' . $typeLabel . '</option>';
+                                $unitLabel = $prod['type'] === 'material' ? getProductUnitLabel($prod['unit'] ?? '') : '';
+                                echo '<option value="' . $prod['id'] . '" data-type="' . $type . '" data-customer-id="' . $customer_id . '">' . htmlspecialchars($prod['name']) . ' (' . htmlspecialchars($prod['sku']) . ') — ' . $typeLabel . ($unitLabel !== '' ? ' — ' . htmlspecialchars($unitLabel) : '') . '</option>';
                             }
                             ?>
                         </select>

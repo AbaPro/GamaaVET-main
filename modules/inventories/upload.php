@@ -352,7 +352,7 @@ $step = $_SESSION['inventory_bulk_upload']['step'] ?? 1;
                                 <tbody>
                                     <?php 
                                     $eligibleProductScope = $productScope;
-                                    $all_prods_res = $conn->query("SELECT p.id, p.name, p.sku, p.type
+                                    $all_prods_res = $conn->query("SELECT p.id, p.name, p.sku, p.type, p.unit
                                                                   FROM products p
                                                                   LEFT JOIN customers c ON c.id = p.customer_id
                                                                   LEFT JOIN factories f ON f.id = c.factory_id
@@ -367,7 +367,7 @@ $step = $_SESSION['inventory_bulk_upload']['step'] ?? 1;
                                             <select class="form-select select2" name="map_<?php echo md5($missing_name); ?>">
                                                 <option value="">-- Skip this product --</option>
                                                 <?php foreach ($all_prods as $p): ?>
-                                                    <option value="<?php echo $p['id']; ?>"><?php echo htmlspecialchars($p['name']); ?> (<?php echo htmlspecialchars($p['sku']); ?>) — <?php echo $p['type'] === 'material' ? 'Raw Material' : 'Final Product'; ?></option>
+                                                    <option value="<?php echo $p['id']; ?>"><?php echo htmlspecialchars($p['name']); ?> (<?php echo htmlspecialchars($p['sku']); ?>) — <?php echo $p['type'] === 'material' ? 'Raw Material — ' . htmlspecialchars(getProductUnitLabel($p['unit'] ?? '') ?: 'Unit not set') : 'Final Product'; ?></option>
                                                 <?php endforeach; ?>
                                             </select>
                                         </td>

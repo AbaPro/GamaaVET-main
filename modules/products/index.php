@@ -207,7 +207,11 @@ $canViewAnySellingPrice = hasExplicitPermission('products.final.price.view');
 $canViewAnyCostPrice = hasExplicitPermission('products.final.cost.view') || hasExplicitPermission('products.material.cost.view');
 $showSellingPriceColumn = false;
 $showCostPriceColumn = false;
+$showUnitColumn = false;
 foreach ($products as $productRow) {
+    if ($productRow['type'] === 'material') {
+        $showUnitColumn = true;
+    }
     if (!$showSellingPriceColumn && $canViewAnySellingPrice && canViewProductPrice($productRow['type'])) {
         $showSellingPriceColumn = true;
     }
@@ -218,7 +222,7 @@ foreach ($products as $productRow) {
         break;
     }
 }
-$productsTableColspan = 8 + ($showSellingPriceColumn ? 1 : 0) + ($showCostPriceColumn ? 1 : 0);
+$productsTableColspan = 8 + ($showUnitColumn ? 1 : 0) + ($showSellingPriceColumn ? 1 : 0) + ($showCostPriceColumn ? 1 : 0);
 
 // Fetch all active inventories (1 query)
 $inventories = [];
@@ -351,6 +355,9 @@ $productsTableColspan += 1;
                         <th>Category</th>
                         <th>Subcategory</th>
                         <th>Customer</th>
+                        <?php if ($showUnitColumn): ?>
+                        <th>Unit</th>
+                        <?php endif; ?>
                         <?php if ($showSellingPriceColumn): ?>
                         <th>Selling Price</th>
                         <?php endif; ?>
@@ -391,6 +398,9 @@ $productsTableColspan += 1;
                                 <td><?php echo htmlspecialchars($row['category_name']); ?></td>
                                 <td><?php echo $row['subcategory_name'] ? htmlspecialchars($row['subcategory_name']) : '-'; ?></td>
                                 <td><?php echo $row['customer_name'] ? htmlspecialchars($row['customer_name']) : '-'; ?></td>
+                                <?php if ($showUnitColumn): ?>
+                                <td><?= $row['type'] === 'material' ? htmlspecialchars(getProductUnitLabel($row['unit'] ?? '') ?: 'Not set') : '-' ?></td>
+                                <?php endif; ?>
                                 <?php if ($showSellingPriceColumn): ?>
                                 <td>
                                     <?php if (canViewProductPrice($row['type'])): ?>
@@ -414,14 +424,16 @@ $productsTableColspan += 1;
                                         if ($qty > 0) {
                                             $rowTotal += $qty;
                                             $qtyFormatted = ($qty == floor($qty)) ? (int)$qty : number_format((float)$qty, 2);
-                                            $stockLines[] = '<span class="text-muted small">' . htmlspecialchars($inv['name']) . ':</span> <strong>' . $qtyFormatted . '</strong>';
+                                            $unitSuffix = $row['type'] === 'material' ? ' ' . getProductUnitLabel($row['unit'] ?? '') : '';
+                                            $stockLines[] = '<span class="text-muted small">' . htmlspecialchars($inv['name']) . ':</span> <strong>' . $qtyFormatted . htmlspecialchars($unitSuffix) . '</strong>';
                                         }
                                     }
                                     if (!empty($stockLines)) {
                                         $totalFormatted = ($rowTotal == floor($rowTotal)) ? (int)$rowTotal : number_format((float)$rowTotal, 2);
                                         echo implode('<br>', $stockLines);
                                         echo '<hr class="my-1">';
-                                        echo '<span class="text-muted small">Total:</span> <strong>' . $totalFormatted . '</strong>';
+                                        $unitSuffix = $row['type'] === 'material' ? ' ' . getProductUnitLabel($row['unit'] ?? '') : '';
+                                        echo '<span class="text-muted small">Total:</span> <strong>' . $totalFormatted . htmlspecialchars($unitSuffix) . '</strong>';
                                     } else {
                                         echo '<span class="text-muted small">—</span>';
                                     }
@@ -440,6 +452,7 @@ $productsTableColspan += 1;
                                         data-category="<?php echo $row['category_id'] ?? ''; ?>"
                                         data-subcategory="<?php echo $row['subcategory_id'] ?? ''; ?>"
                                         data-customer="<?php echo isset($row['customer_id']) ? (int)$row['customer_id'] : ''; ?>"
+                                        data-unit="<?php echo htmlspecialchars($row['unit'] ?? ''); ?>"
                                         data-unit_price="<?php echo canViewProductPrice($row['type']) ? $row['unit_price'] : ''; ?>"
                                         data-cost_price="<?php echo canViewProductCost($row['type']) ? ($row['cost_price'] ?? '') : ''; ?>"
                                         data-min_stock="<?php echo $row['min_stock_level'] ?? 0; ?>"
@@ -537,6 +550,16 @@ $productsTableColspan += 1;
                         </div>
                     </div>
                     <div class="row">
+                        <div class="col-md-6 mb-3" data-unit-group>
+                            <label for="unit" class="form-label">Unit <span class="text-danger">*</span></label>
+                            <select class="form-select" id="unit" name="unit" data-role="product-unit">
+                                <option value="">-- Select Unit --</option>
+                                <?php foreach (getProductUnitOptions() as $unitValue => $unitLabel): ?>
+                                    <option value="<?= htmlspecialchars($unitValue) ?>"><?= htmlspecialchars($unitLabel) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                            <small class="text-muted">1 kilogram (kg) = 1,000 grams (g). Each (pcs) is a count and cannot convert to weight.</small>
+                        </div>
                         <div class="col-md-6 mb-3" data-pricing-group="unit">
                             <label for="unit_price" class="form-label">Selling Price</label>
                             <input type="number" class="form-control" id="unit_price" name="unit_price" min="0" step="0.01" data-role="unit-price">
@@ -643,6 +666,16 @@ $productsTableColspan += 1;
                         </div>
                     </div>
                     <div class="row">
+                        <div class="col-md-6 mb-3" data-unit-group>
+                            <label for="edit_unit" class="form-label">Unit <span class="text-danger">*</span></label>
+                            <select class="form-select" id="edit_unit" name="unit" data-role="product-unit">
+                                <option value="">-- Select Unit --</option>
+                                <?php foreach (getProductUnitOptions() as $unitValue => $unitLabel): ?>
+                                    <option value="<?= htmlspecialchars($unitValue) ?>"><?= htmlspecialchars($unitLabel) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                            <small class="text-muted">1 kilogram (kg) = 1,000 grams (g). Each (pcs) is a count and cannot convert to weight.</small>
+                        </div>
                         <div class="col-md-6 mb-3" data-pricing-group="unit">
                             <label for="edit_unit_price" class="form-label">Selling Price</label>
                             <input type="number" class="form-control" id="edit_unit_price" name="unit_price" min="0" step="0.01" data-role="unit-price">
@@ -712,18 +745,23 @@ $productsTableColspan += 1;
         const showUnit = type !== 'material';
         const showCost = type !== 'final';
         const showCustomer = type !== 'material';
+        const showMeasurementUnit = type === 'material';
         const unitGroup = form.querySelector('[data-pricing-group="unit"]');
         const costGroup = form.querySelector('[data-pricing-group="cost"]');
         const unitInput = form.querySelector('[data-role="unit-price"]');
         const costInput = form.querySelector('[data-role="cost-price"]');
+        const measurementUnitGroup = form.querySelector('[data-unit-group]');
+        const measurementUnitInput = form.querySelector('[data-role="product-unit"]');
         if (unitGroup) unitGroup.classList.toggle('d-none', !showUnit);
         if (costGroup) costGroup.classList.toggle('d-none', !showCost);
+        if (measurementUnitGroup) measurementUnitGroup.classList.toggle('d-none', !showMeasurementUnit);
         const customerGroup = form.querySelector('[data-customer-group="customer"]');
         const customerInput = form.querySelector('#customer_id, #edit_customer_id');
         if (customerGroup) customerGroup.classList.toggle('d-none', !showCustomer);
         if (customerInput) customerInput.required = showCustomer;
         if (unitInput) unitInput.required = showUnit;
         if (costInput) costInput.required = showCost;
+        if (measurementUnitInput) measurementUnitInput.required = showMeasurementUnit;
     };
 
     const initProductPricingControls = () => {
@@ -893,6 +931,7 @@ $productsTableColspan += 1;
             const type = $(this).data('type');
             const category = $(this).data('category');
             const subcategory = $(this).data('subcategory');
+            const unit = $(this).data('unit');
             const unit_price = $(this).data('unit_price');
             const cost_price = $(this).data('cost_price');
             const min_stock = $(this).data('min_stock') || $(this).data('min_stock_level') || 0;
@@ -903,6 +942,7 @@ $productsTableColspan += 1;
             $('#edit_sku').val(sku);
             $('#edit_barcode').val(barcode);
             $('#edit_type').val(type);
+            $('#edit_unit').val(unit);
             $('#edit_unit_price').val(unit_price);
             $('#edit_cost_price').val(cost_price);
             $('#edit_min_stock_level').val(min_stock);

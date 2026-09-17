@@ -50,6 +50,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         setAlert('danger', 'Invalid product type.');
         redirect('index.php');
     }
+    $unit = normalizeProductUnit($_POST['unit'] ?? '');
+    if ($type === 'material' && $unit === null) {
+        setAlert('danger', 'A unit is required for every raw material.');
+        redirect('edit.php?id=' . $id);
+    }
     $unit_price = sanitize($_POST['unit_price']);
     $cost_price = isset($_POST['cost_price']) && $_POST['cost_price'] !== '' ? sanitize($_POST['cost_price']) : null;
     $min_stock_level = !empty($_POST['min_stock_level']) ? sanitize($_POST['min_stock_level']) : 0;
@@ -125,11 +130,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $update_sql = "UPDATE products SET 
                    name = ?, sku = ?, barcode = ?, type = ?, category_id = ?, subcategory_id = ?, customer_id = ?,
-                   unit_price = ?, cost_price = ?, min_stock_level = ?, description = ?, image = ? 
+                   unit = ?, unit_price = ?, cost_price = ?, min_stock_level = ?, description = ?, image = ?
                    WHERE id = ?";
     $update_stmt = $conn->prepare($update_sql);
     $update_stmt->bind_param(
-        "ssssiiidddssi",
+        "ssssiiisdddssi",
         $name,
         $sku,
         $barcode,
@@ -137,6 +142,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $category_id,
         $subcategory_id,
         $customer_id,
+        $unit,
         $unit_price,
         $cost_price,
         $min_stock_level,
@@ -282,6 +288,18 @@ require_once '../../includes/header.php';
             </div>
         </div>
         <div class="row">
+            <div class="col-md-6 mb-3" data-unit-group>
+                <label class="form-label">Unit <span class="text-danger">*</span></label>
+                <select class="form-select" name="unit" data-role="product-unit">
+                    <option value="">-- Select Unit --</option>
+                    <?php foreach (getProductUnitOptions() as $unitValue => $unitLabel): ?>
+                        <option value="<?= htmlspecialchars($unitValue) ?>" <?= ($product['unit'] ?? '') === $unitValue ? 'selected' : '' ?>>
+                            <?= htmlspecialchars($unitLabel) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+                <small class="text-muted">1 kilogram (kg) = 1,000 grams (g). Each (pcs) is a count and cannot convert to weight.</small>
+            </div>
             <div class="col-md-6 mb-3" data-pricing-group="unit">
                 <label class="form-label">Selling Price</label>
                 <input type="number" class="form-control" name="unit_price" min="0" step="0.01" value="<?= htmlspecialchars($product['unit_price']) ?>" data-role="unit-price">
@@ -326,14 +344,19 @@ require_once '../../includes/header.php';
         if (!form) return;
         const showUnit = type !== 'material';
         const showCost = type !== 'final';
+        const showMeasurementUnit = type === 'material';
         const unitGroup = form.querySelector('[data-pricing-group=\"unit\"]');
         const costGroup = form.querySelector('[data-pricing-group=\"cost\"]');
         const unitInput = form.querySelector('[data-role=\"unit-price\"]');
         const costInput = form.querySelector('[data-role=\"cost-price\"]');
+        const measurementUnitGroup = form.querySelector('[data-unit-group]');
+        const measurementUnitInput = form.querySelector('[data-role="product-unit"]');
         if (unitGroup) unitGroup.classList.toggle('d-none', !showUnit);
         if (costGroup) costGroup.classList.toggle('d-none', !showCost);
+        if (measurementUnitGroup) measurementUnitGroup.classList.toggle('d-none', !showMeasurementUnit);
         if (unitInput) unitInput.required = showUnit;
         if (costInput) costInput.required = showCost;
+        if (measurementUnitInput) measurementUnitInput.required = showMeasurementUnit;
     };
 
     const initStandaloneSearchableSelects = () => {

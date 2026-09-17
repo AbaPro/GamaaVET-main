@@ -524,6 +524,94 @@ function getProductTypeColor($type) {
     }
 }
 
+// Canonical storage units supported by products.unit. Quantities are converted
+// through each definition's base factor, never directly between incompatible families.
+function getProductUnitDefinitions() {
+    return [
+        'each' => [
+            'label' => 'Each (pcs)',
+            'symbol' => 'pcs',
+            'family' => 'count',
+            'base_factor' => 1.0,
+            'conversion' => '1 each = 1 piece',
+        ],
+        'gram' => [
+            'label' => 'Gram (g)',
+            'symbol' => 'g',
+            'family' => 'mass',
+            'base_factor' => 1.0,
+            'conversion' => 'Base mass unit',
+        ],
+        'kilo' => [
+            'label' => 'Kilogram (kg)',
+            'symbol' => 'kg',
+            'family' => 'mass',
+            'base_factor' => 1000.0,
+            'conversion' => '1 kilogram = 1,000 grams',
+        ],
+    ];
+}
+
+function getProductUnitOptions() {
+    $options = [];
+    foreach (getProductUnitDefinitions() as $unit => $definition) {
+        $options[$unit] = $definition['label'];
+    }
+    return $options;
+}
+
+function normalizeProductUnit($unit) {
+    $unit = strtolower(trim((string)$unit));
+    $aliases = [
+        'each' => 'each',
+        'piece' => 'each',
+        'pieces' => 'each',
+        'pc' => 'each',
+        'pcs' => 'each',
+        'gram' => 'gram',
+        'grams' => 'gram',
+        'g' => 'gram',
+        'kilo' => 'kilo',
+        'kilos' => 'kilo',
+        'kilogram' => 'kilo',
+        'kilograms' => 'kilo',
+        'kg' => 'kilo',
+    ];
+    return $aliases[$unit] ?? null;
+}
+
+function getProductUnitLabel($unit) {
+    $unit = normalizeProductUnit($unit);
+    return $unit !== null ? getProductUnitOptions()[$unit] : '';
+}
+
+function getProductUnitConversionText($unit) {
+    $unit = normalizeProductUnit($unit);
+    if ($unit === null) return '';
+    return getProductUnitDefinitions()[$unit]['conversion'];
+}
+
+function getProductFormulaUnit($unit) {
+    $unit = normalizeProductUnit($unit);
+    if ($unit === null) return null;
+    return getProductUnitDefinitions()[$unit]['symbol'];
+}
+
+/**
+ * Convert between supported count or mass units. Returns null when a unit is
+ * unknown or when the units belong to different families (for example pcs to g).
+ */
+function convertProductUnitQuantity($quantity, $fromUnit, $toUnit) {
+    $from = normalizeProductUnit($fromUnit);
+    $to = normalizeProductUnit($toUnit);
+    if ($from === null || $to === null) return null;
+
+    $definitions = getProductUnitDefinitions();
+    if ($definitions[$from]['family'] !== $definitions[$to]['family']) return null;
+
+    return (float)$quantity * $definitions[$from]['base_factor'] / $definitions[$to]['base_factor'];
+}
+
 
 function getProductById($id) {
     global $conn;
@@ -1266,6 +1354,29 @@ function canAccessOrder($orderId) {
     $sql .= " LIMIT 1";
     $stmt = $conn->prepare($sql);
     $stmt->bind_param('i', $orderId);
+    $stmt->execute();
+    $allowed = $stmt->get_result()->num_rows === 1;
+    $stmt->close();
+
+    return $allowed;
+}
+
+function canAccessPortalOrder($portalOrderId) {
+    global $conn;
+
+    $portalOrderId = (int)$portalOrderId;
+    if ($portalOrderId <= 0 || !isLoggedIn()) return false;
+
+    $channelScope = getCustomerChannelScopeSql('c', 'f');
+    $sql = "SELECT po.id
+            FROM portal_orders po
+            JOIN customers c ON c.id = po.customer_id
+            LEFT JOIN factories f ON f.id = c.factory_id
+            WHERE po.id = ?
+              AND $channelScope";
+    $sql .= " LIMIT 1";
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param('i', $portalOrderId);
     $stmt->execute();
     $allowed = $stmt->get_result()->num_rows === 1;
     $stmt->close();
