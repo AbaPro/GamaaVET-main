@@ -2,7 +2,9 @@
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
 
-if (!hasPermission('finance.vendor_wallet.view')) {
+$canSettleBalances = hasPermission('finance.balances.settle');
+if (($_SESSION['login_region'] ?? 'factory') !== 'factory'
+    || (!hasPermission('finance.vendor_wallet.view') && !$canSettleBalances)) {
     setAlert('danger', 'Access denied.');
     redirect('../../dashboard.php');
 }
@@ -37,6 +39,7 @@ $result = $conn->query($sql);
                             <a href="../../modules/vendors/wallet.php?id=<?= $row['id']; ?>" class="btn btn-sm btn-primary">
                                 <i class="fas fa-wallet"></i> View Wallet
                             </a>
+                            <?php if ($canSettleBalances): ?><a href="../../modules/vendors/wallet.php?id=<?= $row['id']; ?>#set-balance" class="btn btn-sm btn-outline-warning"><i class="fas fa-scale-balanced"></i> Set Balance</a><?php endif; ?>
                         </td>
                     </tr>
                 <?php endwhile; ?>

@@ -1,10 +1,11 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
-require_once 'transfer_helpers.php';
+require_once __DIR__ . '/account_balance_adjustments.php';
 
 if (!hasPermission('finance.personal_accounts.create')
     && !hasPermission('finance.personal_accounts.delete')
+    && !hasPermission('finance.balances.settle')
     && !hasPermission('finance.transfers.create')
     && !hasPermission('finance.transfers.approve')) {
     setAlert('danger', 'Access denied.');
@@ -36,6 +37,11 @@ if (!$account) {
     setAlert('danger', 'Personal account not found.');
     redirect('personal.php');
 }
+
+$canSetBalance = canSettleFinanceBalances();
+$formToken = financeAccountFormToken();
+handleFinanceAccountBalanceSettlement('personal', $personalAccountId, $canSetBalance, 'personal_details.php?id=' . $personalAccountId);
+$balanceAdjustments = financeAccountBalanceAdjustments('personal', $personalAccountId);
 
 $transferScope = financeTransferScopeSql('f');
 $transferStmt = $conn->prepare(
@@ -138,12 +144,51 @@ require_once '../../includes/header.php';
     </div></div></div>
     <div class="col-lg-3 col-md-6 mb-3"><div class="card border-0 shadow-sm h-100"><div class="card-body">
         <div class="small text-uppercase text-muted fw-bold">Transaction Records</div>
-        <div class="h3 mb-0"><?= number_format(count($transfers)); ?></div>
+        <div class="h3 mb-0"><?= number_format(count($transfers) + count($balanceAdjustments)); ?></div>
     </div></div></div>
 </div>
 
 <?php if ($account['description']): ?>
     <div class="alert alert-info"><strong>Responsibility:</strong> <?= nl2br(e($account['description'])); ?></div>
+<?php endif; ?>
+
+<?php if ($canSetBalance): ?>
+<div class="card border-warning shadow-sm mb-4" id="set-balance">
+    <div class="card-header bg-warning-subtle"><h5 class="mb-0"><i class="fas fa-scale-balanced me-2"></i>Set Personal Account Balance</h5></div>
+    <div class="card-body">
+        <?php if (financeAccountBalanceAdjustmentTypeReady('personal')): ?>
+        <div class="alert alert-warning py-2">Use this to reconcile the stored amount. The previous balance, new balance, reason, user, and date are retained in the audit history.</div>
+        <form method="post" class="row g-3 align-items-end" onsubmit="return confirm('Set this personal account to the entered balance?');">
+            <input type="hidden" name="csrf_token" value="<?= e($formToken); ?>"><input type="hidden" name="set_finance_account_balance" value="1">
+            <div class="col-md-3"><label class="form-label">New Balance (EGP)*</label><input type="number" class="form-control" name="new_balance" value="<?= e(number_format((float)$account['balance'], 2, '.', '')); ?>" min="-999999999999.99" max="999999999999.99" step="0.01" required></div>
+            <div class="col-md-2"><label class="form-label">Transaction Date*</label><input type="date" class="form-control" name="transaction_date" value="<?= date('Y-m-d'); ?>" required></div>
+            <div class="col-md-5"><label class="form-label">Reconciliation Reason*</label><input type="text" class="form-control" name="adjustment_reason" maxlength="500" placeholder="Why is the stored balance being corrected?" required></div>
+            <div class="col-md-2"><button type="submit" class="btn btn-warning w-100">Set Balance</button></div>
+        </form>
+        <?php else: ?><div class="alert alert-warning mb-0">Apply migration <code>20260922_finance_wide_balance_settlement.sql</code> to enable audited balance updates.</div><?php endif; ?>
+    </div>
+</div>
+<?php endif; ?>
+
+<?php if ($balanceAdjustments): ?>
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-header bg-white py-3"><h5 class="mb-0"><i class="fas fa-scale-balanced me-2"></i>Balance Settlement History</h5></div>
+    <div class="card-body"><div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead class="table-light"><tr><th>Date</th><th class="text-end">Previous</th><th class="text-end">New</th><th class="text-end">Change</th><th>Reason</th><th>Settled By</th></tr></thead>
+            <tbody><?php foreach ($balanceAdjustments as $adjustment): $change = (float)$adjustment['new_balance'] - (float)$adjustment['previous_balance']; ?>
+                <tr>
+                    <td><?= date('M d, Y', strtotime($adjustment['transaction_date'])); ?></td>
+                    <td class="text-end"><?= number_format((float)$adjustment['previous_balance'], 2); ?></td>
+                    <td class="text-end fw-semibold"><?= number_format((float)$adjustment['new_balance'], 2); ?></td>
+                    <td class="text-end <?= $change < 0 ? 'text-danger' : 'text-success'; ?>"><?= ($change > 0 ? '+' : '') . number_format($change, 2); ?></td>
+                    <td><?= e($adjustment['reason']); ?></td>
+                    <td><?= e($adjustment['created_by_name'] ?: 'System'); ?></td>
+                </tr>
+            <?php endforeach; ?></tbody>
+        </table>
+    </div></div>
+</div>
 <?php endif; ?>
 
 <div class="card border-0 shadow-sm">

@@ -57,7 +57,7 @@ function handleFinanceAccountDeletion($type, $canDelete, $returnPage) {
             throw new DomainException('Cannot delete an account linked to PO payments. Its history must be preserved.');
         }
 
-        if (tableExists('finance_account_balance_adjustments') && in_array($type, ['safe', 'bank'], true)) {
+        if (tableExists('finance_account_balance_adjustments') && in_array($type, ['safe', 'bank', 'personal'], true)) {
             $stmt = $conn->prepare('SELECT id FROM finance_account_balance_adjustments WHERE account_type = ? AND account_id = ? LIMIT 1 FOR UPDATE');
             $stmt->bind_param('si', $type, $id);
             $stmt->execute();

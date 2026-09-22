@@ -7,6 +7,7 @@ if (!hasPermission('finance.bank_accounts.create')
     && !hasPermission('finance.bank_accounts.edit')
     && !hasPermission('finance.bank_accounts.delete')
     && !hasPermission('finance.bank_accounts.balance.edit')
+    && !hasPermission('finance.balances.settle')
     && !hasPermission('finance.transfers.create')
     && !hasPermission('finance.transfers.approve')) {
     setAlert('danger', 'Access denied.');
@@ -35,7 +36,7 @@ if (!$bank) {
     redirect('banks.php');
 }
 
-$canSetBalance = hasPermission('finance.bank_accounts.balance.edit');
+$canSetBalance = canSettleFinanceBalances() || hasPermission('finance.bank_accounts.balance.edit');
 $formToken = financeAccountFormToken();
 handleFinanceAccountBalanceSettlement('bank', $bankId, $canSetBalance, 'bank_details.php?id=' . $bankId);
 $currency = $bank['currency'] ?: 'EGP';

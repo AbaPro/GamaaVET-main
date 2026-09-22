@@ -2,7 +2,8 @@
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
 
-if (!hasPermission('finance.customer_wallet.view')) {
+$canSettleBalances = hasPermission('finance.balances.settle');
+if (!hasPermission('finance.customer_wallet.view') && !$canSettleBalances) {
     setAlert('danger', 'You do not have permission to access this page.');
     redirect('../../dashboard.php');
 }
@@ -74,6 +75,7 @@ $result = $conn->query($sql);
                                 <a href="../../modules/customers/wallet.php?id=<?= $row['id']; ?>" class="btn btn-sm btn-primary">
                                     <i class="fas fa-wallet"></i> View Account
                                 </a>
+                                <?php if ($canSettleBalances): ?><a href="../../modules/customers/wallet.php?id=<?= $row['id']; ?>#set-balance" class="btn btn-sm btn-outline-warning"><i class="fas fa-scale-balanced"></i> Set Balance</a><?php endif; ?>
                             </td>
                         </tr>
                     <?php endwhile; ?>

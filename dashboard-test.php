@@ -186,6 +186,7 @@ require_once 'includes/header-test.php';
         
         <?php 
         $canFinance = hasPermission('finance.customer_wallet.view') 
+            || hasPermission('finance.balances.settle')
             || hasPermission('finance.customer_payment.process')
             || hasPermission('finance.safes.create')
             || hasPermission('finance.safes.edit')
@@ -554,7 +555,7 @@ require_once 'includes/header-test.php';
     <?php if ($canFinance): ?>
     <div class="module-content" id="finance">
         <div class="tiles-grid">
-            <?php if (hasPermission('finance.customer_wallet.view')): ?>
+            <?php if (hasPermission('finance.customer_wallet.view') || hasPermission('finance.balances.settle')): ?>
             <a href="<?= BASE_URL ?>modules/finance/customers.php" class="tile bg-gradient-primary">
                 <div>
                     <div class="tile-icon"><i class="fas fa-wallet"></i></div>
@@ -572,7 +573,7 @@ require_once 'includes/header-test.php';
             </a>
             <?php endif; ?>
 
-            <?php if (hasPermission('finance.safes.create') || hasPermission('finance.safes.edit') || hasPermission('finance.safes.delete') || hasPermission('finance.safes.balance.edit')): ?>
+            <?php if (hasPermission('finance.safes.create') || hasPermission('finance.safes.edit') || hasPermission('finance.safes.delete') || hasPermission('finance.safes.balance.edit') || hasPermission('finance.balances.settle')): ?>
             <a href="<?= BASE_URL ?>modules/finance/safes.php" class="tile bg-gradient-warning">
                 <div>
                     <div class="tile-icon"><i class="fas fa-vault"></i></div>
@@ -581,7 +582,7 @@ require_once 'includes/header-test.php';
             </a>
             <?php endif; ?>
 
-            <?php if (hasPermission('finance.bank_accounts.create') || hasPermission('finance.bank_accounts.edit') || hasPermission('finance.bank_accounts.delete') || hasPermission('finance.bank_accounts.balance.edit')): ?>
+            <?php if (hasPermission('finance.bank_accounts.create') || hasPermission('finance.bank_accounts.edit') || hasPermission('finance.bank_accounts.delete') || hasPermission('finance.bank_accounts.balance.edit') || hasPermission('finance.balances.settle')): ?>
             <a href="<?= BASE_URL ?>modules/finance/banks.php" class="tile bg-gradient-info">
                 <div>
                     <div class="tile-icon"><i class="fas fa-university"></i></div>
@@ -590,7 +591,7 @@ require_once 'includes/header-test.php';
             </a>
             <?php endif; ?>
 
-            <?php if (hasPermission('finance.personal_accounts.create')): ?>
+            <?php if (hasPermission('finance.personal_accounts.create') || hasPermission('finance.personal_accounts.delete') || hasPermission('finance.balances.settle')): ?>
             <a href="<?= BASE_URL ?>modules/finance/personal.php" class="tile bg-gradient-secondary">
                 <div>
                     <div class="tile-icon"><i class="fas fa-user-shield"></i></div>
@@ -617,7 +618,7 @@ require_once 'includes/header-test.php';
             </a>
             <?php endif; ?>
 
-            <?php if (hasPermission('finance.vendor_wallet.view')): ?>
+            <?php if (hasPermission('finance.vendor_wallet.view') || hasPermission('finance.balances.settle')): ?>
             <a href="<?= BASE_URL ?>modules/finance/vendors.php" class="tile bg-gradient-primary">
                 <div>
                     <div class="tile-icon"><i class="fas fa-truck-field"></i></div>

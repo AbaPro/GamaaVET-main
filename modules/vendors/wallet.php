@@ -1,8 +1,15 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+require_once '../finance/account_balance_adjustments.php';
 
-if (!hasPermission('vendors.wallet')) {
+$canManageVendorWallet = hasPermission('vendors.wallet');
+$canViewFinanceVendorWallet = ($_SESSION['login_region'] ?? 'factory') === 'factory'
+    && hasPermission('finance.vendor_wallet.view');
+$canSetVendorBalance = ($_SESSION['login_region'] ?? 'factory') === 'factory'
+    && canSettleFinanceBalances();
+
+if (!$canManageVendorWallet && !$canViewFinanceVendorWallet && !$canSetVendorBalance) {
     setAlert('danger', 'You do not have permission to access this page.');
     redirect('../../dashboard.php');
 }
@@ -12,9 +19,8 @@ if (!isset($_GET['id']) || !is_numeric($_GET['id'])) {
     redirect('index.php');
 }
 
-$vendor_id = sanitize($_GET['id']);
+$vendor_id = (int)$_GET['id'];
 $page_title = 'Vendor Wallet';
-require_once '../../includes/header.php';
 
 // Get vendor info for header
 $vendor_sql = "SELECT name, wallet_balance FROM vendors WHERE id = ?";
@@ -30,9 +36,21 @@ if ($vendor_result->num_rows === 0) {
 
 $vendor = $vendor_result->fetch_assoc();
 $vendor_stmt->close();
+$vendorBackUrl = hasPermission('vendors.view')
+    ? 'view.php?id=' . $vendor_id
+    : '../finance/vendors.php';
+$vendorBackLabel = hasPermission('vendors.view') ? 'Back to Vendor' : 'Back to Vendor Wallets';
+$formToken = financeAccountFormToken();
+handleFinanceAccountBalanceSettlement('vendor', $vendor_id, $canSetVendorBalance, 'wallet.php?id=' . $vendor_id);
+$balanceAdjustments = financeAccountBalanceAdjustments('vendor', $vendor_id);
 
 // Handle wallet transactions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!$canManageVendorWallet) {
+        setAlert('danger', 'You do not have permission to process vendor wallet transactions.');
+        redirect("wallet.php?id=$vendor_id");
+    }
+    validateFinanceAccountFormToken("wallet.php?id=$vendor_id");
     $amount = sanitize($_POST['amount']);
     $type = sanitize($_POST['type']);
     $notes = sanitize($_POST['notes']);
@@ -128,6 +146,7 @@ while ($waRow = $waResult->fetch_assoc()) {
     $walletAttachmentsByTxn[$waRow['vendor_wallet_transaction_id']][] = $waRow;
 }
 $waStmt->close();
+require_once '../../includes/header.php';
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -137,10 +156,11 @@ $waStmt->close();
             Balance: <?php echo number_format($vendor['wallet_balance'], 2); ?>
         </span>
     </h2>
-    <a href="view.php?id=<?php echo $vendor_id; ?>" class="btn btn-secondary">Back to Vendor</a>
+    <a href="<?php echo e($vendorBackUrl); ?>" class="btn btn-secondary"><?php echo e($vendorBackLabel); ?></a>
 </div>
 
 <div class="row mb-4">
+    <?php if ($canManageVendorWallet): ?>
     <div class="col-md-6">
         <div class="card">
             <div class="card-header">
@@ -148,6 +168,7 @@ $waStmt->close();
             </div>
             <div class="card-body">
                 <form action="wallet.php?id=<?php echo $vendor_id; ?>" method="POST" enctype="multipart/form-data">
+                    <input type="hidden" name="csrf_token" value="<?php echo e($formToken); ?>">
                     <div class="mb-3">
                         <label for="type" class="form-label">Transaction Type*</label>
                         <select class="form-select" id="type" name="type" required>
@@ -180,7 +201,51 @@ $waStmt->close();
             </div>
         </div>
     </div>
+    <?php endif; ?>
+    <?php if ($canSetVendorBalance): ?>
+    <div class="col-md-6">
+        <div class="card border-warning" id="set-balance">
+            <div class="card-header"><h5 class="card-title mb-0">Set Vendor Balance</h5></div>
+            <div class="card-body">
+                <?php if (financeAccountBalanceAdjustmentTypeReady('vendor')): ?>
+                <div class="alert alert-warning py-2">Set the reconciled wallet amount directly. The old and new values, reason, user, and date are retained in the audit history.</div>
+                <form action="wallet.php?id=<?php echo $vendor_id; ?>" method="post" onsubmit="return confirm('Set this vendor wallet to the entered balance?');">
+                    <input type="hidden" name="csrf_token" value="<?php echo e($formToken); ?>">
+                    <input type="hidden" name="set_finance_account_balance" value="1">
+                    <div class="mb-3"><label for="vendor_new_balance" class="form-label">New Balance*</label><input type="number" class="form-control" id="vendor_new_balance" name="new_balance" value="<?php echo e(number_format((float)$vendor['wallet_balance'], 2, '.', '')); ?>" min="-999999999999.99" max="999999999999.99" step="0.01" required></div>
+                    <div class="mb-3"><label for="vendor_adjustment_reason" class="form-label">Reconciliation Reason*</label><textarea class="form-control" id="vendor_adjustment_reason" name="adjustment_reason" rows="2" maxlength="500" required></textarea></div>
+                    <div class="mb-3"><label for="vendor_adjustment_date" class="form-label">Transaction Date*</label><input type="date" class="form-control" id="vendor_adjustment_date" name="transaction_date" value="<?php echo date('Y-m-d'); ?>" required></div>
+                    <button type="submit" class="btn btn-warning">Set Balance</button>
+                </form>
+                <?php else: ?>
+                <div class="alert alert-warning mb-0">Apply migration <code>20260922_finance_wide_balance_settlement.sql</code> to enable audited balance updates.</div>
+                <?php endif; ?>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
 </div>
+
+<?php if ($balanceAdjustments): ?>
+<div class="card mb-4">
+    <div class="card-header"><h5 class="card-title mb-0">Balance Settlement History</h5></div>
+    <div class="card-body"><div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead><tr><th>Date</th><th class="text-end">Previous</th><th class="text-end">New</th><th class="text-end">Change</th><th>Reason</th><th>Settled By</th></tr></thead>
+            <tbody><?php foreach ($balanceAdjustments as $adjustment): $change = (float)$adjustment['new_balance'] - (float)$adjustment['previous_balance']; ?>
+                <tr>
+                    <td><?php echo date('M d, Y', strtotime($adjustment['transaction_date'])); ?></td>
+                    <td class="text-end"><?php echo number_format((float)$adjustment['previous_balance'], 2); ?></td>
+                    <td class="text-end fw-semibold"><?php echo number_format((float)$adjustment['new_balance'], 2); ?></td>
+                    <td class="text-end <?php echo $change < 0 ? 'text-danger' : 'text-success'; ?>"><?php echo ($change > 0 ? '+' : '') . number_format($change, 2); ?></td>
+                    <td><?php echo e($adjustment['reason']); ?></td>
+                    <td><?php echo e($adjustment['created_by_name'] ?: 'System'); ?></td>
+                </tr>
+            <?php endforeach; ?></tbody>
+        </table>
+    </div></div>
+</div>
+<?php endif; ?>
 
 <div class="card">
     <div class="card-header">

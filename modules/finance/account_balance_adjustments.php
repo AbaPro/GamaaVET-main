@@ -41,6 +41,62 @@ function financeAccountBalanceAdjustmentStorageReady() {
     return tableExists('finance_account_balance_adjustments');
 }
 
+function financeAccountBalanceAdjustmentTypeReady($type) {
+    global $conn;
+
+    if (!financeAccountBalanceAdjustmentStorageReady()) {
+        return false;
+    }
+
+    static $columnType = null;
+    if ($columnType === null) {
+        $stmt = $conn->prepare("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'finance_account_balance_adjustments' AND COLUMN_NAME = 'account_type' LIMIT 1");
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        $columnType = (string)($row['COLUMN_TYPE'] ?? '');
+    }
+
+    return strpos($columnType, "'" . str_replace("'", "''", (string)$type) . "'") !== false;
+}
+
+function canSettleFinanceBalances() {
+    return hasPermission('finance.balances.settle');
+}
+
+function financeBalanceAccountConfig($type) {
+    $configs = [
+        'safe' => ['table' => 'safes', 'name' => 'name', 'balance' => 'balance', 'currency' => 'currency', 'scoped' => true],
+        'bank' => ['table' => 'bank_accounts', 'name' => 'bank_name', 'balance' => 'balance', 'currency' => 'currency', 'scoped' => true],
+        'personal' => ['table' => 'personal_accounts', 'name' => 'name', 'balance' => 'balance', 'currency' => null, 'scoped' => true],
+        'vendor' => ['table' => 'vendors', 'name' => 'name', 'balance' => 'wallet_balance', 'currency' => null, 'scoped' => false],
+    ];
+    return $configs[$type] ?? null;
+}
+
+function financeBalanceGetAccount($type, $accountId, $forUpdate = false) {
+    global $conn;
+
+    $config = financeBalanceAccountConfig($type);
+    $accountId = (int)$accountId;
+    if (!$config || $accountId <= 0) {
+        return null;
+    }
+
+    $currencySql = $config['currency'] ? "`{$config['currency']}`" : "'EGP'";
+    $scopeSql = $config['scoped'] ? ' AND ' . getAccountScopeSql() : '';
+    $sql = "SELECT id, `{$config['name']}` AS account_name, `{$config['balance']}` AS balance,
+                   $currencySql AS currency
+            FROM `{$config['table']}`
+            WHERE id = ?$scopeSql" . ($forUpdate ? ' FOR UPDATE' : '');
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param('i', $accountId);
+    $stmt->execute();
+    $account = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return $account ?: null;
+}
+
 function financeAccountHasFinancialHistory($type, $accountId) {
     global $conn;
 
@@ -103,12 +159,12 @@ function handleFinanceAccountBalanceSettlement($type, $accountId, $canSetBalance
 
     validateFinanceAccountFormToken($returnUrl);
 
-    if (!financeAccountBalanceAdjustmentStorageReady()) {
+    if (!financeAccountBalanceAdjustmentTypeReady($type)) {
         setAlert('danger', 'The finance account balance adjustment migration has not been applied yet.');
         redirect($returnUrl);
     }
 
-    $config = financeTransferAccountConfig($type);
+    $config = financeBalanceAccountConfig($type);
     $accountId = (int)$accountId;
     $newBalanceInput = trim((string)($_POST['new_balance'] ?? ''));
     $reason = trim(strip_tags((string)($_POST['adjustment_reason'] ?? '')));
@@ -141,7 +197,7 @@ function handleFinanceAccountBalanceSettlement($type, $accountId, $canSetBalance
 
     $conn->begin_transaction();
     try {
-        $account = financeTransferGetAccount($type, $accountId, true);
+        $account = financeBalanceGetAccount($type, $accountId, true);
         if (!$account) {
             throw new DomainException('Account not found.');
         }
@@ -201,7 +257,7 @@ function handleFinanceAccountBalanceSettlement($type, $accountId, $canSetBalance
 function financeAccountBalanceAdjustments($type, $accountId) {
     global $conn;
 
-    if (!financeAccountBalanceAdjustmentStorageReady()) {
+    if (!financeAccountBalanceAdjustmentTypeReady($type)) {
         return [];
     }
 

@@ -7,6 +7,7 @@ if (!hasPermission('finance.safes.create')
     && !hasPermission('finance.safes.edit')
     && !hasPermission('finance.safes.delete')
     && !hasPermission('finance.safes.balance.edit')
+    && !hasPermission('finance.balances.settle')
     && !hasPermission('finance.transfers.create')
     && !hasPermission('finance.transfers.approve')) {
     setAlert('danger', 'Access denied.');
@@ -36,7 +37,7 @@ if (!$safe) {
     redirect('safes.php');
 }
 
-$canSetBalance = hasPermission('finance.safes.balance.edit');
+$canSetBalance = canSettleFinanceBalances() || hasPermission('finance.safes.balance.edit');
 $formToken = financeAccountFormToken();
 handleFinanceAccountBalanceSettlement('safe', $safeId, $canSetBalance, 'safe_details.php?id=' . $safeId);
 $currency = $safe['currency'] ?: 'EGP';

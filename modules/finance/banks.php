@@ -7,7 +7,7 @@ require_once __DIR__ . '/account_balance_adjustments.php';
 $canCreate = hasPermission('finance.bank_accounts.create');
 $canEdit = hasPermission('finance.bank_accounts.edit');
 $canDelete = hasPermission('finance.bank_accounts.delete');
-$canSetBalance = hasPermission('finance.bank_accounts.balance.edit');
+$canSetBalance = canSettleFinanceBalances() || hasPermission('finance.bank_accounts.balance.edit');
 $canView = $canCreate || $canEdit || $canDelete || $canSetBalance
     || hasPermission('finance.transfers.create') || hasPermission('finance.transfers.approve');
 

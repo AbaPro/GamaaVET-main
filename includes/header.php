@@ -356,6 +356,7 @@
                     <!-- Finance -->
                     <?php
                     $canFinance = hasPermission('finance.customer_wallet.view')
+                        || hasPermission('finance.balances.settle')
                         || hasPermission('finance.customer_payment.process')
                         || hasPermission('finance.safes.create')
                         || hasPermission('finance.safes.edit')
@@ -380,19 +381,19 @@
                                 <i class="fas fa-coins me-1"></i> Finance
                             </a>
                             <ul class="dropdown-menu">
-                                <?php if (hasPermission('finance.customer_wallet.view')): ?>
+                                <?php if (hasPermission('finance.customer_wallet.view') || hasPermission('finance.balances.settle')): ?>
                                     <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/customers.php"><i class="fas fa-wallet me-2"></i> Customer Accounts</a></li>
                                 <?php endif; ?>
                                 <?php if (hasPermission('finance.customer_payment.process')): ?>
                                     <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/bills.php"><i class="fas fa-file-invoice-dollar me-2"></i> Bills & Payments</a></li>
                                 <?php endif; ?>
-                                <?php if (hasPermission('finance.safes.create') || hasPermission('finance.safes.edit') || hasPermission('finance.safes.delete') || hasPermission('finance.safes.balance.edit')): ?>
+                                <?php if (hasPermission('finance.safes.create') || hasPermission('finance.safes.edit') || hasPermission('finance.safes.delete') || hasPermission('finance.safes.balance.edit') || hasPermission('finance.balances.settle')): ?>
                                     <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/safes.php"><i class="fas fa-vault me-2"></i> Safes</a></li>
                                 <?php endif; ?>
-                                <?php if (hasPermission('finance.bank_accounts.create') || hasPermission('finance.bank_accounts.edit') || hasPermission('finance.bank_accounts.delete') || hasPermission('finance.bank_accounts.balance.edit')): ?>
+                                <?php if (hasPermission('finance.bank_accounts.create') || hasPermission('finance.bank_accounts.edit') || hasPermission('finance.bank_accounts.delete') || hasPermission('finance.bank_accounts.balance.edit') || hasPermission('finance.balances.settle')): ?>
                                     <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/banks.php"><i class="fas fa-university me-2"></i> Bank Accounts</a></li>
                                 <?php endif; ?>
-                                <?php if (hasPermission('finance.personal_accounts.create') || hasPermission('finance.personal_accounts.delete')): ?>
+                                <?php if (hasPermission('finance.personal_accounts.create') || hasPermission('finance.personal_accounts.delete') || hasPermission('finance.balances.settle')): ?>
                                     <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/personal.php"><i class="fas fa-user-shield me-2"></i> Personal Accounts</a></li>
                                 <?php endif; ?>
                                 <?php if (hasPermission('finance.transfers.create') || hasPermission('finance.transfers.approve')): ?>
@@ -404,7 +405,7 @@
                                 <?php if (hasPermission('finance.expenses.view')): ?>
                                     <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/expenses/"><i class="fas fa-money-bill-wave me-2"></i> Expenses Tracking</a></li>
                                 <?php endif; ?>
-                                <?php if ($login_region === 'factory' && hasPermission('finance.vendor_wallet.view')): ?>
+                                <?php if ($login_region === 'factory' && (hasPermission('finance.vendor_wallet.view') || hasPermission('finance.balances.settle'))): ?>
                                     <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/vendors.php"><i class="fas fa-truck-field me-2"></i> Vendor Wallets</a></li>
                                 <?php endif; ?>
                                 <?php if ($login_region === 'factory' && hasPermission('analysis.view_reports')): ?>

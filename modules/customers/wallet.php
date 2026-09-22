@@ -1,9 +1,10 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+require_once '../finance/account_balance_adjustments.php';
 
 $canManageCustomerWallet = hasPermission('customers.wallet') || hasPermission('finance.customer_payment.process');
-$canAdjustCustomerWalletBalance = hasPermission('customers.wallet.balance.edit');
+$canAdjustCustomerWalletBalance = hasPermission('customers.wallet.balance.edit') || canSettleFinanceBalances();
 $canViewCustomerWallet = hasPermission('customers.wallet.view')
     || $canManageCustomerWallet
     || $canAdjustCustomerWalletBalance
@@ -41,6 +42,7 @@ if ($customer_result->num_rows === 0) {
 $customer = $customer_result->fetch_assoc();
 $customer_stmt->close();
 $walletBalanceAdjustmentStorageReady = tableExists('customer_wallet_balance_adjustments');
+$financeBalanceFormToken = financeAccountFormToken();
 
 // A balance adjustment sets the customer account balance directly. It deliberately does
 // not create a wallet transaction or move money through a safe/bank account.
@@ -55,12 +57,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['set_wallet_balance'])
         redirect('wallet.php?id=' . $customer_id);
     }
 
+    validateFinanceAccountFormToken('wallet.php?id=' . $customer_id);
+
     $newBalanceInput = trim((string)($_POST['wallet_balance'] ?? ''));
     $adjustmentReason = trim(strip_tags((string)($_POST['adjustment_reason'] ?? '')));
     $transactionDate = normalizeTransactionDate($_POST['transaction_date'] ?? '');
 
-    if (!preg_match('/^-?\d{1,8}(?:\.\d{1,2})?$/', $newBalanceInput)) {
-        setAlert('danger', 'Enter a valid wallet balance between -99,999,999.99 and 99,999,999.99.');
+    if (!preg_match('/^-?\d{1,12}(?:\.\d{1,2})?$/', $newBalanceInput)) {
+        setAlert('danger', 'Enter a valid wallet balance between -999,999,999,999.99 and 999,999,999,999.99.');
         redirect('wallet.php?id=' . $customer_id);
     }
 
@@ -468,7 +472,7 @@ require_once '../../includes/header.php';
     <?php endif; ?>
     <?php if ($canAdjustCustomerWalletBalance && $walletBalanceAdjustmentStorageReady): ?>
     <div class="col-md-6">
-        <div class="card border-warning">
+        <div class="card border-warning" id="set-balance">
             <div class="card-header">
                 <h5 class="card-title mb-0">Set Wallet Balance</h5>
             </div>
@@ -477,6 +481,7 @@ require_once '../../includes/header.php';
                     This sets the customer account balance directly. Use a negative value for debt and a positive value for credit. It will not create a wallet transaction or change any cash safe or bank account.
                 </div>
                 <form action="wallet.php?id=<?php echo $customer_id; ?>" method="POST" onsubmit="return confirm('Set this wallet to the entered balance?');">
+                    <input type="hidden" name="csrf_token" value="<?php echo e($financeBalanceFormToken); ?>">
                     <input type="hidden" name="set_wallet_balance" value="1">
                     <div class="mb-3">
                         <label for="wallet_balance" class="form-label">New Balance*</label>
@@ -485,8 +490,8 @@ require_once '../../includes/header.php';
                                id="wallet_balance"
                                name="wallet_balance"
                                value="<?php echo e(number_format((float)$customer['wallet_balance'], 2, '.', '')); ?>"
-                               min="-99999999.99"
-                               max="99999999.99"
+                               min="-999999999999.99"
+                               max="999999999999.99"
                                step="0.01"
                                required>
                     </div>

@@ -2,11 +2,13 @@
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
 require_once __DIR__ . '/account_deletion.php';
+require_once __DIR__ . '/account_balance_adjustments.php';
 
 $canCreate = hasPermission('finance.personal_accounts.create');
 $canDelete = hasPermission('finance.personal_accounts.delete');
+$canSetBalance = canSettleFinanceBalances();
 
-if (!$canCreate && !$canDelete) {
+if (!$canCreate && !$canDelete && !$canSetBalance) {
     setAlert('danger', 'Access denied.');
     redirect('../../dashboard.php');
 }
@@ -155,6 +157,7 @@ require_once '../../includes/header.php';
                                 <a href="personal_details.php?id=<?= (int)$row['id']; ?>" class="btn btn-sm btn-outline-primary">
                                     <i class="fas fa-history me-1"></i>History
                                 </a>
+                                <?php if ($canSetBalance): ?><a href="personal_details.php?id=<?= (int)$row['id']; ?>#set-balance" class="btn btn-sm btn-outline-warning"><i class="fas fa-scale-balanced me-1"></i>Set Balance</a><?php endif; ?>
                                 <?php if ($canDelete) renderFinanceAccountDeleteButton($row); ?>
                             </td>
                         </tr>
