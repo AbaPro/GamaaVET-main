@@ -212,9 +212,17 @@ $products = $pdo->query("
     SELECT p.id, p.name, p.sku, p.cost_price, p.type, p.unit, p.customer_id, p.category_id, p.subcategory_id, c.name as category
     FROM products p
     JOIN categories c ON p.category_id = c.id
-    WHERE p.type = 'material'
+    WHERE p.type = 'material' AND " . getActiveProductSql('p') . "
     ORDER BY p.name
 ")->fetchAll(PDO::FETCH_ASSOC);
+$purchaseProductCosts = getCalculatedProductCostDetails(array_column($products, 'id'));
+foreach ($products as &$purchaseProduct) {
+    $calculatedCost = $purchaseProductCosts[(int)$purchaseProduct['id']]['value'] ?? null;
+    if ($calculatedCost !== null) {
+        $purchaseProduct['cost_price'] = $calculatedCost;
+    }
+}
+unset($purchaseProduct);
 
 // Get customers for product filter
 $customers = $pdo->query("SELECT id, name FROM customers ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);

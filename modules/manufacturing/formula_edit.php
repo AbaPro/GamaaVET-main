@@ -44,14 +44,14 @@ $products = [];
 $productMap = [];
 // Show material products; fall back to all products if none are typed yet
 $productScope = getProductChannelScopeSql('p', 'c', 'f');
-$productResult = $conn->query("SELECT p.id, p.name, p.sku, p.unit FROM products p LEFT JOIN customers c ON c.id = p.customer_id LEFT JOIN factories f ON f.id = c.factory_id WHERE p.type = 'material' AND $productScope ORDER BY p.name");
+$productResult = $conn->query("SELECT p.id, p.name, p.sku, p.unit FROM products p LEFT JOIN customers c ON c.id = p.customer_id LEFT JOIN factories f ON f.id = c.factory_id WHERE p.type = 'material' AND " . getActiveProductSql('p') . " AND $productScope ORDER BY p.name");
 if ($productResult && $productResult->num_rows > 0) {
     while ($productRow = $productResult->fetch_assoc()) {
         $products[] = $productRow;
         $productMap[$productRow['id']] = $productRow;
     }
 } else {
-    $productResult = $conn->query("SELECT p.id, p.name, p.sku, p.unit FROM products p LEFT JOIN customers c ON c.id = p.customer_id LEFT JOIN factories f ON f.id = c.factory_id WHERE $productScope ORDER BY p.name");
+    $productResult = $conn->query("SELECT p.id, p.name, p.sku, p.unit FROM products p LEFT JOIN customers c ON c.id = p.customer_id LEFT JOIN factories f ON f.id = c.factory_id WHERE " . getActiveProductSql('p') . " AND $productScope ORDER BY p.name");
     if ($productResult) {
         while ($productRow = $productResult->fetch_assoc()) {
             $products[] = $productRow;

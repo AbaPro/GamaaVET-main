@@ -42,7 +42,7 @@ if ($order['status'] === 'completed') {
 
 // Fetch products for this customer (type final)
 $products = [];
-$productStmt = $conn->prepare("SELECT id, name, sku FROM products WHERE customer_id = ? AND type = 'final' ORDER BY name");
+$productStmt = $conn->prepare("SELECT id, name, sku FROM products p WHERE customer_id = ? AND type = 'final' AND " . getActiveProductSql('p') . " ORDER BY name");
 $productStmt->bind_param("i", $order['customer_id']);
 $productStmt->execute();
 $productResult = $productStmt->get_result();

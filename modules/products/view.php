@@ -27,6 +27,10 @@ if (!$product) {
     header("Location: ../products/");
     exit();
 }
+$costDetail = getCalculatedProductCostDetails([$product_id])[$product_id] ?? [
+    'value' => $product['cost_price'] ?? null,
+    'source' => 'manual',
+];
 
 // Fetch category and subcategory names
 $category = getCategoryById($product['category_id']);
@@ -135,7 +139,16 @@ include '../../includes/header.php';
                                         <?php if (canViewProductCost($product['type'])): ?>
                                         <tr>
                                             <th>Cost Price</th>
-                                            <td><?= $product['cost_price'] ? formatCurrency($product['cost_price']) : 'N/A' ?></td>
+                                            <td>
+                                                <?= $costDetail['value'] !== null ? formatCurrency($costDetail['value']) : 'N/A' ?>
+                                                <?php if ($costDetail['source'] === 'received_average'): ?>
+                                                    <div class="small text-muted">Weighted average of received purchases<?= !empty($costDetail['basis_unit']) ? ' per ' . htmlspecialchars($costDetail['basis_unit']) : '' ?></div>
+                                                <?php elseif ($costDetail['source'] === 'formula'): ?>
+                                                    <div class="small text-muted">Calculated from <?= htmlspecialchars($costDetail['formula_name'] ?? 'active formula') ?><?= !empty($costDetail['basis_unit']) ? ' per ' . htmlspecialchars($costDetail['basis_unit']) : '' ?></div>
+                                                <?php elseif (!empty($costDetail['missing_components'])): ?>
+                                                    <div class="small text-warning">Formula cost is incomplete. Missing: <?= htmlspecialchars(implode(', ', $costDetail['missing_components'])) ?></div>
+                                                <?php endif; ?>
+                                            </td>
                                         </tr>
                                         <?php endif; ?>
                                         <tr>

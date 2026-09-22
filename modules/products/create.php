@@ -24,6 +24,7 @@ if (!hasPermission('products.create')) {
 }
 
 // Process form submission
+$returnUrl = getSafeProductReturnUrl($_POST['return_to'] ?? '', 'index.php');
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         // Validate required fields
@@ -158,5 +159,5 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-redirect(BASE_URL . '/modules/products/index.php');
+redirect($returnUrl);
 ?>

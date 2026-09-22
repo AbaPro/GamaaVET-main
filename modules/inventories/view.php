@@ -436,7 +436,7 @@ $ariaSort = static function (string $column) use ($sortBy, $sortDir): string {
                                                           FROM products p
                                                           LEFT JOIN customers c ON c.id = p.customer_id
                                                           LEFT JOIN factories f ON f.id = c.factory_id
-                                                          WHERE $eligibleProductScope
+                                                          WHERE $eligibleProductScope AND " . getActiveProductSql('p') . "
                                                           ORDER BY p.type, p.name");
                             while ($prod = $all_products->fetch_assoc()) {
                                 $type = isset($prod['type']) ? htmlspecialchars($prod['type']) : '';

@@ -50,7 +50,7 @@ if ($customerResult) {
 
 $finalProducts = [];
 $productScope = getProductChannelScopeSql('p', 'c', 'f');
-$finalProductResult = $conn->query("SELECT p.id, p.customer_id, p.name, p.sku FROM products p LEFT JOIN customers c ON c.id = p.customer_id LEFT JOIN factories f ON f.id = c.factory_id WHERE p.type = 'final' AND $productScope ORDER BY p.name");
+$finalProductResult = $conn->query("SELECT p.id, p.customer_id, p.name, p.sku FROM products p LEFT JOIN customers c ON c.id = p.customer_id LEFT JOIN factories f ON f.id = c.factory_id WHERE p.type = 'final' AND " . getActiveProductSql('p') . " AND $productScope ORDER BY p.name");
 if ($finalProductResult) {
     while ($row = $finalProductResult->fetch_assoc()) {
         $finalProducts[] = $row;
@@ -58,7 +58,7 @@ if ($finalProductResult) {
 }
 
 $materialProducts = [];
-$materialProductResult = $conn->query("SELECT id, name, sku FROM products WHERE type = 'material' ORDER BY name");
+$materialProductResult = $conn->query("SELECT id, name, sku FROM products p WHERE type = 'material' AND " . getActiveProductSql('p') . " ORDER BY name");
 if ($materialProductResult) {
     while ($row = $materialProductResult->fetch_assoc()) {
         $materialProducts[] = $row;
@@ -90,7 +90,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $productBelongsToCustomer = true;
     if ($hasPackagingProductColumn && $finalProductId > 0) {
-        $productCheckStmt = $conn->prepare("SELECT COUNT(*) AS total FROM products WHERE id = ? AND customer_id = ? AND type = 'final'");
+        $productCheckStmt = $conn->prepare("SELECT COUNT(*) AS total FROM products p WHERE id = ? AND customer_id = ? AND type = 'final' AND " . getActiveProductSql('p'));
         $productCheckStmt->bind_param("ii", $finalProductId, $customerId);
         $productCheckStmt->execute();
         $productCheckRow = $productCheckStmt->get_result()->fetch_assoc();

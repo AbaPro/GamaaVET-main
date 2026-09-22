@@ -303,7 +303,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['portal_action'] ?? '') ===
         $productStmt = $pdo->prepare("
             SELECT id, name, unit_price
             FROM products
-            WHERE customer_id = ? AND type = 'final' AND id IN ($placeholders)
+            WHERE customer_id = ? AND type = 'final' AND " . getActiveProductSql('products') . " AND id IN ($placeholders)
         ");
 
         $pdo->beginTransaction();
@@ -580,7 +580,7 @@ $productsStmt = $pdo->prepare("
     FROM products p
     LEFT JOIN categories c ON p.category_id = c.id
     LEFT JOIN inventory_products ip ON ip.product_id = p.id
-    WHERE p.customer_id = ?
+    WHERE p.customer_id = ? AND " . getActiveProductSql('p') . "
     GROUP BY p.id
     ORDER BY p.name
 ");

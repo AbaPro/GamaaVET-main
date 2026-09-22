@@ -14,6 +14,7 @@ if (isset($_GET['type']) && in_array($_GET['type'], ['material', 'final'], true)
 if (isSalesPersonUser()) {
     $filterType = 'final';
 }
+$showArchived = productsSupportArchiving() && (($_GET['view'] ?? '') === 'archived');
 
 $customerFilters = [];
 if (isset($_GET['customer_ids']) && is_array($_GET['customer_ids'])) {
@@ -71,58 +72,59 @@ if ($categoryFilter) {
     $stmt->close();
 }
 
-$page_title = $filterType === 'material'
+$page_title = ($showArchived ? 'Archived ' : '') . ($filterType === 'material'
     ? 'Raw Materials'
-    : ($filterType === 'final' ? 'Final Products' : 'Products Management');
+    : ($filterType === 'final' ? 'Final Products' : 'Products Management'));
 require_once '../../includes/header.php';
+
+if (isset($_GET['restore']) && is_numeric($_GET['restore']) && productsSupportArchiving()) {
+    $id = (int)$_GET['restore'];
+    $returnUrl = getSafeProductReturnUrl($_GET['return_to'] ?? '', 'index.php?view=archived');
+    if (!hasPermission('products.edit') || !canAccessProduct($id)) {
+        setAlert('danger', 'You do not have permission to restore this product.');
+    } else {
+        $restoreStmt = $conn->prepare('UPDATE products SET is_active = 1 WHERE id = ?');
+        $restoreStmt->bind_param('i', $id);
+        $restoreStmt->execute();
+        $restoreStmt->close();
+        setAlert('success', 'Product restored successfully.');
+        logActivity("Restored product ID: $id");
+    }
+    redirect($returnUrl);
+}
 
 // Handle delete request
 if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
-    $id = sanitize($_GET['delete']);
+    $id = (int)$_GET['delete'];
+    $returnUrl = getSafeProductReturnUrl($_GET['return_to'] ?? '', $filterType ? 'index.php?type=' . urlencode($filterType) : 'index.php');
 
-    if (!canAccessProduct($id)) {
+    if (!hasPermission('products.delete') || !canAccessProduct($id)) {
         setAlert('danger', 'You do not have permission to delete this product.');
-        redirect('index.php?type=final');
+        redirect($returnUrl);
     }
 
-    // Check if product exists in any inventory
-    $check_sql = "SELECT COUNT(*) as count FROM inventory_products WHERE product_id = ?";
-    $check_stmt = $conn->prepare($check_sql);
-    $check_stmt->bind_param("i", $id);
-    $check_stmt->execute();
-    $check_result = $check_stmt->get_result();
-    $in_inventory = $check_result->fetch_assoc()['count'] > 0;
-    $check_stmt->close();
-
-    if ($in_inventory) {
-        setAlert('danger', 'Cannot delete product as it exists in one or more inventories. Remove from inventories first.');
+    $usageReasons = getProductUsageReasons($id);
+    if (!empty($usageReasons) && productsSupportArchiving()) {
+        $archiveStmt = $conn->prepare('UPDATE products SET is_active = 0 WHERE id = ?');
+        $archiveStmt->bind_param('i', $id);
+        $archiveStmt->execute();
+        $archiveStmt->close();
+        setAlert('success', 'Product archived because it has ' . implode(', ', $usageReasons) . '. Its history and stock were preserved.');
+        logActivity("Archived product ID: $id", ['reasons' => $usageReasons]);
+    } elseif (!empty($usageReasons)) {
+        setAlert('danger', 'Cannot delete this product because it has ' . implode(', ', $usageReasons) . '. Apply the product-archiving migration first.');
     } else {
-        // Check if product is used as a component
-        $component_sql = "SELECT COUNT(*) as count FROM product_components WHERE component_id = ?";
-        $component_stmt = $conn->prepare($component_sql);
-        $component_stmt->bind_param("i", $id);
-        $component_stmt->execute();
-        $component_result = $component_stmt->get_result();
-        $is_component = $component_result->fetch_assoc()['count'] > 0;
-        $component_stmt->close();
-
-        if ($is_component) {
-            setAlert('danger', 'Cannot delete product as it is used as a component in other products.');
+        $deleteStmt = $conn->prepare('DELETE FROM products WHERE id = ?');
+        $deleteStmt->bind_param('i', $id);
+        if ($deleteStmt->execute()) {
+            setAlert('success', 'Unused product deleted permanently.');
+            logActivity("Deleted product ID: $id");
         } else {
-            $delete_sql = "DELETE FROM products WHERE id = ?";
-            $delete_stmt = $conn->prepare($delete_sql);
-            $delete_stmt->bind_param("i", $id);
-
-            if ($delete_stmt->execute()) {
-                setAlert('success', 'Product deleted successfully.');
-                logActivity("Deleted product ID: $id");
-            } else {
-                setAlert('danger', 'Error deleting product: ' . $conn->error);
-            }
-            $delete_stmt->close();
+            setAlert('danger', 'Error deleting product: ' . $deleteStmt->error);
         }
+        $deleteStmt->close();
     }
-    redirect('index.php');
+    redirect($returnUrl);
 }
 
 // Fetch all products with category and customer info
@@ -131,6 +133,9 @@ $paramTypes = '';
 $paramValues = [];
 $loginRegion = $_SESSION['login_region'] ?? 'factory';
 $whereClauses[] = getProductChannelScopeSql('p', 'cust', 'customer_factory');
+if (productsSupportArchiving()) {
+    $whereClauses[] = $showArchived ? 'p.is_active = 0' : 'p.is_active = 1';
+}
 
 if ($filterType !== null) {
     $whereClauses[] = 'p.type = ?';
@@ -202,6 +207,7 @@ if ($result) {
         $products[] = $row;
     }
 }
+$productCostDetails = getCalculatedProductCostDetails(array_column($products, 'id'));
 
 $canViewAnySellingPrice = hasExplicitPermission('products.final.price.view');
 $canViewAnyCostPrice = hasExplicitPermission('products.final.cost.view') || hasExplicitPermission('products.material.cost.view');
@@ -261,16 +267,19 @@ if (!empty($inventories) && !empty($products)) {
 }
 
 $productsTableColspan += 1;
+$returnQuery = $_GET;
+unset($returnQuery['delete'], $returnQuery['restore'], $returnQuery['return_to']);
+$currentReturnUrl = 'index.php' . (!empty($returnQuery) ? '?' . http_build_query($returnQuery) : '') . '#productsTable';
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2>
         <?php if ($filterType === 'material'): ?>
-            Raw Materials
+            <?= $showArchived ? 'Archived ' : '' ?>Raw Materials
         <?php elseif ($filterType === 'final'): ?>
-            Final Products
+            <?= $showArchived ? 'Archived ' : '' ?>Final Products
         <?php else: ?>
-            Products
+            <?= $showArchived ? 'Archived ' : '' ?>Products
         <?php endif; ?>
     </h2>
     <div>
@@ -280,9 +289,25 @@ $productsTableColspan += 1;
         <a href="export.php<?php echo '?' . http_build_query(array_merge($_GET, ['format' => 'excel'])); ?>" class="btn btn-success me-2">
             <i class="fas fa-file-excel"></i> Export Excel
         </a>
+        <?php if (productsSupportArchiving()): ?>
+            <?php
+            $archiveToggleQuery = $_GET;
+            if ($showArchived) {
+                unset($archiveToggleQuery['view']);
+            } else {
+                $archiveToggleQuery['view'] = 'archived';
+            }
+            ?>
+            <a href="index.php<?= !empty($archiveToggleQuery) ? '?' . htmlspecialchars(http_build_query($archiveToggleQuery)) : '' ?>" class="btn btn-outline-secondary me-2">
+                <i class="fas <?= $showArchived ? 'fa-box-open' : 'fa-archive' ?>"></i>
+                <?= $showArchived ? 'Active Products' : 'Archived' ?>
+            </a>
+        <?php endif; ?>
+        <?php if (!$showArchived): ?>
         <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addProductModal">
             <i class="fas fa-plus"></i> Add Product
         </button>
+        <?php endif; ?>
     </div>
 </div>
 
@@ -290,6 +315,9 @@ $productsTableColspan += 1;
     <form class="d-flex flex-wrap gap-2 align-items-end" method="get">
         <?php if ($filterType !== null): ?>
             <input type="hidden" name="type" value="<?php echo htmlspecialchars($filterType); ?>">
+        <?php endif; ?>
+        <?php if ($showArchived): ?>
+            <input type="hidden" name="view" value="archived">
         <?php endif; ?>
         <div class="me-1">
             <label class="form-label mb-1 small text-muted">Customer(s)</label>
@@ -329,22 +357,36 @@ $productsTableColspan += 1;
         </div>
         <button type="submit" class="btn btn-sm btn-outline-primary">Filter</button>
         <?php if (!empty($customerFilters) || $categoryFilter !== null || $subcategoryFilter !== null || $searchFilter !== null): ?>
-            <a href="index.php<?php echo $filterType !== null ? '?type=' . urlencode($filterType) : ''; ?>" class="btn btn-sm btn-outline-secondary">
+            <?php
+            $resetParams = [];
+            if ($filterType !== null) $resetParams['type'] = $filterType;
+            if ($showArchived) $resetParams['view'] = 'archived';
+            ?>
+            <a href="index.php<?= !empty($resetParams) ? '?' . htmlspecialchars(http_build_query($resetParams)) : '' ?>" class="btn btn-sm btn-outline-secondary">
                 Reset
             </a>
         <?php endif; ?>
+        <?php if (!$showArchived && (hasPermission('products.delete') || ($filterType === 'material' && hasPermission('products.edit')))): ?>
         <div id="bulkActions" class="d-none ms-auto">
-            <button type="button" class="btn btn-sm btn-danger" id="btnBulkDelete">
-                <i class="fas fa-trash me-1"></i> Bulk Delete (<span id="selectedCount">0</span>)
+            <?php if (!$showArchived && $filterType === 'material' && hasPermission('products.edit')): ?>
+            <button type="button" class="btn btn-sm btn-outline-primary" id="btnBulkUnit" data-bs-toggle="modal" data-bs-target="#bulkUnitModal">
+                <i class="fas fa-balance-scale me-1"></i> Set Unit (<span class="selected-count">0</span>)
             </button>
+            <?php endif; ?>
+            <?php if (!$showArchived && hasPermission('products.delete')): ?>
+            <button type="button" class="btn btn-sm btn-danger" id="btnBulkDelete">
+                <i class="fas fa-trash me-1"></i> Remove (<span id="selectedCount">0</span>)
+            </button>
+            <?php endif; ?>
         </div>
+        <?php endif; ?>
     </form>
 </div>
 
 <div class="card">
     <div class="card-body">
         <div class="table-responsive">
-            <table class="table js-datatable table-hover" id="productsTable">
+            <table class="table js-datatable table-hover" id="productsTable" data-table-state-save="true">
                 <thead>
                     <tr>
                         <th width="40"><input type="checkbox" class="form-check-input" id="selectAll"></th>
@@ -371,6 +413,7 @@ $productsTableColspan += 1;
                 <tbody>
                     <?php if (count($products) > 0): ?>
                         <?php foreach ($products as $row): ?>
+                            <?php $costDetail = $productCostDetails[(int)$row['id']] ?? ['value' => null, 'source' => 'missing']; ?>
                             <tr data-id="<?php echo $row['id']; ?>">
                                 <td><input type="checkbox" class="form-check-input row-select" name="product_ids[]" value="<?php echo $row['id']; ?>"></td>
                                 <?php
@@ -411,7 +454,23 @@ $productsTableColspan += 1;
                                 <?php if ($showCostPriceColumn): ?>
                                 <td>
                                     <?php if (canViewProductCost($row['type'])): ?>
-                                        <?php echo $row['cost_price'] ? number_format($row['cost_price'], 2) : '-'; ?>
+                                        <?php if ($costDetail['value'] !== null): ?>
+                                            <span title="<?= htmlspecialchars(
+                                                $costDetail['source'] === 'received_average'
+                                                    ? 'Weighted average of quantities actually received'
+                                                    : ($costDetail['source'] === 'formula'
+                                                        ? 'Calculated from formula: ' . ($costDetail['formula_name'] ?? '')
+                                                        : 'Manually entered cost')
+                                            ) ?>"><?= number_format((float)$costDetail['value'], 2) ?></span>
+                                            <?php if ($costDetail['source'] === 'received_average'): ?>
+                                                <div class="small text-muted">received avg<?= !empty($costDetail['basis_unit']) ? ' / ' . htmlspecialchars($costDetail['basis_unit']) : '' ?></div>
+                                            <?php elseif ($costDetail['source'] === 'formula'): ?>
+                                                <div class="small text-muted">formula<?= !empty($costDetail['basis_unit']) ? ' / ' . htmlspecialchars($costDetail['basis_unit']) : '' ?></div>
+                                            <?php endif; ?>
+                                        <?php else: ?>
+                                            <?php $missingCostTitle = !empty($costDetail['missing_components']) ? 'Missing component costs: ' . implode(', ', $costDetail['missing_components']) : 'No cost available'; ?>
+                                            <span title="<?= htmlspecialchars($missingCostTitle) ?>">-</span>
+                                        <?php endif; ?>
                                     <?php endif; ?>
                                 </td>
                                 <?php endif; ?>
@@ -443,6 +502,15 @@ $productsTableColspan += 1;
                                     <a href="view.php?id=<?php echo $row['id']; ?>" class="btn btn-sm btn-outline-primary">
                                         <i class="fas fa-eye"></i> View
                                     </a>
+                                    <?php if ($showArchived): ?>
+                                    <?php if (hasPermission('products.edit')): ?>
+                                    <a href="index.php?restore=<?= (int)$row['id'] ?>&amp;return_to=<?= urlencode($currentReturnUrl) ?>" class="btn btn-sm btn-outline-success"
+                                       onclick="return confirm('Restore this product to active lists?')">
+                                        <i class="fas fa-undo"></i> Restore
+                                    </a>
+                                    <?php endif; ?>
+                                    <?php else: ?>
+                                    <?php if (hasPermission('products.edit')): ?>
                                     <button class="btn btn-sm btn-outline-warning edit-product"
                                         data-id="<?php echo $row['id']; ?>"
                                         data-name="<?php echo htmlspecialchars($row['name']); ?>"
@@ -459,11 +527,15 @@ $productsTableColspan += 1;
                                         data-description="<?php echo htmlspecialchars($row['description'] ?? ''); ?>">
                                         <i class="fas fa-edit"></i> Edit
                                     </button>
+                                    <?php endif; ?>
 
-                                    <a href="index.php?delete=<?php echo $row['id']; ?>" class="btn btn-sm btn-outline-danger"
-                                        onclick="return confirm('Are you sure you want to delete this product?')">
-                                        <i class="fas fa-trash"></i> Delete
+                                    <?php if (hasPermission('products.delete')): ?>
+                                    <a href="index.php?delete=<?php echo $row['id']; ?>&amp;return_to=<?= urlencode($currentReturnUrl) ?>" class="btn btn-sm btn-outline-danger"
+                                        onclick="return confirm('Remove this product? Products with stock or history will be archived safely; only unused products are deleted permanently.')">
+                                        <i class="fas fa-trash"></i> Remove
                                     </a>
+                                    <?php endif; ?>
+                                    <?php endif; ?>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
@@ -482,6 +554,7 @@ $productsTableColspan += 1;
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <form action="create.php" method="POST" enctype="multipart/form-data">
+                <input type="hidden" name="return_to" value="<?= htmlspecialchars($currentReturnUrl) ?>">
                 <div class="modal-header">
                     <h5 class="modal-title" id="addProductModalLabel">Add New Product</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
@@ -600,6 +673,7 @@ $productsTableColspan += 1;
         <div class="modal-content">
             <form action="edit.php" method="POST" enctype="multipart/form-data">
                 <input type="hidden" id="edit_id" name="id">
+                <input type="hidden" name="return_to" value="<?= htmlspecialchars($currentReturnUrl) ?>">
                 <div class="modal-header">
                     <h5 class="modal-title" id="editProductModalLabel">Edit Product</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
@@ -713,6 +787,37 @@ $productsTableColspan += 1;
         </div>
     </div>
 </div>
+
+<?php if (!$showArchived && $filterType === 'material' && hasPermission('products.edit')): ?>
+<div class="modal fade" id="bulkUnitModal" tabindex="-1" aria-labelledby="bulkUnitModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form action="bulk_update_unit.php" method="POST" id="bulkUnitForm">
+                <input type="hidden" name="return_to" value="<?= htmlspecialchars($currentReturnUrl) ?>">
+                <div id="bulkUnitProductIds"></div>
+                <div class="modal-header">
+                    <h5 class="modal-title" id="bulkUnitModalLabel">Set Raw Material Unit</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted">The selected unit will be applied to <strong><span class="selected-count">0</span></strong> raw material(s). Blank units on their historical purchase-order lines will also be filled.</p>
+                    <label for="bulk_unit" class="form-label">Unit</label>
+                    <select class="form-select" id="bulk_unit" name="unit" required>
+                        <option value="">-- Select Unit --</option>
+                        <?php foreach (getProductUnitOptions() as $unitValue => $unitLabel): ?>
+                            <option value="<?= htmlspecialchars($unitValue) ?>"><?= htmlspecialchars($unitLabel) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Update Selected Materials</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
 
 <?php require_once '../../includes/footer.php'; ?>
 
@@ -848,7 +953,8 @@ $productsTableColspan += 1;
             $('#productsTable').DataTable({
                 order: [],
                 pageLength: 25,
-                lengthMenu: [10, 25, 50, 100]
+                lengthMenu: [10, 25, 50, 100],
+                stateSave: true
             });
         }
 
@@ -999,10 +1105,14 @@ $productsTableColspan += 1;
         const bulkActions = document.getElementById('bulkActions');
         const selectedCount = document.getElementById('selectedCount');
         const btnBulkDelete = document.getElementById('btnBulkDelete');
+        const btnBulkUnit = document.getElementById('btnBulkUnit');
 
         const updateBulkActions = () => {
             const checkedCount = document.querySelectorAll('.row-select:checked').length;
             if (selectedCount) selectedCount.textContent = checkedCount;
+            document.querySelectorAll('.selected-count').forEach(el => {
+                el.textContent = checkedCount;
+            });
             if (bulkActions) {
                 if (checkedCount > 0) {
                     bulkActions.classList.remove('d-none');
@@ -1043,10 +1153,16 @@ $productsTableColspan += 1;
                 const selectedIds = Array.from(document.querySelectorAll('.row-select:checked')).map(cb => cb.value);
                 if (selectedIds.length === 0) return;
 
-                if (confirm(`Are you sure you want to delete ${selectedIds.length} selected products? This will only succeed for products NOT in inventory and NOT used as components.`)) {
+                if (confirm(`Remove ${selectedIds.length} selected products? Used products will be archived safely; only completely unused products are deleted permanently.`)) {
                     const form = document.createElement('form');
                     form.method = 'POST';
                     form.action = 'bulk_delete.php';
+
+                    const returnInput = document.createElement('input');
+                    returnInput.type = 'hidden';
+                    returnInput.name = 'return_to';
+                    returnInput.value = <?= json_encode($currentReturnUrl) ?>;
+                    form.appendChild(returnInput);
                     
                     selectedIds.forEach(id => {
                         const input = document.createElement('input');
@@ -1059,6 +1175,22 @@ $productsTableColspan += 1;
                     document.body.appendChild(form);
                     form.submit();
                 }
+            });
+        }
+
+        if (btnBulkUnit) {
+            btnBulkUnit.addEventListener('click', function() {
+                const selectedIds = Array.from(document.querySelectorAll('.row-select:checked')).map(cb => cb.value);
+                const container = document.getElementById('bulkUnitProductIds');
+                if (!container) return;
+                container.innerHTML = '';
+                selectedIds.forEach(id => {
+                    const input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = 'product_ids[]';
+                    input.value = id;
+                    container.appendChild(input);
+                });
             });
         }
 

@@ -38,7 +38,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             throw new Exception('Please select a valid contact for this customer.');
         }
 
-        $productAccessStmt = $pdo->prepare("SELECT id FROM products WHERE id = ? AND customer_id = ? AND type = 'final'");
+        $productAccessStmt = $pdo->prepare("SELECT id FROM products p WHERE id = ? AND customer_id = ? AND type = 'final' AND " . getActiveProductSql('p'));
         $orderItems = [];
         $itemsSubtotal = 0;
         $freeSampleCount = 0;
@@ -269,7 +269,7 @@ $productSql = "
     JOIN categories c ON p.category_id = c.id
     LEFT JOIN customers customer ON customer.id = p.customer_id
     LEFT JOIN factories customer_factory ON customer_factory.id = customer.factory_id
-    WHERE p.type = 'final'
+    WHERE p.type = 'final' AND " . getActiveProductSql('p') . "
 ";
 $productParams = [];
 $productSql .= $loginRegion === 'factory'

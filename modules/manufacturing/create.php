@@ -59,7 +59,7 @@ if ($salesOrderId > 0 || $salesOrderItemId > 0) {
 
 $products = [];
 $productMap = [];
-$productResult = $conn->query("SELECT id, name, sku FROM products WHERE type = 'material' ORDER BY name");
+$productResult = $conn->query("SELECT id, name, sku FROM products p WHERE type = 'material' AND " . getActiveProductSql('p') . " ORDER BY name");
 if ($productResult) {
     while ($productRow = $productResult->fetch_assoc()) {
         $products[] = $productRow;
@@ -105,7 +105,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $productIsValid = false;
     if ($productId > 0 && canAccessProduct($productId)) {
-        $productCheckStmt = $pdo->prepare("SELECT COUNT(*) FROM products WHERE id = ? AND customer_id = ? AND type = 'final'");
+        $productCheckStmt = $pdo->prepare("SELECT COUNT(*) FROM products p WHERE id = ? AND customer_id = ? AND type = 'final' AND " . getActiveProductSql('p'));
         $productCheckStmt->execute([$productId, $customerId]);
         $productIsValid = (int)$productCheckStmt->fetchColumn() === 1;
     }

@@ -14,6 +14,7 @@ if (isset($_GET['type']) && in_array($_GET['type'], ['material', 'final'], true)
 if (isSalesPersonUser()) {
     $filterType = 'final';
 }
+$showArchived = productsSupportArchiving() && (($_GET['view'] ?? '') === 'archived');
 
 $customerFilter = null;
 if (isset($_GET['customer_id']) && is_numeric($_GET['customer_id']) && (int)$_GET['customer_id'] > 0) {
@@ -39,6 +40,9 @@ $whereClauses = [];
 $paramTypes = '';
 $paramValues = [];
 $whereClauses[] = getProductChannelScopeSql('p', 'cust', 'customer_factory');
+if (productsSupportArchiving()) {
+    $whereClauses[] = $showArchived ? 'p.is_active = 0' : 'p.is_active = 1';
+}
 
 if ($filterType !== null) {
     $whereClauses[] = 'p.type = ?';
@@ -101,6 +105,13 @@ if ($paramTypes !== '') {
 } else {
     $result = $conn->query($sql);
 }
+$exportRows = [];
+if ($result) {
+    while ($row = $result->fetch_assoc()) {
+        $exportRows[] = $row;
+    }
+}
+$exportCostDetails = getCalculatedProductCostDetails(array_column($exportRows, 'id'));
 
 // Determine format
 $isExcel = isset($_GET['format']) && $_GET['format'] === 'excel';
@@ -121,8 +132,8 @@ if ($isExcel) {
     $headers[] = 'Total Quantity';
     $excelData[] = $headers;
 
-    if ($result) {
-        while ($row = $result->fetch_assoc()) {
+    if (!empty($exportRows)) {
+        foreach ($exportRows as $row) {
             $excelRow = [
                 $row['sku'],
                 $row['barcode'],
@@ -139,7 +150,7 @@ if ($isExcel) {
                 $excelRow[] = canViewProductPrice($row['type']) ? $row['unit_price'] : 'N/A';
             }
             if (hasExplicitPermission('products.final.cost.view') || hasExplicitPermission('products.material.cost.view')) {
-                $excelRow[] = canViewProductCost($row['type']) ? $row['cost_price'] : 'N/A';
+                $excelRow[] = canViewProductCost($row['type']) ? ($exportCostDetails[(int)$row['id']]['value'] ?? $row['cost_price']) : 'N/A';
             }
             $excelRow[] = $row['min_stock_level'];
             $excelRow[] = $row['total_quantity'];
@@ -173,8 +184,8 @@ if ($isExcel) {
 
     fputcsv($output, $headers);
 
-    if ($result) {
-        while ($row = $result->fetch_assoc()) {
+    if (!empty($exportRows)) {
+        foreach ($exportRows as $row) {
             $csvRow = [
                 $row['sku'],
                 $row['barcode'],
@@ -192,7 +203,7 @@ if ($isExcel) {
                 $csvRow[] = canViewProductPrice($row['type']) ? $row['unit_price'] : 'N/A';
             }
             if (hasExplicitPermission('products.final.cost.view') || hasExplicitPermission('products.material.cost.view')) {
-                $csvRow[] = canViewProductCost($row['type']) ? $row['cost_price'] : 'N/A';
+                $csvRow[] = canViewProductCost($row['type']) ? ($exportCostDetails[(int)$row['id']]['value'] ?? $row['cost_price']) : 'N/A';
             }
             $csvRow[] = $row['min_stock_level'];
             $csvRow[] = $row['total_quantity'];

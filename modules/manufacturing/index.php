@@ -28,7 +28,7 @@ if ($customerResult) {
 }
 
 $allProducts = [];
-$productResult = $conn->query("SELECT p.id, p.name, p.sku FROM products p LEFT JOIN customers product_customer ON product_customer.id = p.customer_id LEFT JOIN factories product_factory ON product_factory.id = product_customer.factory_id WHERE p.type = 'final' AND $productScope ORDER BY p.name");
+$productResult = $conn->query("SELECT p.id, p.name, p.sku FROM products p LEFT JOIN customers product_customer ON product_customer.id = p.customer_id LEFT JOIN factories product_factory ON product_factory.id = product_customer.factory_id WHERE p.type = 'final' AND " . getActiveProductSql('p') . " AND $productScope ORDER BY p.name");
 if ($productResult) {
     while ($pRow = $productResult->fetch_assoc()) {
         $allProducts[] = $pRow;

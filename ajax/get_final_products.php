@@ -29,7 +29,7 @@ if (!canAccessCustomer($providerId)) {
 $stmt = $conn->prepare("
     SELECT id, name, sku 
     FROM products 
-    WHERE customer_id = ? AND type = 'final'
+    WHERE customer_id = ? AND type = 'final' AND " . getActiveProductSql('products') . "
     ORDER BY name ASC
 ");
 $stmt->bind_param('i', $providerId);

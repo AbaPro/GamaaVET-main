@@ -35,7 +35,7 @@ try {
         throw new Exception('Customer or product is outside the Factory channel.');
     }
 
-    $productStmt = $pdo->prepare("SELECT COUNT(*) FROM products WHERE id = ? AND customer_id = ? AND type = 'final'");
+    $productStmt = $pdo->prepare("SELECT COUNT(*) FROM products p WHERE id = ? AND customer_id = ? AND type = 'final' AND " . getActiveProductSql('p'));
     $productStmt->execute([$productId, $customerId]);
     if ((int)$productStmt->fetchColumn() !== 1) {
         throw new Exception('Selected final product does not belong to this Factory customer.');

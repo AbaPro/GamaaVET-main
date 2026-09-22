@@ -9,10 +9,11 @@ if (!hasPermission('products.edit')) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $returnUrl = getSafeProductReturnUrl($_POST['return_to'] ?? '', 'index.php');
     $id = (int)($_POST['id'] ?? 0);
     if ($id <= 0) {
         setAlert('danger', 'Invalid product reference.');
-        redirect('index.php');
+        redirect($returnUrl);
     }
     if (!canAccessProduct($id)) {
         setAlert('danger', 'You do not have permission to edit this product.');
@@ -38,22 +39,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($type === 'final') {
         if ($customer_id === null || !canAccessCustomer($customer_id)) {
             setAlert('danger', 'A final product must remain linked to a customer in the current sales channel.');
-            redirect('index.php?type=final');
+            redirect($returnUrl);
         }
     } elseif (in_array($type, ['primary', 'material'], true)) {
         if ($loginRegion !== 'factory' || isSalesPersonUser()) {
             setAlert('danger', 'Raw and primary products are available only in Factory.');
-            redirect('index.php?type=final');
+            redirect($returnUrl);
         }
         $customer_id = null;
     } else {
         setAlert('danger', 'Invalid product type.');
-        redirect('index.php');
+        redirect($returnUrl);
     }
     $unit = normalizeProductUnit($_POST['unit'] ?? '');
     if (in_array($type, ['final', 'material'], true) && $unit === null) {
         setAlert('danger', 'A unit is required for final products and raw materials.');
-        redirect('edit.php?id=' . $id);
+        redirect($returnUrl);
     }
     $unit_price = sanitize($_POST['unit_price']);
     $cost_price = isset($_POST['cost_price']) && $_POST['cost_price'] !== '' ? sanitize($_POST['cost_price']) : null;
@@ -71,7 +72,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $duplicate = $check_result->fetch_assoc();
         setAlert('danger', 'Another product with SKU "' . $sku . '" already exists (ID: ' . $duplicate['id'] . ').');
         $check_stmt->close();
-        redirect('index.php');
+        redirect($returnUrl);
     }
     $check_stmt->close();
 
@@ -90,7 +91,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (!file_exists($upload_dir) && !mkdir($upload_dir, 0755, true)) {
             setAlert('danger', 'Could not create upload directory.');
-            redirect('index.php');
+            redirect($returnUrl);
         }
         $file_ext = pathinfo($_FILES['image']['name'], PATHINFO_EXTENSION);
         $image_name = 'product_' . time() . '.' . strtolower($file_ext);
@@ -99,23 +100,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $check = getimagesize($_FILES['image']['tmp_name']);
         if ($check === false) {
             setAlert('danger', 'File is not an image.');
-            redirect('index.php');
+            redirect($returnUrl);
         }
 
         if ($_FILES['image']['size'] > 2000000) {
             setAlert('danger', 'Sorry, your file is too large. Max 2MB allowed.');
-            redirect('index.php');
+            redirect($returnUrl);
         }
 
         $allowed_ext = ['jpg', 'jpeg', 'png', 'gif'];
         if (!in_array(strtolower($file_ext), $allowed_ext, true)) {
             setAlert('danger', 'Sorry, only JPG, JPEG, PNG & GIF files are allowed.');
-            redirect('index.php');
+            redirect($returnUrl);
         }
 
         if (!move_uploaded_file($_FILES['image']['tmp_name'], $upload_path)) {
             setAlert('danger', 'Sorry, there was an error uploading your file.');
-            redirect('index.php');
+            redirect($returnUrl);
         }
 
         if ($old_image && file_exists($upload_dir . $old_image)) {
@@ -159,7 +160,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     $update_stmt->close();
 
-    redirect('index.php');
+    redirect($returnUrl);
 }
 
 $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;

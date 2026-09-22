@@ -28,7 +28,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
         $validItems = [];
         $total_amount = 0;
-        $productStmt = $pdo->prepare("SELECT id FROM products WHERE id = ? AND customer_id = ? AND type = 'final'");
+        $productStmt = $pdo->prepare("SELECT id FROM products p WHERE id = ? AND customer_id = ? AND type = 'final' AND " . getActiveProductSql('p'));
         foreach ($rawItems as $item) {
             $productId = !empty($item['product_id']) ? (int)$item['product_id'] : 0;
             $quantity = !empty($item['quantity']) ? (int)$item['quantity'] : 0;
@@ -122,7 +122,7 @@ $productSql = "
     JOIN categories c ON p.category_id = c.id
     LEFT JOIN customers customer ON customer.id = p.customer_id
     LEFT JOIN factories customer_factory ON customer_factory.id = customer.factory_id
-    WHERE p.type = 'final'
+    WHERE p.type = 'final' AND " . getActiveProductSql('p') . "
 ";
 $productParams = [];
 $productSql .= $loginRegion === 'factory'
@@ -430,6 +430,4 @@ $(document).ready(function() {
 </script>
 
 <?php require_once '../../../includes/footer.php'; ?>
-
-
 

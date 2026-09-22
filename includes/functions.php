@@ -403,6 +403,73 @@ function tableExists($tableName) {
     return $cache[$tableName];
 }
 
+function tableHasColumn($tableName, $columnName) {
+    global $conn;
+    static $cache = [];
+
+    $tableName = preg_replace('/[^a-zA-Z0-9_]/', '', (string)$tableName);
+    $columnName = preg_replace('/[^a-zA-Z0-9_]/', '', (string)$columnName);
+    if ($tableName === '' || $columnName === '') {
+        return false;
+    }
+
+    $cacheKey = $tableName . '.' . $columnName;
+    if (!array_key_exists($cacheKey, $cache)) {
+        $stmt = $conn->prepare("
+            SELECT COUNT(*)
+            FROM information_schema.columns
+            WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?
+        ");
+        if (!$stmt) {
+            $cache[$cacheKey] = false;
+            return false;
+        }
+        $stmt->bind_param('ss', $tableName, $columnName);
+        $stmt->execute();
+        $stmt->bind_result($count);
+        $stmt->fetch();
+        $stmt->close();
+        $cache[$cacheKey] = ((int)$count) > 0;
+    }
+
+    return $cache[$cacheKey];
+}
+
+function productsSupportArchiving() {
+    return tableHasColumn('products', 'is_active');
+}
+
+function getActiveProductSql($productAlias = 'p') {
+    $productAlias = preg_replace('/[^a-zA-Z0-9_]/', '', (string)$productAlias);
+    return productsSupportArchiving() ? "$productAlias.is_active = 1" : '1 = 1';
+}
+
+function getSafeProductReturnUrl($url, $fallback = 'index.php') {
+    $url = trim((string)$url);
+    if ($url === '' || preg_match('/[\r\n]/', $url)) {
+        return $fallback;
+    }
+
+    $parts = parse_url($url);
+    if ($parts === false || isset($parts['scheme']) || isset($parts['host'])) {
+        return $fallback;
+    }
+
+    $path = ltrim((string)($parts['path'] ?? ''), '/');
+    if ($path !== 'index.php' && $path !== '') {
+        return $fallback;
+    }
+
+    $safe = 'index.php';
+    if (!empty($parts['query'])) {
+        $safe .= '?' . $parts['query'];
+    }
+    if (!empty($parts['fragment']) && preg_match('/^[a-zA-Z0-9_-]+$/', $parts['fragment'])) {
+        $safe .= '#' . $parts['fragment'];
+    }
+    return $safe;
+}
+
 function getInventoryProductQuantity($inventoryId, $productId) {
     global $conn;
 
@@ -634,6 +701,325 @@ function convertProductUnitQuantity($quantity, $fromUnit, $toUnit) {
     if ($definitions[$from]['family'] !== $definitions[$to]['family']) return null;
 
     return (float)$quantity * $definitions[$from]['base_factor'] / $definitions[$to]['base_factor'];
+}
+
+/**
+ * Calculate the weighted purchase cost for material products from quantities
+ * that were actually received. PO lines without a historical unit inherit the
+ * current catalog unit, which lets legacy materials become costed after their
+ * unit is assigned.
+ */
+function getReceivedProductCostDetails(array $productIds, array $productRows = []) {
+    global $conn;
+
+    $ids = array_values(array_unique(array_filter(array_map('intval', $productIds), function ($id) {
+        return $id > 0;
+    })));
+    if (empty($ids) || !tableExists('purchase_order_items')) {
+        return [];
+    }
+
+    $idList = implode(',', $ids);
+    if (empty($productRows)) {
+        $productResult = $conn->query("SELECT id, unit FROM products WHERE id IN ($idList)");
+        if ($productResult) {
+            while ($row = $productResult->fetch_assoc()) {
+                $productRows[(int)$row['id']] = $row;
+            }
+        }
+    }
+
+    $unitSelect = tableHasColumn('purchase_order_items', 'unit') ? 'unit' : 'NULL AS unit';
+    $result = $conn->query("
+        SELECT product_id, unit_price, received_quantity, $unitSelect
+        FROM purchase_order_items
+        WHERE product_id IN ($idList)
+          AND received_quantity > 0
+          AND unit_price >= 0
+    ");
+    if (!$result) {
+        return [];
+    }
+
+    $totals = [];
+    while ($row = $result->fetch_assoc()) {
+        $productId = (int)$row['product_id'];
+        $receivedQuantity = (float)$row['received_quantity'];
+        $catalogUnit = normalizeProductUnit($productRows[$productId]['unit'] ?? '');
+        $purchaseUnit = normalizeProductUnit($row['unit'] ?? '') ?: $catalogUnit;
+        $quantityInCatalogUnit = $receivedQuantity;
+
+        if ($catalogUnit !== null && $purchaseUnit !== null) {
+            $converted = convertProductUnitQuantity($receivedQuantity, $purchaseUnit, $catalogUnit);
+            if ($converted === null) {
+                continue;
+            }
+            $quantityInCatalogUnit = $converted;
+        }
+
+        if ($quantityInCatalogUnit <= 0) {
+            continue;
+        }
+        if (!isset($totals[$productId])) {
+            $totals[$productId] = ['value' => 0.0, 'quantity' => 0.0];
+        }
+        $totals[$productId]['value'] += $receivedQuantity * (float)$row['unit_price'];
+        $totals[$productId]['quantity'] += $quantityInCatalogUnit;
+    }
+
+    $costs = [];
+    foreach ($totals as $productId => $total) {
+        if ($total['quantity'] <= 0) {
+            continue;
+        }
+        $costs[$productId] = [
+            'value' => $total['value'] / $total['quantity'],
+            'source' => 'received_average',
+            'basis_unit' => getProductFormulaUnit($productRows[$productId]['unit'] ?? ''),
+            'received_quantity' => $total['quantity'],
+        ];
+    }
+    return $costs;
+}
+
+/**
+ * Return the effective catalog cost for materials and final products.
+ * Materials use a received-quantity weighted purchase average. Final products
+ * use the most recently updated active linked formula and current material costs.
+ */
+function getCalculatedProductCostDetails(array $productIds) {
+    global $conn;
+
+    $ids = array_values(array_unique(array_filter(array_map('intval', $productIds), function ($id) {
+        return $id > 0;
+    })));
+    if (empty($ids)) {
+        return [];
+    }
+
+    $idList = implode(',', $ids);
+    $products = [];
+    $result = $conn->query("SELECT id, name, type, unit, cost_price FROM products WHERE id IN ($idList)");
+    if ($result) {
+        while ($row = $result->fetch_assoc()) {
+            $products[(int)$row['id']] = $row;
+        }
+    }
+
+    $details = [];
+    foreach ($products as $productId => $product) {
+        $manualCost = $product['cost_price'] !== null && $product['cost_price'] !== ''
+            ? (float)$product['cost_price']
+            : null;
+        $details[$productId] = [
+            'value' => $manualCost,
+            'source' => $manualCost !== null ? 'manual' : 'missing',
+            'basis_unit' => getProductFormulaUnit($product['unit'] ?? ''),
+        ];
+    }
+
+    $materialIds = [];
+    $finalIds = [];
+    foreach ($products as $productId => $product) {
+        if ($product['type'] === 'material') {
+            $materialIds[] = $productId;
+        } elseif ($product['type'] === 'final') {
+            $finalIds[] = $productId;
+        }
+    }
+
+    foreach (getReceivedProductCostDetails($materialIds, $products) as $productId => $receivedCost) {
+        $details[$productId] = $receivedCost;
+    }
+
+    if (empty($finalIds) || !tableExists('manufacturing_formulas') || !tableHasColumn('manufacturing_formulas', 'product_id')) {
+        return $details;
+    }
+
+    $finalIdList = implode(',', $finalIds);
+    $formulaResult = $conn->query("
+        SELECT id, product_id, name, batch_size, batch_unit, components_json, updated_at
+        FROM manufacturing_formulas
+        WHERE product_id IN ($finalIdList) AND is_active = 1
+        ORDER BY product_id, updated_at DESC, id DESC
+    ");
+    if (!$formulaResult) {
+        return $details;
+    }
+
+    $formulas = [];
+    $componentIds = [];
+    while ($formula = $formulaResult->fetch_assoc()) {
+        $productId = (int)$formula['product_id'];
+        if (isset($formulas[$productId])) {
+            continue;
+        }
+        $formula['components'] = json_decode($formula['components_json'] ?? '[]', true) ?: [];
+        $formulas[$productId] = $formula;
+        foreach ($formula['components'] as $component) {
+            $componentId = (int)($component['product_id'] ?? 0);
+            if ($componentId > 0) {
+                $componentIds[] = $componentId;
+            }
+        }
+    }
+
+    $componentIds = array_values(array_unique($componentIds));
+    $componentProducts = [];
+    if (!empty($componentIds)) {
+        $componentIdList = implode(',', $componentIds);
+        $componentResult = $conn->query("SELECT id, name, type, unit, cost_price FROM products WHERE id IN ($componentIdList)");
+        if ($componentResult) {
+            while ($row = $componentResult->fetch_assoc()) {
+                $componentProducts[(int)$row['id']] = $row;
+            }
+        }
+    }
+    $componentReceivedCosts = getReceivedProductCostDetails($componentIds, $componentProducts);
+
+    foreach ($formulas as $productId => $formula) {
+        $batchCost = 0.0;
+        $missingComponents = [];
+        $pricedComponentCount = 0;
+
+        foreach ($formula['components'] as $component) {
+            $componentId = (int)($component['product_id'] ?? 0);
+            $quantity = is_numeric($component['quantity'] ?? null) ? (float)$component['quantity'] : null;
+            $componentProduct = $componentProducts[$componentId] ?? null;
+            if ($componentId <= 0 || $quantity === null || $quantity < 0 || !$componentProduct) {
+                $missingComponents[] = (string)($component['name'] ?? 'Unlinked component');
+                continue;
+            }
+
+            $catalogUnit = $componentProduct['unit'] ?? '';
+            $formulaUnit = $component['unit'] ?? $catalogUnit;
+            $convertedQuantity = convertProductUnitQuantity($quantity, $formulaUnit, $catalogUnit);
+            if ($convertedQuantity === null) {
+                $missingComponents[] = (string)($component['name'] ?? $componentProduct['name']);
+                continue;
+            }
+
+            $componentCost = $componentReceivedCosts[$componentId]['value']
+                ?? (($componentProduct['cost_price'] !== null && $componentProduct['cost_price'] !== '')
+                    ? (float)$componentProduct['cost_price']
+                    : null);
+            if ($componentCost === null) {
+                $missingComponents[] = (string)($component['name'] ?? $componentProduct['name']);
+                continue;
+            }
+
+            $batchCost += $convertedQuantity * $componentCost;
+            $pricedComponentCount++;
+        }
+
+        if ($pricedComponentCount === 0 || !empty($missingComponents)) {
+            $details[$productId]['formula_id'] = (int)$formula['id'];
+            $details[$productId]['formula_name'] = $formula['name'];
+            $details[$productId]['missing_components'] = array_values(array_unique($missingComponents));
+            continue;
+        }
+
+        $batchSize = (float)($formula['batch_size'] ?? 0);
+        $basisUnit = trim((string)($formula['batch_unit'] ?? ''));
+        $divisor = 1.0;
+        if ($batchSize > 0) {
+            $convertedOutput = convertProductUnitQuantity($batchSize, $formula['batch_unit'] ?? '', $products[$productId]['unit'] ?? '');
+            if ($convertedOutput !== null && $convertedOutput > 0) {
+                $divisor = $convertedOutput;
+                $basisUnit = getProductFormulaUnit($products[$productId]['unit'] ?? '') ?: $basisUnit;
+            } else {
+                $divisor = $batchSize;
+            }
+        } else {
+            $basisUnit = 'batch';
+        }
+
+        $details[$productId] = [
+            'value' => $batchCost / $divisor,
+            'source' => 'formula',
+            'basis_unit' => $basisUnit,
+            'batch_cost' => $batchCost,
+            'formula_id' => (int)$formula['id'],
+            'formula_name' => $formula['name'],
+            'missing_components' => [],
+        ];
+    }
+
+    return $details;
+}
+
+function getProductUsageReasons($productId) {
+    global $conn;
+
+    $productId = (int)$productId;
+    if ($productId <= 0) {
+        return ['invalid product'];
+    }
+
+    $reasons = [];
+    if (tableExists('inventory_products')) {
+        $stmt = $conn->prepare('SELECT COUNT(*) AS rows_count, COALESCE(SUM(quantity), 0) AS total_quantity FROM inventory_products WHERE product_id = ?');
+        $stmt->bind_param('i', $productId);
+        $stmt->execute();
+        $inventory = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if ((int)($inventory['rows_count'] ?? 0) > 0) {
+            $reasons[] = (float)($inventory['total_quantity'] ?? 0) != 0.0
+                ? 'current inventory stock'
+                : 'inventory history';
+        }
+    }
+
+    $references = [
+        ['product_components', 'component_id', 'a product component'],
+        ['product_components', 'final_product_id', 'a product recipe'],
+        ['purchase_order_items', 'product_id', 'purchase orders'],
+        ['order_items', 'product_id', 'sales orders'],
+        ['quotation_items', 'product_id', 'quotations'],
+        ['transfer_items', 'product_id', 'inventory transfers'],
+        ['order_returns', 'product_id', 'returns'],
+        ['packaging_option_items', 'product_id', 'packaging options'],
+        ['packaging_options', 'product_id', 'packaging options'],
+        ['manufacturing_orders', 'product_id', 'manufacturing orders'],
+        ['manufacturing_sourcing_components', 'product_id', 'manufacturing sourcing'],
+        ['inventory_stock_logs', 'product_id', 'inventory audit history'],
+        ['product_price_logs', 'product_id', 'price history'],
+        ['portal_order_items', 'product_id', 'portal orders'],
+    ];
+    foreach ($references as [$table, $column, $label]) {
+        if (!tableExists($table) || !tableHasColumn($table, $column)) {
+            continue;
+        }
+        $stmt = $conn->prepare("SELECT COUNT(*) FROM `$table` WHERE `$column` = ?");
+        $stmt->bind_param('i', $productId);
+        $stmt->execute();
+        $stmt->bind_result($count);
+        $stmt->fetch();
+        $stmt->close();
+        if ((int)$count > 0) {
+            $reasons[] = $label;
+        }
+    }
+
+    if (tableExists('manufacturing_formulas')
+        && tableHasColumn('manufacturing_formulas', 'product_id')
+        && tableHasColumn('manufacturing_formulas', 'components_json')) {
+        $stmt = $conn->prepare("
+            SELECT COUNT(*)
+            FROM manufacturing_formulas
+            WHERE product_id = ? OR JSON_CONTAINS(components_json, JSON_OBJECT('product_id', ?))
+        ");
+        $stmt->bind_param('ii', $productId, $productId);
+        $stmt->execute();
+        $stmt->bind_result($count);
+        $stmt->fetch();
+        $stmt->close();
+        if ((int)$count > 0) {
+            $reasons[] = 'manufacturing formulas';
+        }
+    }
+
+    return array_values(array_unique($reasons));
 }
 
 
@@ -1010,6 +1396,7 @@ function canAddProductToInventory($inventoryId, $productId) {
             WHERE p.id = ?
               AND $inventoryScope
               AND $productScope
+              AND " . getActiveProductSql('p') . "
             LIMIT 1";
     $stmt = $conn->prepare($sql);
     $stmt->bind_param('ii', $inventoryId, $productId);

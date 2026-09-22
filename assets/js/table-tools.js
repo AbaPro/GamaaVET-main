@@ -422,6 +422,7 @@
             nonDataIndexes.concat(parseAdditionalDisabledColumns(table))
         ));
         let api;
+        const stateStorageKey = 'DataTables_' + (table.id || 'table') + '_' + window.location.pathname + window.location.search;
 
         if ($.fn.dataTable.isDataTable(table)) {
             api = $(table).DataTable();
@@ -429,6 +430,22 @@
             api = $(table).DataTable({
                 pageLength: 25,
                 lengthMenu: [10, 25, 50, 100],
+                stateSave: table.dataset.tableStateSave === 'true',
+                stateSaveCallback: function (settings, data) {
+                    window.localStorage.setItem(stateStorageKey, JSON.stringify(data));
+                },
+                stateLoadCallback: function () {
+                    const saved = window.localStorage.getItem(stateStorageKey);
+                    if (!saved) {
+                        return null;
+                    }
+                    try {
+                        return JSON.parse(saved);
+                    } catch (error) {
+                        window.localStorage.removeItem(stateStorageKey);
+                        return null;
+                    }
+                },
                 order: parseInitialOrder(table),
                 language: {
                     emptyTable: table.dataset.emptyMessage || 'No records found.'

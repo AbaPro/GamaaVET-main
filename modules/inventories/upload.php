@@ -60,7 +60,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
                                   FROM products p
                                   LEFT JOIN customers c ON c.id = p.customer_id
                                   LEFT JOIN factories f ON f.id = c.factory_id
-                                  WHERE $eligibleProductScope");
+                                  WHERE $eligibleProductScope AND " . getActiveProductSql('p'));
         while ($p = $prod_res->fetch_assoc()) {
             $all_products[strtolower(trim($p['name']))] = $p['id'];
         }
@@ -356,7 +356,7 @@ $step = $_SESSION['inventory_bulk_upload']['step'] ?? 1;
                                                                   FROM products p
                                                                   LEFT JOIN customers c ON c.id = p.customer_id
                                                                   LEFT JOIN factories f ON f.id = c.factory_id
-                                                                  WHERE $eligibleProductScope
+                                                                  WHERE $eligibleProductScope AND " . getActiveProductSql('p') . "
                                                                   ORDER BY p.type, p.name");
                                     $all_prods = $all_prods_res->fetch_all(MYSQLI_ASSOC);
                                     

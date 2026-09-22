@@ -30,7 +30,7 @@ if ($id > 0) {
 
 $products = [];
 $productMap = [];
-$productStmt = $pdo->query("SELECT id, name, sku FROM products WHERE type = 'material' ORDER BY name");
+$productStmt = $pdo->query("SELECT id, name, sku FROM products p WHERE type = 'material' AND " . getActiveProductSql('p') . " ORDER BY name");
 while ($row = $productStmt->fetch(PDO::FETCH_ASSOC)) {
     $products[] = $row;
     $productMap[(int)$row['id']] = $row['name'];

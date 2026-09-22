@@ -24,6 +24,7 @@ $sql = "SELECT ip.inventory_id, i.name AS inventory_name, p.id AS product_id,
         LEFT JOIN factories f ON f.id = c.factory_id
         WHERE $inventoryScope
           AND $productScope
+          AND " . getActiveProductSql('p') . "
           AND p.min_stock_level > 0
           AND (SELECT COALESCE(SUM(ip2.quantity),0) FROM inventory_products ip2 WHERE ip2.product_id = p.id) <= p.min_stock_level
         ORDER BY i.name, p.name";
