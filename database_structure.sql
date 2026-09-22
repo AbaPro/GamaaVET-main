@@ -353,7 +353,7 @@ CREATE TABLE `products` (
   `type_e` text DEFAULT NULL,
   `type` enum('primary','final','material') DEFAULT NULL,
   `description` text DEFAULT NULL,
-  `unit` enum('each','gram','kilo','') DEFAULT NULL,
+  `unit` enum('each','gram','kilo','milliliter','liter','') DEFAULT NULL,
   `customer_id` int(11) DEFAULT NULL,
   `image` text DEFAULT NULL,
   `unit_price` decimal(10,2) NOT NULL DEFAULT 0.00,

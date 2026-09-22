@@ -388,7 +388,7 @@ if (isset($_SESSION['bulk_upload']['step']) && $_SESSION['bulk_upload']['step'] 
             $unit = normalizeProductUnit($row['unit'] ?? '');
             if ($type === 'material' && $unit === null) {
                 $error_count++;
-                $errors[] = "A valid unit (each, gram, or kilo) is required for raw material: $name";
+                $errors[] = "A valid unit (each, gram, kilo, milliliter, or liter) is required for raw material: $name";
                 continue;
             }
 
@@ -508,7 +508,7 @@ if ($current_step == 1) {
                             <li><strong>cost_price</strong> - Purchase/manufacturing cost (decimal)</li>
                             <li><strong>min_stock_level</strong> - Minimum stock alert threshold (integer, default: 0)</li>
                             <li><strong>description</strong> - Detailed product description (supports Arabic)</li>
-                            <li><strong>unit</strong> - Unit of measurement: <code>each</code>, <code>gram</code>, or <code>kilo</code>. Required for raw materials.</li>
+                            <li><strong>unit</strong> - Unit of measurement: <code>each</code>, <code>gram</code>, <code>kilo</code>, <code>milliliter</code>, or <code>liter</code>. Required for raw materials.</li>
                         </ul>
                         <hr>
                         <div class="alert alert-success mb-3">

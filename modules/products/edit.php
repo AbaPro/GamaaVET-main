@@ -51,8 +51,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect('index.php');
     }
     $unit = normalizeProductUnit($_POST['unit'] ?? '');
-    if ($type === 'material' && $unit === null) {
-        setAlert('danger', 'A unit is required for every raw material.');
+    if (in_array($type, ['final', 'material'], true) && $unit === null) {
+        setAlert('danger', 'A unit is required for final products and raw materials.');
         redirect('edit.php?id=' . $id);
     }
     $unit_price = sanitize($_POST['unit_price']);
@@ -298,7 +298,7 @@ require_once '../../includes/header.php';
                         </option>
                     <?php endforeach; ?>
                 </select>
-                <small class="text-muted">1 kilogram (kg) = 1,000 grams (g). Each (pcs) is a count and cannot convert to weight.</small>
+                <small class="text-muted">Weight: 1 kg = 1,000 g. Volume: 1 L = 1,000 ml. Each (pcs) is a count.</small>
             </div>
             <div class="col-md-6 mb-3" data-pricing-group="unit">
                 <label class="form-label">Selling Price</label>
@@ -344,7 +344,7 @@ require_once '../../includes/header.php';
         if (!form) return;
         const showUnit = type !== 'material';
         const showCost = type !== 'final';
-        const showMeasurementUnit = type === 'material';
+        const showMeasurementUnit = type === 'final' || type === 'material';
         const unitGroup = form.querySelector('[data-pricing-group=\"unit\"]');
         const costGroup = form.querySelector('[data-pricing-group=\"cost\"]');
         const unitInput = form.querySelector('[data-role=\"unit-price\"]');

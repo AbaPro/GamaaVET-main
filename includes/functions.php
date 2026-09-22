@@ -549,6 +549,20 @@ function getProductUnitDefinitions() {
             'base_factor' => 1000.0,
             'conversion' => '1 kilogram = 1,000 grams',
         ],
+        'milliliter' => [
+            'label' => 'Milliliter (ml)',
+            'symbol' => 'ml',
+            'family' => 'volume',
+            'base_factor' => 1.0,
+            'conversion' => 'Base volume unit',
+        ],
+        'liter' => [
+            'label' => 'Liter (L)',
+            'symbol' => 'L',
+            'family' => 'volume',
+            'base_factor' => 1000.0,
+            'conversion' => '1 liter = 1,000 milliliters',
+        ],
     ];
 }
 
@@ -576,6 +590,16 @@ function normalizeProductUnit($unit) {
         'kilogram' => 'kilo',
         'kilograms' => 'kilo',
         'kg' => 'kilo',
+        'milliliter' => 'milliliter',
+        'milliliters' => 'milliliter',
+        'millilitre' => 'milliliter',
+        'millilitres' => 'milliliter',
+        'ml' => 'milliliter',
+        'liter' => 'liter',
+        'liters' => 'liter',
+        'litre' => 'liter',
+        'litres' => 'liter',
+        'l' => 'liter',
     ];
     return $aliases[$unit] ?? null;
 }
@@ -598,7 +622,7 @@ function getProductFormulaUnit($unit) {
 }
 
 /**
- * Convert between supported count or mass units. Returns null when a unit is
+ * Convert between supported count, mass, or volume units. Returns null when a unit is
  * unknown or when the units belong to different families (for example pcs to g).
  */
 function convertProductUnitQuantity($quantity, $fromUnit, $toUnit) {

@@ -558,7 +558,7 @@ $productsTableColspan += 1;
                                     <option value="<?= htmlspecialchars($unitValue) ?>"><?= htmlspecialchars($unitLabel) ?></option>
                                 <?php endforeach; ?>
                             </select>
-                            <small class="text-muted">1 kilogram (kg) = 1,000 grams (g). Each (pcs) is a count and cannot convert to weight.</small>
+                            <small class="text-muted">Weight: 1 kg = 1,000 g. Volume: 1 L = 1,000 ml. Each (pcs) is a count.</small>
                         </div>
                         <div class="col-md-6 mb-3" data-pricing-group="unit">
                             <label for="unit_price" class="form-label">Selling Price</label>
@@ -674,7 +674,7 @@ $productsTableColspan += 1;
                                     <option value="<?= htmlspecialchars($unitValue) ?>"><?= htmlspecialchars($unitLabel) ?></option>
                                 <?php endforeach; ?>
                             </select>
-                            <small class="text-muted">1 kilogram (kg) = 1,000 grams (g). Each (pcs) is a count and cannot convert to weight.</small>
+                            <small class="text-muted">Weight: 1 kg = 1,000 g. Volume: 1 L = 1,000 ml. Each (pcs) is a count.</small>
                         </div>
                         <div class="col-md-6 mb-3" data-pricing-group="unit">
                             <label for="edit_unit_price" class="form-label">Selling Price</label>
@@ -745,7 +745,7 @@ $productsTableColspan += 1;
         const showUnit = type !== 'material';
         const showCost = type !== 'final';
         const showCustomer = type !== 'material';
-        const showMeasurementUnit = type === 'material';
+        const showMeasurementUnit = type === 'final' || type === 'material';
         const unitGroup = form.querySelector('[data-pricing-group="unit"]');
         const costGroup = form.querySelector('[data-pricing-group="cost"]');
         const unitInput = form.querySelector('[data-role="unit-price"]');

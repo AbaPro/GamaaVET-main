@@ -59,8 +59,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new Exception('Invalid product type.');
         }
         $unit = normalizeProductUnit($_POST['unit'] ?? '');
-        if ($type === 'material' && $unit === null) {
-            throw new Exception('A unit is required for every raw material.');
+        if (in_array($type, ['final', 'material'], true) && $unit === null) {
+            throw new Exception('A unit is required for final products and raw materials.');
         }
         $unit_price = isset($_POST['unit_price']) && $_POST['unit_price'] !== '' ? (float)$_POST['unit_price'] : NULL;
         $cost_price = !empty($_POST['cost_price']) ? (float)$_POST['cost_price'] : NULL;
