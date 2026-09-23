@@ -32,6 +32,7 @@ if ($id > 0) {
             $stmt = $conn->prepare("DELETE FROM manufacturing_formulas WHERE id = ?");
             $stmt->bind_param("i", $id);
             if ($stmt->execute()) {
+                logActivity("Deleted formula ID: $id", ['customer_id' => (int)$formulaRow['customer_id']], 'delete', 'formula', $id);
                 setAlert('success', 'Formula deleted successfully.');
             } else {
                 setAlert('danger', 'Failed to delete formula.');

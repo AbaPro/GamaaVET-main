@@ -215,6 +215,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             logProductPrice($priceLog['product_id'], 'unit', $priceLog['price'], $priceLog['quantity'], 'purchase_receipt', $priceLog['source_id'], $priceLog['notes']);
         }
         
+        logActivity("Received items for Purchase Order #$po_id", ['status' => $new_status, 'received_value' => $received_value], 'update', 'purchase_order', $po_id);
         $_SESSION['success'] = "Items received successfully! PO status updated to " . $new_status;
         header("Location: po_details.php?id=" . $po_id);
         exit();

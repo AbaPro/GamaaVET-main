@@ -267,7 +267,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             logActivity("Created manufacturing order {$orderNumber}", [
                 'order_id' => $orderId,
                 'sales_order_id' => $sourceSalesOrder ? (int)$sourceSalesOrder['id'] : null,
-            ]);
+            ], 'create', 'manufacturing_order', $orderId);
             header("Location: order.php?id={$orderId}");
             exit;
         } catch (Exception $exception) {

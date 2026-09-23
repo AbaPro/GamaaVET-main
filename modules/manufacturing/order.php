@@ -1109,7 +1109,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'order_id' => $orderId,
         'step_key' => $stepKey,
         'status' => $statusToSave,
-    ]);
+    ], 'update', 'manufacturing_order', $orderId);
 
     header('Location: order.php?id=' . $orderId);
     exit;

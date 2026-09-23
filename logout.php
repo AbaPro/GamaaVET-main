@@ -14,7 +14,7 @@ require_once __DIR__ . '/includes/auth.php';
 try {
     // Try to log the activity (with error handling)
     if (isset($_SESSION['user_id'])) {
-        @logActivity("User logged out"); // @ suppresses errors if table doesn't exist
+        @logActivity("User logged out", null, 'logout', 'user', $_SESSION['user_id']); // @ suppresses errors if table doesn't exist
     }
 } catch (Exception $e) {
     // Silently ignore logging errors to not interrupt logout process

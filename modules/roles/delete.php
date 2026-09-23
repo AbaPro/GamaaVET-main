@@ -23,6 +23,7 @@ try {
     $conn->query("DELETE FROM role_permissions WHERE role_id = " . $id);
     $conn->query("DELETE FROM roles WHERE id = " . $id);
     $conn->commit();
+    logActivity("Deleted role ID: $id", null, 'delete', 'role', $id);
     setAlert('success','Role deleted.');
 } catch (Throwable $e) {
     $conn->rollback();

@@ -54,6 +54,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $ins->close();
             }
             $conn->commit();
+            logActivity("Updated role ID: $id", ['name' => $name, 'slug' => $slug, 'active' => (bool)$is_active, 'permissions' => count($selected)], 'update', 'role', $id);
             setAlert('success', 'Role updated.');
         } catch (Throwable $e) {
             $conn->rollback();

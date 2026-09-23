@@ -44,7 +44,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     $tables = [
-        'activity_logs' => ['user_id'],
         'customer_wallet_transactions' => ['created_by'],
         'vendor_wallet_transactions' => ['created_by'],
         'finance_transfers' => ['created_by', 'assigned_approver_id', 'approved_by', 'rejected_by', 'reversed_by'],
@@ -80,7 +79,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'from' => $fromUser,
             'to' => $toUser,
             'summary' => $transferSummary
-        ]);
+        ], 'update', 'user', $toUser);
 
         $conn->commit();
         $message = empty($transferSummary) ? 'No records required reassignment.' : 'Data transfer completed: ' . implode(', ', $transferSummary);

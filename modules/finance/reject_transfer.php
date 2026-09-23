@@ -74,7 +74,7 @@ try {
         'finance_transfer_id' => $transferId,
         'reference' => $transfer['transfer_reference'],
         'reason' => $reason,
-    ]);
+    ], 'update', 'finance_transfer', $transferId);
     setAlert('success', 'Transfer rejected. No balances were changed.');
 } catch (Throwable $e) {
     $conn->rollback();

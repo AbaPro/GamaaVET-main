@@ -186,7 +186,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'reference' => $reference,
             'amount' => $amount,
             'assigned_approver_id' => $assignedApproverId,
-        ]);
+        ], 'create', 'finance_transfer', $transferId);
         setAlert('success', 'Transfer submitted for approval. No balances have moved yet. Reference: ' . $reference);
     } catch (Throwable $e) {
         $conn->rollback();

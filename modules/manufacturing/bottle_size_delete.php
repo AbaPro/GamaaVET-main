@@ -17,6 +17,7 @@ try {
     // Unlink from orders before deleting (FK is ON DELETE SET NULL, but be explicit)
     $stmt = $pdo->prepare("DELETE FROM bottle_sizes WHERE id = ?");
     $stmt->execute([$id]);
+    logActivity("Deleted bottle size ID: $id", null, 'delete', 'bottle_size', $id);
     setAlert('success', 'Bottle size deleted successfully.');
 } catch (Exception $e) {
     setAlert('danger', 'Error deleting bottle size: ' . $e->getMessage());

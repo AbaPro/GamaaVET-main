@@ -72,10 +72,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($id > 0) {
                 $stmt = $pdo->prepare('UPDATE manufacturing_formula_templates SET name = ?, description = ?, components_json = ?, is_active = ? WHERE id = ?');
                 $stmt->execute([$name, $description ?: null, $componentsJson, $isActive, $id]);
+                logActivity("Updated formula template ID: $id", ['name' => $name], 'update', 'formula_template', $id);
                 setAlert('success', 'Formula template updated. Existing formulas were not changed.');
             } else {
                 $stmt = $pdo->prepare('INSERT INTO manufacturing_formula_templates (name, description, components_json, is_active, created_by) VALUES (?, ?, ?, ?, ?)');
                 $stmt->execute([$name, $description ?: null, $componentsJson, $isActive, $_SESSION['user_id'] ?? null]);
+                logActivity("Created formula template: $name", null, 'create', 'formula_template', (int)$pdo->lastInsertId());
                 setAlert('success', 'Formula template created.');
             }
             redirect('formula_templates.php');

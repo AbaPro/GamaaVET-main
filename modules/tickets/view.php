@@ -64,6 +64,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->bind_param('iis', $id, $userId, $note);
             $stmt->execute();
             $stmt->close();
+            logActivity("Added note to ticket #$id", null, 'update', 'ticket', $id);
             setAlert('success', 'Note added.');
         } else {
             setAlert('warning', 'Note cannot be empty.');
@@ -82,6 +83,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->bind_param('si', $status, $id);
         $stmt->execute();
         $stmt->close();
+        logActivity("Updated ticket #$id status", ['status' => $status], 'update', 'ticket', $id);
         setAlert('success', 'Ticket status updated.');
         redirect('view.php?id=' . $id);
     }
@@ -89,6 +91,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Delete ticket logic
     if (isset($_POST['delete_ticket']) && $canDeleteTicket) {
         if (deleteTicket($id)) {
+            logActivity("Deleted ticket #$id", ['title' => $ticket['title'] ?? null], 'delete', 'ticket', $id);
             setAlert('success', 'Ticket deleted.');
             redirect('index.php');
         }

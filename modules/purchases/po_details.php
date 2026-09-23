@@ -131,7 +131,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_status'])) {
         if ($new_status !== $po['status']) {
             logActivity(
                 "Updated Purchase Order #$po_id status",
-                "Changed from {$po['status']} to {$new_status}."
+                ['status' => ['from' => $po['status'], 'to' => $new_status]],
+                'update',
+                'purchase_order',
+                $po_id
             );
         }
 

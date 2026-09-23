@@ -24,6 +24,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_status'])) {
     try {
         $stmt = $pdo->prepare("UPDATE quotations SET status = ? WHERE id = ?");
         $stmt->execute([$new_status, $quotation_id]);
+        logActivity("Updated quotation #$quotation_id status", ['status' => $new_status], 'update', 'quotation', $quotation_id);
         
         $_SESSION['success'] = "Quotation status updated successfully!";
         header("Location: quotation_details.php?id=" . $quotation_id);

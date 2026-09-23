@@ -188,6 +188,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         }
 
         $pdo->commit();
+        logActivity(
+            $editing_id ? "Updated Purchase Order #$po_id" : "Created Purchase Order #$po_id",
+            ['status' => $_POST['action'] == 'submit' ? 'ordered' : 'new'],
+            $editing_id ? 'update' : 'create',
+            'purchase_order',
+            $po_id
+        );
         header("Location: po_details.php?id=" . $po_id);
         exit();
     } catch (Exception $e) {

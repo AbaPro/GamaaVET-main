@@ -234,6 +234,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             );
         }
 
+        logActivity("Created sales order {$_POST['internal_id']}", ['customer_id' => $customerId], 'create', 'sales_order', $order_id);
         $_SESSION['success'] = "Order created successfully!";
         header("Location: order_details.php?id=" . $order_id);
         exit();

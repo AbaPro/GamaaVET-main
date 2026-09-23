@@ -49,6 +49,7 @@ if (empty($customer['portal_token']) || !$expiresAt || $expiresAt < $now) {
     $tokenStmt->bind_param("ssi", $newToken, $expiresStr, $customer_id);
     $tokenStmt->execute();
     $tokenStmt->close();
+    logActivity("Generated portal link for customer ID: $customer_id", ['expires' => $expiresStr], 'update', 'customer', $customer_id);
     $customer['portal_token'] = $newToken;
     $customer['portal_token_expires'] = $expiresStr;
 }

@@ -102,7 +102,7 @@ try {
 
     $pdo->commit();
 
-    logActivity("Created manufacturing order $orderNumber from Sales Order details", ['order_id' => $orderId, 'sales_order_id' => $salesOrderId]);
+    logActivity("Created manufacturing order $orderNumber from Sales Order details", ['order_id' => $orderId, 'sales_order_id' => $salesOrderId], 'create', 'manufacturing_order', $orderId);
 
     echo json_encode([
         'success' => true, 

@@ -39,6 +39,7 @@ if ($usageCount > 0) {
 try {
     $stmt = $pdo->prepare("DELETE FROM packaging_options WHERE id = ?");
     $stmt->execute([$id]);
+    logActivity("Deleted packaging option ID: $id", ['customer_id' => (int)$optionRow['customer_id']], 'delete', 'packaging_option', $id);
     setAlert('success', 'Packaging option deleted.');
 } catch (Exception $e) {
     setAlert('danger', 'Error: ' . $e->getMessage());

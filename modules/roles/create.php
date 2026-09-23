@@ -47,6 +47,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             foreach ($selected as $pid) { $ins->bind_param('ii', $newRoleId, $pid); $ins->execute(); }
             $ins->close();
         }
+        logActivity("Created role: $name", ['slug' => $slug, 'permissions' => count($selected)], 'create', 'role', $newRoleId);
         setAlert('success', 'Role created.');
         redirect('index.php');
     } catch (Throwable $e) {

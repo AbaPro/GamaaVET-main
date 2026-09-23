@@ -63,8 +63,11 @@ function createUser($data) {
         $region
     );
 
-    return $stmt->execute();
-    
+    if (!$stmt->execute()) {
+        return false;
+    }
+    logActivity("Created user: {$data['username']}", ['name' => $data['name'], 'role' => $role_slug, 'active' => (bool)$is_active], 'create', 'user', $stmt->insert_id);
+    return true;
 }
 
 function updateUser($id, $data) {
@@ -122,7 +125,15 @@ function updateUser($id, $data) {
         );
     }
     
-    return $stmt->execute();
+    if (!$stmt->execute()) {
+        return false;
+    }
+    $changes = ['username' => $data['username'], 'role' => $role_slug, 'active' => (bool)$is_active];
+    if (!empty($data['password'])) {
+        $changes['password'] = 'changed';
+    }
+    logActivity("Updated user ID: $id", $changes, 'update', 'user', $id);
+    return true;
 }
 
 function deleteUser($id) {
@@ -148,7 +159,11 @@ function deleteUser($id) {
     
     $stmt = $conn->prepare("DELETE FROM users WHERE id = ?");
     $stmt->bind_param("i", $id);
-    return $stmt->execute();
+    if (!$stmt->execute()) {
+        return false;
+    }
+    logActivity("Deleted user ID: $id", ['username' => $user['username'] ?? null, 'name' => $user['name'] ?? null], 'delete', 'user', $id);
+    return true;
 }
 
 function getRoleColor($role)

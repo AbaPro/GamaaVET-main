@@ -66,7 +66,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $conn->commit();
             setAlert('success', 'Factory updated.');
-            logActivity('Updated factory assignment', ['id' => $id, 'sales_person_id' => $salesPersonId]);
+            logActivity('Updated factory assignment', ['id' => $id, 'sales_person_id' => $salesPersonId], 'update', 'factory', $id);
         } catch (Exception $e) {
             $conn->rollback();
             setAlert('danger', 'Failed to update factory: ' . $e->getMessage());
@@ -76,7 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->bind_param("sissss", $name, $salesPersonId, $contact_person, $contact_phone, $whatsapp_number, $notes);
         if ($stmt->execute()) {
             setAlert('success', 'Factory added.');
-            logActivity('Created factory', ['id' => $stmt->insert_id]);
+            logActivity('Created factory', ['id' => $stmt->insert_id], 'create', 'factory', $stmt->insert_id);
         } else {
             setAlert('danger', 'Failed to add factory: ' . $conn->error);
         }
@@ -96,7 +96,7 @@ if (isset($_GET['delete'])) {
     $stmt->bind_param("i", $id);
     if ($stmt->execute()) {
         setAlert('success', 'Factory removed.');
-        logActivity('Deleted factory', ['id' => $id]);
+        logActivity('Deleted factory', ['id' => $id], 'delete', 'factory', $id);
     } else {
         setAlert('danger', 'Cannot delete factory in use.');
     }

@@ -77,7 +77,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_personal_accou
                 'personal_account_id' => $personalAccountId,
                 'name' => $name,
                 'account_id' => $accountId,
-            ]);
+            ], 'create', 'personal_account', $personalAccountId);
             setAlert('success', 'Personal account created.');
         } else {
             $error = $stmt->error;

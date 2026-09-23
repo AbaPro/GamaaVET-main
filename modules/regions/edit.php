@@ -28,6 +28,7 @@ if (isset($_POST['update_region'])) {
     $stmt->bind_param("si", $name, $id);
     
     if ($stmt->execute()) {
+        logActivity("Updated region ID: $id", ['name' => $name], 'update', 'region', $id);
         $_SESSION['success'] = "Region updated successfully.";
         header("Location: index.php");
         exit();

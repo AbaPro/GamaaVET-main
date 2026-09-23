@@ -27,5 +27,8 @@ if ($id <= 0) {
 
 $stmt = $pdo->prepare('DELETE FROM manufacturing_formula_templates WHERE id = ?');
 $stmt->execute([$id]);
+if ($stmt->rowCount()) {
+    logActivity("Deleted formula template ID: $id", null, 'delete', 'formula_template', $id);
+}
 setAlert($stmt->rowCount() ? 'success' : 'warning', $stmt->rowCount() ? 'Formula template deleted. Existing formulas were not changed.' : 'Formula template not found.');
 redirect('formula_templates.php');

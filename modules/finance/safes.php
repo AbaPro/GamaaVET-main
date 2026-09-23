@@ -61,7 +61,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_safe'])) {
         $stmt->execute();
         $newId = $stmt->insert_id;
         $stmt->close();
-        logActivity('Created safe', ['safe_id' => $newId, 'name' => $name, 'currency' => $currency, 'location_id' => $locationId]);
+        logActivity('Created safe', ['safe_id' => $newId, 'name' => $name, 'currency' => $currency, 'location_id' => $locationId], 'create', 'safe', $newId);
         setAlert('success', 'Safe added.');
     }
     redirect('safes.php');
@@ -107,7 +107,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_safe'])) {
             $stmt->bind_param('sssiii', $name, $currency, $notes, $accountId, $locationId, $safeId);
             $stmt->execute();
             $stmt->close();
-            logActivity('Edited safe', ['safe_id' => $safeId, 'name' => $name, 'currency' => $currency, 'location_id' => $locationId]);
+            logActivity('Edited safe', ['safe_id' => $safeId, 'name' => $name, 'currency' => $currency, 'location_id' => $locationId], 'update', 'safe', $safeId);
             setAlert('success', 'Safe updated.');
         }
     }

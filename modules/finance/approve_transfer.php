@@ -99,7 +99,7 @@ try {
         'finance_transfer_id' => $transferId,
         'reference' => $transfer['transfer_reference'],
         'amount' => $amount,
-    ]);
+    ], 'update', 'finance_transfer', $transferId);
     setAlert('success', 'Transfer approved. Sender and receiver balances were updated atomically.');
 } catch (Throwable $e) {
     $conn->rollback();

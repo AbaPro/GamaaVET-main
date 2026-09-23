@@ -345,7 +345,24 @@ function setAlert($type, $message) {
 }
 
 // Function to log activity
-function logActivity($action, $details = null) {
+// $actionType: login | logout | login_failed | create | update | delete | other
+// $entityType: a key of activityEntityTypes(). Anything left null is inferred from $action.
+function logActivity($action, $details = null, $actionType = null, $entityType = null, $entityId = null) {
+    global $conn;
+
+    if (!($conn instanceof mysqli)) {
+        return;
+    }
+
+    // Logging must never break the action being logged.
+    try {
+        writeActivityLog($action, $details, $actionType, $entityType, $entityId);
+    } catch (Throwable $e) {
+        error_log('logActivity failed: ' . $e->getMessage());
+    }
+}
+
+function writeActivityLog($action, $details, $actionType, $entityType, $entityId) {
     global $conn;
 
     $action = trim((string)$action);
@@ -357,20 +374,176 @@ function logActivity($action, $details = null) {
         ? json_encode($details, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
         : null;
     $ipAddress = $_SERVER['REMOTE_ADDR'] ?? null;
-    $userId = $_SESSION['user_id'] ?? null;
+    $userId = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
 
-    if ($userId === null) {
-        $sql = "INSERT INTO activity_logs (user_id, action, details, ip_address) VALUES (NULL, ?, ?, ?)";
-        $stmt = $conn->prepare($sql);
-        $stmt->bind_param("sss", $action, $detailsPayload, $ipAddress);
-    } else {
-        $sql = "INSERT INTO activity_logs (user_id, action, details, ip_address) VALUES (?, ?, ?, ?)";
-        $stmt = $conn->prepare($sql);
+    if (!tableHasColumn('activity_logs', 'action_type')) {
+        $stmt = $conn->prepare("INSERT INTO activity_logs (user_id, action, details, ip_address) VALUES (?, ?, ?, ?)");
         $stmt->bind_param("isss", $userId, $action, $detailsPayload, $ipAddress);
+        $stmt->execute();
+        $stmt->close();
+        return;
     }
 
+    $inferred = inferActivityMeta($action);
+    $actionType = $actionType ?? $inferred['action_type'];
+    if ($entityType === null) {
+        $entityType = $inferred['entity_type'];
+        $entityId = $entityId ?? $inferred['entity_id'];
+    }
+    $entityId = $entityId !== null && $entityId !== '' ? (int)$entityId : null;
+
+    $stmt = $conn->prepare("INSERT INTO activity_logs (user_id, action, action_type, entity_type, entity_id, details, ip_address) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    $stmt->bind_param("isssiss", $userId, $action, $actionType, $entityType, $entityId, $detailsPayload, $ipAddress);
     $stmt->execute();
     $stmt->close();
+}
+
+// Object types that can appear in the activity log: label + page that shows the record (null = no page).
+function activityEntityTypes() {
+    return [
+        'user' => ['User', 'modules/users/edit.php?id='],
+        'role' => ['Role', 'modules/roles/edit.php?id='],
+        'region' => ['Region', 'modules/regions/edit.php?id='],
+        'customer' => ['Customer', 'modules/customers/view.php?id='],
+        'customer_type' => ['Customer Type', 'modules/customers/types_edit.php?id='],
+        'factory' => ['Factory', null],
+        'vendor' => ['Vendor', 'modules/vendors/view.php?id='],
+        'product' => ['Product', 'modules/products/view.php?id='],
+        'category' => ['Category', 'modules/categories/edit.php?id='],
+        'location' => ['Location', 'modules/locations/edit.php?id='],
+        'inventory' => ['Inventory', 'modules/inventories/view.php?id='],
+        'inventory_transfer' => ['Inventory Transfer', 'modules/inventories/transfer_details.php?id='],
+        'sales_order' => ['Sales Order', 'modules/sales/order_details.php?id='],
+        'quotation' => ['Quotation', 'modules/sales/quotations/quotation_details.php?id='],
+        'portal_order' => ['Portal Order', 'modules/sales/portal_orders/review.php?id='],
+        'purchase_order' => ['Purchase Order', 'modules/purchases/po_details.php?id='],
+        'manufacturing_order' => ['Manufacturing Order', 'modules/manufacturing/order.php?id='],
+        'formula' => ['Formula', 'modules/manufacturing/formula_edit.php?id='],
+        'formula_template' => ['Formula Template', 'modules/manufacturing/formula_template_edit.php?id='],
+        'packaging_option' => ['Packaging Option', 'modules/manufacturing/packaging_option_edit.php?id='],
+        'bottle_size' => ['Bottle Size', 'modules/manufacturing/bottle_size_edit.php?id='],
+        'safe' => ['Safe', 'modules/finance/safe_details.php?id='],
+        'bank_account' => ['Bank Account', 'modules/finance/bank_details.php?id='],
+        'personal_account' => ['Personal Account', 'modules/finance/personal_details.php?id='],
+        'finance_transfer' => ['Finance Transfer', 'modules/finance/transfer_details.php?id='],
+        'expense' => ['Expense', 'modules/finance/expenses/details.php?id='],
+        'expense_category' => ['Expense Category', null],
+        'ticket' => ['Ticket', 'modules/tickets/view.php?id='],
+    ];
+}
+
+function activityActionTypes() {
+    return [
+        'login' => ['Login', 'success'],
+        'logout' => ['Logout', 'secondary'],
+        'login_failed' => ['Failed Login', 'danger'],
+        'create' => ['Create', 'primary'],
+        'update' => ['Edit', 'warning'],
+        'delete' => ['Delete', 'danger'],
+        'other' => ['Other', 'light'],
+    ];
+}
+
+// Best-effort classification of free-text actions such as "Deleted product ID: 5"
+// so legacy logActivity() calls and old rows still get a type and a linked record.
+function inferActivityMeta($action) {
+    $action = (string)$action;
+    $meta = ['action_type' => 'other', 'entity_type' => null, 'entity_id' => null];
+
+    $typeRules = [
+        'login' => '/^user logged in/i',
+        'logout' => '/^user logged out/i',
+        'login_failed' => '/^failed login/i',
+        'delete' => '/^(deleted|force-deleted|bulk deleted|removed|bulk removed|cleared)\b/i',
+        'create' => '/^(added|created|assembled|converted|recorded|bulk product upload)\b/i',
+        'update' => '/^(updated|bulk updated|bulk inventory upload|set|edited|processed|restored|archived|undid|approved|rejected|sent|received|verified|transferred|changed|paid|reset|closed|reopened|assigned|generated)\b/i',
+    ];
+    foreach ($typeRules as $type => $pattern) {
+        if (preg_match($pattern, $action)) {
+            $meta['action_type'] = $type;
+            break;
+        }
+    }
+
+    // Ordered: the first match is the record the action is really about.
+    $entityRules = [
+        ['/contact ID:? ?\d+ (?:for|as primary for) customer ID:? ?(\d+)/i', 'customer'],
+        ['/contact ID:? ?\d+ (?:for|as primary for) vendor ID:? ?(\d+)/i', 'vendor'],
+        ['/for customer ID:? ?(\d+)/i', 'customer'],
+        ['/for vendor ID:? ?(\d+)/i', 'vendor'],
+        ['/for Order ID:? ?(\d+)/i', 'sales_order'],
+        ['/(?:Purchase Order|PO) #(\d+)/i', 'purchase_order'],
+        ['/inventory transfer #(\d+)/i', 'inventory_transfer'],
+        ['/inventory transfer:.*\(ID: (\d+)\)/i', 'inventory_transfer'],
+        ['/manufacturing order ID:? ?(\d+)/i', 'manufacturing_order'],
+        ['/manufacturing (?:order|step)/i', 'manufacturing_order'],
+        ['/inventory (?:ID:? ?|to ID: )(\d+)/i', 'inventory'],
+        ['/final product ID:? ?(\d+)/i', 'product'],
+        ['/customer type ID:? ?(\d+)/i', 'customer_type'],
+        ['/customer type:/i', 'customer_type'],
+        ['/^\w+ new (customer|vendor|product|category|location|inventory):.*\(ID: (\d+)\)/i', null],
+        ['/\b(customer|vendor|product|category|location) ID:? ?(\d+)/i', null],
+        ['/portal order/i', 'portal_order'],
+        ['/orders? IDs?:/i', 'sales_order'],
+        ['/products?\b/i', 'product'],
+        ['/factory/i', 'factory'],
+        ['/bank account/i', 'bank_account'],
+        ['/\bsafe\b/i', 'safe'],
+        ['/personal finance account/i', 'personal_account'],
+        ['/finance transfer/i', 'finance_transfer'],
+        ['/user data/i', 'user'],
+    ];
+    foreach ($entityRules as [$pattern, $entityType]) {
+        if (!preg_match($pattern, $action, $m)) {
+            continue;
+        }
+        if ($entityType === null) {
+            $meta['entity_type'] = strtolower($m[1]);
+            $meta['entity_id'] = (int)$m[2];
+        } else {
+            $meta['entity_type'] = $entityType;
+            $meta['entity_id'] = isset($m[1]) ? (int)$m[1] : null;
+        }
+        break;
+    }
+
+    return $meta;
+}
+
+// Retention: activity older than one year is removed (called when the activity log page opens).
+function purgeOldActivityLogs() {
+    global $conn;
+
+    $conn->query("DELETE FROM activity_logs WHERE created_at < NOW() - INTERVAL 1 YEAR");
+    return $conn->affected_rows;
+}
+
+// Fill action_type/entity_* for rows written before those columns existed.
+function backfillActivityLogMeta($limit = 5000) {
+    global $conn;
+
+    if (!tableHasColumn('activity_logs', 'action_type')) {
+        return 0;
+    }
+
+    $limit = max(1, (int)$limit);
+    $result = $conn->query("SELECT id, action FROM activity_logs WHERE action_type IS NULL ORDER BY id LIMIT $limit");
+    if (!$result || $result->num_rows === 0) {
+        return 0;
+    }
+
+    $stmt = $conn->prepare("UPDATE activity_logs SET action_type = ?, entity_type = ?, entity_id = ? WHERE id = ?");
+    $updated = 0;
+    while ($row = $result->fetch_assoc()) {
+        $meta = inferActivityMeta($row['action']);
+        $id = (int)$row['id'];
+        $stmt->bind_param("ssii", $meta['action_type'], $meta['entity_type'], $meta['entity_id'], $id);
+        $stmt->execute();
+        $updated++;
+    }
+    $stmt->close();
+
+    return $updated;
 }
 
 function tableExists($tableName) {

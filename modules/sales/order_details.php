@@ -250,7 +250,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_shipping'])) {
             'order_id' => $order_id,
             'shipping_cost_type' => $newShippingType,
             'shipping_cost' => $newShippingAmount
-        ]);
+        ], 'update', 'sales_order', $order_id);
 
         $_SESSION['success'] = 'Shipping cost updated successfully.';
     } catch (Exception $e) {

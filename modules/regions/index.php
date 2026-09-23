@@ -13,6 +13,7 @@ if (isset($_POST['create_region'])) {
         $stmt->bind_param("s", $name);
         
         if ($stmt->execute()) {
+            logActivity("Created region: $name", null, 'create', 'region', $stmt->insert_id);
             $_SESSION['success'] = "Region created successfully.";
         } else {
             $_SESSION['error'] = "Error creating region: " . $conn->error;
@@ -32,6 +33,7 @@ if (isset($_GET['delete'])) {
         $stmt->bind_param("i", $id);
         
         if ($stmt->execute()) {
+            logActivity("Deleted region ID: $id", null, 'delete', 'region', $id);
             $_SESSION['success'] = "Region deleted successfully.";
         } else {
             $_SESSION['error'] = "Error deleting region. It might be in use.";

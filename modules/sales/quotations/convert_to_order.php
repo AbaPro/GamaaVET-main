@@ -190,6 +190,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             );
         }
         
+        logActivity("Converted quotation #$quotation_id to sales order $internal_id", ['quotation_id' => $quotation_id], 'create', 'sales_order', $order_id);
         $_SESSION['success'] = "Quotation converted to order successfully!";
         header("Location: ../order_details.php?id=" . $order_id);
         exit();

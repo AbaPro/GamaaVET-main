@@ -52,6 +52,11 @@ include __DIR__ . '/../../includes/header.php';
                         <a href="../roles/index.php" class="btn btn-outline-secondary btn-sm">
                             <i class="fas fa-shield-halved"></i> Roles
                         </a>
+                        <?php if (hasPermission('users.activity_logs.view')): ?>
+                            <a href="activity_logs.php" class="btn btn-outline-secondary btn-sm">
+                                <i class="fas fa-history"></i> Activity Log
+                            </a>
+                        <?php endif; ?>
                         <a href="transfer_data.php" class="btn btn-outline-secondary btn-sm">
                             <i class="fas fa-random"></i> Transfer Data
                         </a>
@@ -114,9 +119,11 @@ include __DIR__ . '/../../includes/header.php';
                                             <a href="index.php?delete=1&id=<?= $user['id'] ?>" class="btn btn-sm btn-danger" data-toggle="tooltip" title="Delete" onclick="return confirm('Are you sure you want to delete this user?')">
                                                 <i class="fas fa-trash"></i>
                                             </a>
+                                            <?php if (hasPermission('users.activity_logs.view')): ?>
                                             <a href="activity_logs.php?user_id=<?= $user['id'] ?>" class="btn btn-sm btn-info" data-toggle="tooltip" title="View Activity">
                                                 <i class="fas fa-clipboard-list"></i>
                                             </a>
+                                            <?php endif; ?>
                                         </td>
                                     </tr>
                                     <?php endforeach; ?>

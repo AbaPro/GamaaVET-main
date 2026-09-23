@@ -328,11 +328,31 @@
                         <?php endif; ?>
 
                         <!-- Users -->
-                        <?php if (hasPermission('users.manage') && $login_region === 'factory'): ?>
-                            <li class="nav-item">
-                                <a class="nav-link" href="<?= BASE_URL ?>modules/users/">
+                        <?php
+                            $canManageUsers = hasPermission('users.manage');
+                            $canViewActivityLogs = hasPermission('users.activity_logs.view');
+                        ?>
+                        <?php if (($canManageUsers || $canViewActivityLogs) && $login_region === 'factory'): ?>
+                            <li class="nav-item dropdown">
+                                <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
                                     <i class="fas fa-users me-1"></i> Users
                                 </a>
+                                <ul class="dropdown-menu">
+                                    <?php if ($canManageUsers): ?>
+                                        <li>
+                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/users/">
+                                                <i class="fas fa-user-cog me-2"></i> Manage Users
+                                            </a>
+                                        </li>
+                                    <?php endif; ?>
+                                    <?php if ($canViewActivityLogs): ?>
+                                        <li>
+                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/users/activity_logs.php">
+                                                <i class="fas fa-history me-2"></i> Activity Log
+                                            </a>
+                                        </li>
+                                    <?php endif; ?>
+                                </ul>
                             </li>
                         <?php endif; ?>
 

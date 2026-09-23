@@ -93,6 +93,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         }
         
         $pdo->commit();
+        logActivity("Created quotation #$quotation_id", ['customer_id' => $customerId, 'total' => $total_amount, 'status' => $_POST['action'] == 'submit' ? 'sent' : 'draft'], 'create', 'quotation', $quotation_id);
         header("Location: quotation_details.php?id=" . $quotation_id);
         exit();
     } catch (Exception $e) {

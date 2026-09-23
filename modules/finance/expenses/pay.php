@@ -114,6 +114,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $pdo->commit();
+            logActivity("Recorded payment for expense ID: $expense_id", ['amount' => $pay_amount], 'update', 'expense', $expense_id);
             setAlert('success', 'Payment recorded successfully.');
             redirect('details.php?id=' . $expense_id);
         } catch (Exception $e) {

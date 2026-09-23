@@ -61,12 +61,14 @@ if (isset($_POST['login'])) {
             $update_stmt->execute();
             $update_stmt->close();
             
-            logActivity("User logged in");
+            logActivity("User logged in", ['region' => $selected_region], 'login', 'user', (int)$user['id']);
             //redirect('dashboard.php');
         } else {
+            logActivity("Failed login: wrong password", ['username' => $username], 'login_failed', 'user', (int)$user['id']);
             setAlert('danger', 'Invalid username or password');
         }
     } else {
+        logActivity("Failed login: unknown or inactive user", ['username' => $username], 'login_failed');
         setAlert('danger', 'Invalid username or password');
     }
     $stmt->close();
@@ -74,7 +76,7 @@ if (isset($_POST['login'])) {
 
 // Check if user is trying to logout
 if (isset($_GET['logout'])) {
-    logActivity("User logged out");
+    logActivity("User logged out", null, 'logout', 'user', $_SESSION['user_id'] ?? null);
     session_destroy();
     redirect(defined('BASE_URL') ? BASE_URL . 'index.php' : 'index.php');
 }

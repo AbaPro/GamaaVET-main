@@ -45,7 +45,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
 
                 logActivity(
                     $isForceDelete ? 'Force-deleted portal order request' : 'Deleted portal order request',
-                    ['portal_order_id' => $deleteId, 'status' => $currentStatus]
+                    ['portal_order_id' => $deleteId, 'status' => $currentStatus],
+                    'delete',
+                    'portal_order',
+                    $deleteId
                 );
                 $_SESSION['success'] = 'Portal order request deleted.';
             } catch (Throwable $e) {

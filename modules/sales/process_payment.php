@@ -220,6 +220,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             }
             
             $pdo->commit();
+            logActivity("Recorded payment for Order ID $order_id", ['amount' => $total_payment_amount, 'payments' => count($payments)], 'create', 'sales_order', $order_id);
             
             $_SESSION['success'] = "Payment(s) recorded successfully!";
             header("Location: order_details.php?id=" . $order_id);

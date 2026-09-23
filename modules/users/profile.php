@@ -43,6 +43,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($upd->execute()) {
         $_SESSION['user_name'] = $name;
         $_SESSION['user_email'] = $email;
+        logActivity('Updated own profile', ['name' => $name, 'email' => $email, 'username' => $username], 'update', 'user', $userId);
         setAlert('success', 'Profile updated successfully.');
     } else {
         setAlert('danger', 'Failed to update profile: ' . $conn->error);

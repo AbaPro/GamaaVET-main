@@ -62,6 +62,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
+    logActivity("Created ticket #$id", ['title' => $title, 'priority' => $priority], 'create', 'ticket', $id);
     setAlert('success', 'Ticket #' . $id . ' created.');
     redirect('view.php?id=' . $id);
 }

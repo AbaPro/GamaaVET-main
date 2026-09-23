@@ -19,6 +19,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_category'])) {
     try {
         $stmt = $pdo->prepare("INSERT INTO expense_categories (name, description) VALUES (?, ?)");
         $stmt->execute([$name, $description]);
+        logActivity("Created expense category: $name", null, 'create', 'expense_category', (int)$pdo->lastInsertId());
         setAlert('success', 'Category added successfully.');
     } catch (PDOException $e) {
         setAlert('danger', 'Error adding category: ' . $e->getMessage());
@@ -38,6 +39,7 @@ if (isset($_GET['delete'])) {
         } else {
             $stmt = $pdo->prepare("DELETE FROM expense_categories WHERE id = ?");
             $stmt->execute([$id]);
+            logActivity("Deleted expense category ID: $id", null, 'delete', 'expense_category', $id);
             setAlert('success', 'Category deleted successfully.');
         }
     } catch (PDOException $e) {

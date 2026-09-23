@@ -233,6 +233,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ");
                 $stmt->execute([$customerId, $productId, $name, $type, $description, $batchSize, $batchUnit,
                                 $componentsJson, $instructions, $preparationFieldsJson, $sampleImagesJson, $isActive, $id]);
+                logActivity("Updated formula ID: $id", ['name' => $name, 'customer_id' => $customerId], 'update', 'formula', $id);
                 setAlert('success', 'Formula updated successfully.');
             } else {
                 $stmt = $pdo->prepare("
@@ -243,6 +244,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ");
                 $stmt->execute([$customerId, $productId, $name, $type, $description, $batchSize, $batchUnit,
                                 $componentsJson, $instructions, $preparationFieldsJson, $sampleImagesJson, $isActive]);
+                $newFormulaId = (int)$pdo->lastInsertId();
+                logActivity("Created formula: $name", ['customer_id' => $customerId], 'create', 'formula', $newFormulaId);
                 setAlert('success', 'Formula created successfully.');
             }
             redirect('formulas.php');

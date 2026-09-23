@@ -44,12 +44,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     UPDATE bottle_sizes SET name = ?, size = ?, unit = ?, type = ?, is_active = ? WHERE id = ?
                 ");
                 $stmt->execute([$name, $sizeVal, $unit, $type, $isActive, $id]);
+                logActivity("Updated bottle size ID: $id", ['name' => $name, 'size' => $sizeVal, 'unit' => $unit], 'update', 'bottle_size', $id);
                 setAlert('success', 'Bottle size updated successfully.');
             } else {
                 $stmt = $pdo->prepare("
                     INSERT INTO bottle_sizes (name, size, unit, type, is_active) VALUES (?, ?, ?, ?, ?)
                 ");
                 $stmt->execute([$name, $sizeVal, $unit, $type, $isActive]);
+                logActivity("Created bottle size: $name", ['size' => $sizeVal, 'unit' => $unit], 'create', 'bottle_size', (int)$pdo->lastInsertId());
                 setAlert('success', 'Bottle size created successfully.');
             }
             redirect('bottle_sizes.php');

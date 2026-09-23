@@ -61,6 +61,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->execute([$expense_id]);
 
         $pdo->commit();
+        logActivity("Deleted expense ID: $expense_id", null, 'delete', 'expense', $expense_id);
         setAlert('success', 'Expense and associated payments deleted successfully.');
     } catch (Exception $e) {
         $pdo->rollBack();

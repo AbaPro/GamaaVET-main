@@ -239,7 +239,7 @@ function handleFinanceAccountBalanceSettlement($type, $accountId, $canSetBalance
             'currency' => $currency,
             'reason' => $reason,
             'adjustment_id' => $adjustmentId,
-        ]);
+        ], 'update', ['safe' => 'safe', 'bank' => 'bank_account', 'personal' => 'personal_account'][$type] ?? $type, $accountId);
 
         $conn->commit();
         setAlert('success', 'Balance updated from ' . number_format($previousBalance, 2) . ' to ' . number_format($newBalance, 2) . ' ' . $currency . '.');

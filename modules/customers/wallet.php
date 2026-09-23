@@ -129,7 +129,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['set_wallet_balance'])
             'new_balance' => $newBalance,
             'reason' => $adjustmentReason,
             'adjustment_id' => $adjustmentId,
-        ]);
+        ], 'update', 'customer', $customer_id);
 
         $conn->commit();
         setAlert(

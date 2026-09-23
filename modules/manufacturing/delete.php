@@ -52,6 +52,7 @@ try {
         }
     }
 
+    logActivity("Deleted manufacturing order {$order['order_number']}", ['customer_id' => (int)$order['customer_id']], 'delete', 'manufacturing_order', $order_id);
     $_SESSION['success'] = "Manufacturing order #{$order['order_number']} and its associated data have been deleted successfully.";
 } catch (PDOException $e) {
     $_SESSION['error'] = "Error deleting order: " . $e->getMessage();

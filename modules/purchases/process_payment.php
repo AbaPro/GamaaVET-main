@@ -159,6 +159,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             }
             
             $pdo->commit();
+            logActivity("Recorded payment for Purchase Order #$po_id", ['amount' => $amount, 'method' => $payment_method, 'payment_id' => $payment_id], 'create', 'purchase_order', $po_id);
             
             $_SESSION['success'] = "Payment recorded successfully!";
             header("Location: " . ($canViewPODetails ? 'po_details.php?id=' . $po_id : '../finance/po.php'));

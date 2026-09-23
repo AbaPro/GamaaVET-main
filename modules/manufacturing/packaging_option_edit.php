@@ -111,6 +111,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         try {
             $pdo->beginTransaction();
+            $isNewOption = $id <= 0;
 
             if ($id > 0) {
                 if ($hasPackagingProductColumn) {
@@ -149,7 +150,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $pdo->commit();
-            setAlert('success', $id ? 'Packaging option updated.' : 'Packaging option created.');
+            logActivity(
+                $isNewOption ? "Created packaging option: $name" : "Updated packaging option ID: $id",
+                ['customer_id' => $customerId, 'items' => count($items)],
+                $isNewOption ? 'create' : 'update',
+                'packaging_option',
+                $id
+            );
+            setAlert('success', $isNewOption ? 'Packaging option created.' : 'Packaging option updated.');
             redirect('packaging_options.php');
         } catch (Exception $e) {
             $pdo->rollBack();

@@ -158,6 +158,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $pdo->commit();
+        logActivity(
+            $is_edit ? "Updated expense ID: $expense_id" : "Created expense: $name",
+            ['amount' => $amount, 'currency' => $currency, 'paid_now' => !$is_edit && ($_POST['pay_now'] ?? '') == '1'],
+            $is_edit ? 'update' : 'create',
+            'expense',
+            $expense_id
+        );
         setAlert('success', $is_edit ? 'Expense updated.' : 'Expense recorded.');
         redirect('index.php');
     } catch (Exception $e) {

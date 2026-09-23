@@ -33,6 +33,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $conn->commit();
+        logActivity("Updated permissions for role ID: $role_id", ['permissions' => count($selected)], 'update', 'role', $role_id);
         setAlert('success', 'Permissions updated.');
     } catch (Throwable $e) {
         $conn->rollback();

@@ -61,7 +61,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_bank_account']
         $stmt->execute();
         $newId = $stmt->insert_id;
         $stmt->close();
-        logActivity('Created bank account', ['bank_account_id' => $newId, 'bank_name' => $bankName, 'currency' => $currency]);
+        logActivity('Created bank account', ['bank_account_id' => $newId, 'bank_name' => $bankName, 'currency' => $currency], 'create', 'bank_account', $newId);
         setAlert('success', 'Bank account added.');
     }
     redirect('banks.php');
@@ -113,7 +113,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_bank_account']))
             $stmt->bind_param('sssssssii', $bankName, $accountNumber, $currency, $accountHolder, $branchName, $iban, $notes, $accountId, $bankId);
             $stmt->execute();
             $stmt->close();
-            logActivity('Edited bank account', ['bank_account_id' => $bankId, 'bank_name' => $bankName, 'currency' => $currency]);
+            logActivity('Edited bank account', ['bank_account_id' => $bankId, 'bank_name' => $bankName, 'currency' => $currency], 'update', 'bank_account', $bankId);
             setAlert('success', 'Bank account updated.');
         }
     }

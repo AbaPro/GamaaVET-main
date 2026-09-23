@@ -144,6 +144,28 @@ function touchPortalAccess(PDO $pdo, int $customerId): void
     $stmt->execute([$customerId]);
 }
 
+// The portal does not load includes/functions.php (logActivity), so it writes its audit rows directly.
+function portalLogActivity(PDO $pdo, string $action, string $actionType, string $entityType, int $entityId, array $details = []): void
+{
+    $details['source'] = 'customer_portal';
+    try {
+        $stmt = $pdo->prepare("
+            INSERT INTO activity_logs (user_id, action, action_type, entity_type, entity_id, details, ip_address)
+            VALUES (NULL, ?, ?, ?, ?, ?, ?)
+        ");
+        $stmt->execute([
+            $action,
+            $actionType,
+            $entityType,
+            $entityId,
+            json_encode($details, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            $_SERVER['REMOTE_ADDR'] ?? null,
+        ]);
+    } catch (Throwable $e) {
+        error_log('portalLogActivity failed: ' . $e->getMessage());
+    }
+}
+
 function normalizeEgyptWhatsappNumber(?string $phone): string
 {
     $digits = preg_replace('/\D+/', '', (string)$phone);
@@ -224,7 +246,9 @@ if ($requiresPassword) {
         if (password_verify($passwordAttempt, $customer['portal_password_hash'])) {
             $_SESSION['portal_access'][$portalSessionKey] = true;
             $hasPortalAccess = true;
+            portalLogActivity($pdo, "Customer portal login: {$customer['name']}", 'login', 'customer', $customerId);
         } else {
+            portalLogActivity($pdo, "Customer portal failed login: {$customer['name']}", 'login_failed', 'customer', $customerId);
             $passwordError = 'كلمة المرور غير صحيحة، حاول مرة أخرى.';
         }
     }
@@ -413,6 +437,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['portal_action'] ?? '') ===
         ]);
 
         $pdo->commit();
+        portalLogActivity($pdo, "Customer portal order request #$portalOrderId", 'create', 'portal_order', $portalOrderId, [
+            'customer' => $customer['name'],
+            'items' => count($selectedProducts),
+        ]);
         $flash = [
             'type' => 'success',
             'order_id' => $portalOrderId,
@@ -493,6 +521,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['portal_action'] ?? '') ===
             (int)$ownedOrder['created_by']
         ]);
         $pdo->commit();
+        portalLogActivity($pdo, "Customer portal note on $orderLabel", 'update', 'sales_order', $orderId, ['customer' => $customer['name']]);
 
         $flash = ['type' => 'success', 'order_id' => $orderId, 'message' => 'تمت إضافة ملاحظتك إلى الطلب بنجاح.'];
     } catch (DomainException $e) {

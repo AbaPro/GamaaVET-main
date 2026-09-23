@@ -107,7 +107,7 @@ function handleFinanceAccountDeletion($type, $canDelete, $returnPage) {
         return;
     }
 
-    logActivity('Deleted finance account', ['type' => $type, 'id' => $id, 'name' => $account['account_name']]);
+    logActivity('Deleted finance account', ['type' => $type, 'id' => $id, 'name' => $account['account_name']], 'delete', ['safe' => 'safe', 'bank' => 'bank_account', 'personal' => 'personal_account'][$type] ?? null, $id);
     setAlert('success', 'Account deleted.');
     redirect($returnPage);
 }

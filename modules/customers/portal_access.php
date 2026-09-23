@@ -31,7 +31,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ");
             $stmt->execute([$customerId]);
 
-            logActivity('Cleared portal password', ['customer_id' => $customerId]);
+            logActivity('Cleared portal password', ['customer_id' => $customerId], 'update', 'customer', $customerId);
             $_SESSION['success'] = 'Portal password removed. The portal link no longer requires a password.';
         } else {
             $rawPassword = trim($_POST['portal_password'] ?? '');
@@ -55,7 +55,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ");
             $stmt->execute([$passwordHash, $hint, $customerId]);
 
-            logActivity('Updated portal password', ['customer_id' => $customerId]);
+            logActivity('Updated portal password', ['customer_id' => $customerId], 'update', 'customer', $customerId);
             $_SESSION['success'] = 'Portal password updated successfully.';
             $_SESSION['portal_password_plain'] = $rawPassword;
         }

@@ -77,6 +77,9 @@ try {
     }
 
     $pdo->commit();
+    if ($cloned_count > 0) {
+        logActivity("Generated $cloned_count recurring expense(s)", ['expense_ids' => $new_expense_ids], 'create', 'expense', count($new_expense_ids) === 1 ? $new_expense_ids[0] : null);
+    }
 
     // Send notifications to all roles with finance.expenses.view permission
     if ($cloned_count > 0 && isset($conn) && $conn instanceof mysqli) {
