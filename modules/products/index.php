@@ -611,7 +611,7 @@ $currentReturnUrl = 'index.php' . (!empty($returnQuery) ? '?' . http_build_query
                     </div>
                     <div class="row">
                         <div class="col-md-12 mb-3" data-customer-group="customer">
-                            <label for="customer_id" class="form-label">Customer <span class="text-danger">*</span></label>
+                            <label for="customer_id" class="form-label">Customer <span class="text-danger" data-customer-required>*</span></label>
                             <select class="form-select js-searchable-select" id="customer_id" name="customer_id" required>
                                 <option value="">-- Select Customer --</option>
                                 <?php foreach ($customers as $customer): ?>
@@ -728,7 +728,7 @@ $currentReturnUrl = 'index.php' . (!empty($returnQuery) ? '?' . http_build_query
                     </div>
                     <div class="row">
                         <div class="col-md-12 mb-3" data-customer-group="customer">
-                            <label for="edit_customer_id" class="form-label">Customer <span class="text-danger">*</span></label>
+                            <label for="edit_customer_id" class="form-label">Customer <span class="text-danger" data-customer-required>*</span></label>
                             <select class="form-select js-searchable-select" id="edit_customer_id" name="customer_id" required>
                                 <option value="">-- Select Customer --</option>
                                 <?php foreach ($customers as $customer): ?>
@@ -849,7 +849,7 @@ $currentReturnUrl = 'index.php' . (!empty($returnQuery) ? '?' . http_build_query
         if (!form) return;
         const showUnit = type !== 'material';
         const showCost = type !== 'final';
-        const showCustomer = type !== 'material';
+        const requireCustomer = type === 'final';
         const showMeasurementUnit = type === 'final' || type === 'material';
         const unitGroup = form.querySelector('[data-pricing-group="unit"]');
         const costGroup = form.querySelector('[data-pricing-group="cost"]');
@@ -860,10 +860,10 @@ $currentReturnUrl = 'index.php' . (!empty($returnQuery) ? '?' . http_build_query
         if (unitGroup) unitGroup.classList.toggle('d-none', !showUnit);
         if (costGroup) costGroup.classList.toggle('d-none', !showCost);
         if (measurementUnitGroup) measurementUnitGroup.classList.toggle('d-none', !showMeasurementUnit);
-        const customerGroup = form.querySelector('[data-customer-group="customer"]');
         const customerInput = form.querySelector('#customer_id, #edit_customer_id');
-        if (customerGroup) customerGroup.classList.toggle('d-none', !showCustomer);
-        if (customerInput) customerInput.required = showCustomer;
+        const customerRequiredMark = form.querySelector('[data-customer-required]');
+        if (customerRequiredMark) customerRequiredMark.classList.toggle('d-none', !requireCustomer);
+        if (customerInput) customerInput.required = requireCustomer;
         if (unitInput) unitInput.required = showUnit;
         if (costInput) costInput.required = showCost;
         if (measurementUnitInput) measurementUnitInput.required = showMeasurementUnit;

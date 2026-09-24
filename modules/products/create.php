@@ -55,7 +55,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($loginRegion !== 'factory' || isSalesPersonUser()) {
                 throw new Exception('Raw and primary products are available only in Factory.');
             }
-            $customer_id = NULL;
+            // Customer is optional for raw/primary products (e.g. customer-specific printed materials).
+            if ($customer_id !== NULL && !canAccessCustomer($customer_id)) {
+                throw new Exception('Selected customer is not available in the current sales channel.');
+            }
         } else {
             throw new Exception('Invalid product type.');
         }

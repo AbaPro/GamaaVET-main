@@ -46,7 +46,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             setAlert('danger', 'Raw and primary products are available only in Factory.');
             redirect($returnUrl);
         }
-        $customer_id = null;
+        // Customer is optional for raw/primary products (e.g. customer-specific printed materials).
+        if ($customer_id !== null && !canAccessCustomer($customer_id)) {
+            setAlert('danger', 'Selected customer is not available in the current sales channel.');
+            redirect($returnUrl);
+        }
     } else {
         setAlert('danger', 'Invalid product type.');
         redirect($returnUrl);

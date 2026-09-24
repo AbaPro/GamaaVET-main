@@ -360,7 +360,12 @@ if (isset($_SESSION['bulk_upload']['step']) && $_SESSION['bulk_upload']['step'] 
                     $errors[] = "Raw and primary products are available only in Factory: $name";
                     continue;
                 }
-                $customer_id = null;
+                // Customer is optional for raw/primary products (e.g. customer-specific printed materials).
+                if ($customer_id && !canAccessCustomer($customer_id)) {
+                    $error_count++;
+                    $errors[] = "Customer is not available in the current sales channel: $name";
+                    continue;
+                }
             } else {
                 $error_count++;
                 $errors[] = "Invalid product type: $name";
