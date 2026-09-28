@@ -2,16 +2,22 @@
 
 require_once __DIR__ . '/transfer_helpers.php';
 
-function handleFinanceAccountDeletion($type, $canDelete, $returnPage) {
+function handleFinanceAccountDeletion($type, $canDelete, $returnPage, $canForceDelete = false) {
     global $conn;
 
     if (empty($_SESSION['finance_account_delete_token'])) {
         $_SESSION['finance_account_delete_token'] = bin2hex(random_bytes(32));
     }
-    if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !isset($_POST['delete_account'])) {
+    $isForce = isset($_POST['force_delete_account']);
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST' || (!isset($_POST['delete_account']) && !$isForce)) {
         return;
     }
-    if (!$canDelete) {
+    if ($isForce) {
+        if (!$canForceDelete) {
+            setAlert('danger', 'Access denied. You do not have permission to force-delete this account type.');
+            redirect($returnPage);
+        }
+    } elseif (!$canDelete) {
         setAlert('danger', 'Access denied. You do not have permission to delete this account type.');
         redirect($returnPage);
     }
@@ -20,7 +26,7 @@ function handleFinanceAccountDeletion($type, $canDelete, $returnPage) {
         setAlert('danger', 'Invalid request. Refresh the page and try again.');
         redirect($returnPage);
     }
-    $id = filter_var($_POST['delete_account'], FILTER_VALIDATE_INT);
+    $id = filter_var($isForce ? $_POST['force_delete_account'] : $_POST['delete_account'], FILTER_VALIDATE_INT);
     $config = financeTransferAccountConfig($type);
     if (!$config || !$id || $id < 1) {
         setAlert('danger', 'Invalid account.');
@@ -37,6 +43,8 @@ function handleFinanceAccountDeletion($type, $canDelete, $returnPage) {
             throw new DomainException('Cannot delete an account with a nonzero balance.');
         }
 
+        $linkedRecords = [];
+
         // Includes pending, rejected and reversed transfers: their account names
         // and approval/reversal destinations must remain available.
         $stmt = $conn->prepare('SELECT id FROM finance_transfers WHERE (from_type = ? AND from_id = ?) OR (to_type = ? AND to_id = ?) LIMIT 1 FOR UPDATE');
@@ -45,7 +53,10 @@ function handleFinanceAccountDeletion($type, $canDelete, $returnPage) {
         $hasHistory = $stmt->get_result()->num_rows > 0;
         $stmt->close();
         if ($hasHistory) {
-            throw new DomainException('Cannot delete an account linked to transfers. Its financial history must be preserved.');
+            if (!$isForce) {
+                throw new DomainException('Cannot delete an account linked to transfers. Its financial history must be preserved.');
+            }
+            $linkedRecords[] = 'transfers';
         }
 
         $stmt = $conn->prepare('SELECT id FROM purchase_order_payments WHERE payment_source_type = ? AND payment_source_id = ? LIMIT 1 FOR UPDATE');
@@ -54,7 +65,10 @@ function handleFinanceAccountDeletion($type, $canDelete, $returnPage) {
         $hasPayments = $stmt->get_result()->num_rows > 0;
         $stmt->close();
         if ($hasPayments) {
-            throw new DomainException('Cannot delete an account linked to PO payments. Its history must be preserved.');
+            if (!$isForce) {
+                throw new DomainException('Cannot delete an account linked to PO payments. Its history must be preserved.');
+            }
+            $linkedRecords[] = 'PO payments';
         }
 
         if (tableExists('finance_account_balance_adjustments') && in_array($type, ['safe', 'bank', 'personal'], true)) {
@@ -64,7 +78,10 @@ function handleFinanceAccountDeletion($type, $canDelete, $returnPage) {
             $hasAdjustments = $stmt->get_result()->num_rows > 0;
             $stmt->close();
             if ($hasAdjustments) {
-                throw new DomainException('Cannot delete an account with balance-adjustment history. Its audit trail must be preserved.');
+                if (!$isForce) {
+                    throw new DomainException('Cannot delete an account with balance-adjustment history. Its audit trail must be preserved.');
+                }
+                $linkedRecords[] = 'balance adjustments';
             }
         }
 
@@ -84,7 +101,10 @@ function handleFinanceAccountDeletion($type, $canDelete, $returnPage) {
             $hasHistory = $stmt->get_result()->num_rows > 0;
             $stmt->close();
             if ($hasHistory) {
-                throw new DomainException('Cannot delete an account linked to financial records. Its history must be preserved.');
+                if (!$isForce) {
+                    throw new DomainException('Cannot delete an account linked to financial records. Its history must be preserved.');
+                }
+                $linkedRecords[] = $table['TABLE_NAME'];
             }
         }
 
@@ -107,12 +127,18 @@ function handleFinanceAccountDeletion($type, $canDelete, $returnPage) {
         return;
     }
 
-    logActivity('Deleted finance account', ['type' => $type, 'id' => $id, 'name' => $account['account_name']], 'delete', ['safe' => 'safe', 'bank' => 'bank_account', 'personal' => 'personal_account'][$type] ?? null, $id);
-    setAlert('success', 'Account deleted.');
+    $entityType = ['safe' => 'safe', 'bank' => 'bank_account', 'personal' => 'personal_account'][$type] ?? null;
+    if ($isForce && $linkedRecords) {
+        logActivity('Force-deleted finance account', ['type' => $type, 'id' => $id, 'name' => $account['account_name'], 'linked_records' => $linkedRecords], 'delete', $entityType, $id);
+        setAlert('warning', 'Account force-deleted. It was linked to: ' . implode(', ', array_unique($linkedRecords)) . '. Those historical records now reference a deleted account.');
+    } else {
+        logActivity('Deleted finance account', ['type' => $type, 'id' => $id, 'name' => $account['account_name']], 'delete', $entityType, $id);
+        setAlert('success', 'Account deleted.');
+    }
     redirect($returnPage);
 }
 
-function renderFinanceAccountDeleteButton(array $account) {
+function renderFinanceAccountDeleteButton(array $account, $canForceDelete = false) {
     if ((float)$account['balance'] != 0.0) {
         echo '<span class="d-inline-block"><button type="button" class="btn btn-sm btn-danger" disabled>Delete</button><small class="d-block text-muted">Balance must be zero to delete.</small></span>';
         return;
@@ -122,5 +148,11 @@ function renderFinanceAccountDeleteButton(array $account) {
         <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['finance_account_delete_token'], ENT_QUOTES, 'UTF-8'); ?>">
         <button type="submit" name="delete_account" value="<?= (int)$account['id']; ?>" class="btn btn-sm btn-danger">Delete</button>
     </form>
+    <?php if ($canForceDelete): ?>
+    <form method="post" class="d-inline" onsubmit="return confirm('Force delete this account even if it is linked to transfers, PO payments, or other financial records? Those historical records will remain but will point to a deleted account. This cannot be undone. Continue?');">
+        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['finance_account_delete_token'], ENT_QUOTES, 'UTF-8'); ?>">
+        <button type="submit" name="force_delete_account" value="<?= (int)$account['id']; ?>" class="btn btn-sm btn-outline-danger" title="Force delete even if linked to financial history">Force Delete</button>
+    </form>
+    <?php endif; ?>
     <?php
 }

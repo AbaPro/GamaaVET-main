@@ -6,6 +6,7 @@ require_once __DIR__ . '/account_balance_adjustments.php';
 
 $canCreate = hasPermission('finance.personal_accounts.create');
 $canDelete = hasPermission('finance.personal_accounts.delete');
+$canForceDelete = hasPermission('finance.personal_accounts.force_delete');
 $canSetBalance = canSettleFinanceBalances();
 
 if (!$canCreate && !$canDelete && !$canSetBalance) {
@@ -13,7 +14,7 @@ if (!$canCreate && !$canDelete && !$canSetBalance) {
     redirect('../../dashboard.php');
 }
 
-handleFinanceAccountDeletion('personal', $canDelete, 'personal.php');
+handleFinanceAccountDeletion('personal', $canDelete, 'personal.php', $canForceDelete);
 
 $currentAccountId = getCurrentAccountId();
 $accountStmt = $conn->prepare('SELECT id, name FROM accounts WHERE id = ? AND is_active = 1 LIMIT 1');
@@ -158,7 +159,7 @@ require_once '../../includes/header.php';
                                     <i class="fas fa-history me-1"></i>History
                                 </a>
                                 <?php if ($canSetBalance): ?><a href="personal_details.php?id=<?= (int)$row['id']; ?>#set-balance" class="btn btn-sm btn-outline-warning"><i class="fas fa-scale-balanced me-1"></i>Set Balance</a><?php endif; ?>
-                                <?php if ($canDelete) renderFinanceAccountDeleteButton($row); ?>
+                                <?php if ($canDelete) renderFinanceAccountDeleteButton($row, $canForceDelete); ?>
                             </td>
                         </tr>
                     <?php endwhile; ?>

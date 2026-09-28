@@ -7,6 +7,7 @@ require_once __DIR__ . '/account_balance_adjustments.php';
 $canCreate = hasPermission('finance.safes.create');
 $canEdit = hasPermission('finance.safes.edit');
 $canDelete = hasPermission('finance.safes.delete');
+$canForceDelete = hasPermission('finance.safes.force_delete');
 $canSetBalance = canSettleFinanceBalances() || hasPermission('finance.safes.balance.edit');
 $canView = $canCreate || $canEdit || $canDelete || $canSetBalance
     || hasPermission('finance.transfers.create') || hasPermission('finance.transfers.approve');
@@ -18,7 +19,7 @@ if (!$canView) {
 
 $page_title = 'Safes';
 $formToken = financeAccountFormToken();
-handleFinanceAccountDeletion('safe', $canDelete, 'safes.php');
+handleFinanceAccountDeletion('safe', $canDelete, 'safes.php', $canForceDelete);
 
 $currentAccountId = getCurrentAccountId();
 $accountStmt = $conn->prepare('SELECT id, name FROM accounts WHERE id = ? AND is_active = 1 LIMIT 1');
@@ -202,7 +203,7 @@ require_once '../../includes/header.php';
                     <a href="safe_details.php?id=<?= (int)$row['id']; ?>" class="btn btn-sm btn-outline-primary"><i class="fas fa-history me-1"></i>History</a>
                     <?php if ($canEdit): ?><button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editSafeModal<?= (int)$row['id']; ?>"><i class="fas fa-pen me-1"></i>Edit</button><?php endif; ?>
                     <?php if ($canSetBalance): ?><a href="safe_details.php?id=<?= (int)$row['id']; ?>#set-balance" class="btn btn-sm btn-outline-warning"><i class="fas fa-scale-balanced me-1"></i>Set Balance</a><?php endif; ?>
-                    <?php if ($canDelete) renderFinanceAccountDeleteButton($row); ?>
+                    <?php if ($canDelete) renderFinanceAccountDeleteButton($row, $canForceDelete); ?>
                 </td>
             </tr>
         <?php endforeach; ?></tbody>
