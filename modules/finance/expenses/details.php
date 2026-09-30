@@ -43,6 +43,16 @@ $stmt = $pdo->prepare($sql_payments);
 $stmt->execute([$expense_id]);
 $payments = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+$paymentAttachments = [];
+$stmt = $pdo->prepare("SELECT epa.expense_payment_id, epa.file_path, epa.original_name
+                       FROM expense_payment_attachments epa
+                       JOIN expense_payments ep ON ep.id = epa.expense_payment_id
+                       WHERE ep.expense_id = ? ORDER BY epa.created_at, epa.id");
+$stmt->execute([$expense_id]);
+foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $attachment) {
+    $paymentAttachments[$attachment['expense_payment_id']][] = $attachment;
+}
+
 $balance = $expense['amount'] - $expense['paid_amount'];
 
 $page_title = 'Expense Details: ' . $expense['name'];
@@ -180,6 +190,7 @@ require_once '../../../includes/header.php';
                                     <th>Method</th>
                                     <th>Account/Safe</th>
                                     <th>Reference</th>
+                                    <th>Image</th>
                                     <th>Amount</th>
                                     <th class="pe-3">Recorder</th>
                                 </tr>
@@ -199,13 +210,14 @@ require_once '../../../includes/header.php';
                                         <?php endif; ?>
                                     </td>
                                     <td><?= htmlspecialchars($p['reference'] ?: '-') ?></td>
+                                    <td><?= renderAttachmentThumbnails($paymentAttachments[$p['id']] ?? [], 'file_path', 'original_name', '../../../') ?></td>
                                     <td class="fw-bold text-success"><?= number_format($p['amount'], 2) ?></td>
                                     <td class="pe-3 small"><?= htmlspecialchars($p['recorder_name']) ?></td>
                                 </tr>
                                 <?php endforeach; ?>
                                 <?php if (empty($payments)): ?>
                                 <tr>
-                                    <td colspan="6" class="text-center py-4 text-muted">No payments recorded yet.</td>
+                                    <td colspan="7" class="text-center py-4 text-muted">No payments recorded yet.</td>
                                 </tr>
                                 <?php endif; ?>
                             </tbody>

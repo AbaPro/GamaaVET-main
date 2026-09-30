@@ -2,6 +2,7 @@
 require_once '../../../includes/auth.php';
 require_once '../../../config/database.php';
 require_once '../../../includes/functions.php';
+require_once __DIR__ . '/payment_attachments.php';
 
 if (!hasPermission('finance.expenses.manage')) {
     setAlert('danger', 'Access denied.');
@@ -25,6 +26,7 @@ if (isset($_GET['edit'])) {
 
 // Handle Form Submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $uploadedPaymentImages = [];
     try {
         $pdo->beginTransaction();
 
@@ -72,6 +74,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $reference = $_POST['payment_reference'] ?? '';
             $transactionDate = normalizeTransactionDate($_POST['payment_transaction_date'] ?? '');
 
+            if (!is_finite($pay_amount) || $pay_amount <= 0) {
+                throw new Exception('Enter a valid payment amount.');
+            }
+            if (!in_array($payment_method, ['cash', 'transfer', 'wallet'], true)
+                || ($loginRegion !== 'factory' && $payment_method === 'wallet')) {
+                throw new Exception('Invalid payment method.');
+            }
             if ($pay_amount > 0) {
                 if ($transactionDate === null) {
                     throw new Exception("Please enter a valid payment transaction date.");
@@ -118,9 +127,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     throw new Exception("Please select a vendor before paying from vendor wallet.");
                 }
 
+                $attachmentError = null;
+                $uploadedPaymentImages = uploadImageAttachments(
+                    'payment_image', 'assets/uploads/expense_payments', 'expense_' . $expense_id, 0, $attachmentError
+                );
+                if ($attachmentError !== null) {
+                    throw new Exception($attachmentError);
+                }
+
                 // Insert payment
                 $stmt = $pdo->prepare("INSERT INTO expense_payments (expense_id, amount, payment_method, safe_id, bank_account_id, reference, transaction_date, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
                 $stmt->execute([$expense_id, $pay_amount, $payment_method, $safe_id, $bank_account_id, $reference, $transactionDate, $_SESSION['user_id']]);
+                $paymentId = (int)$pdo->lastInsertId();
+                saveExpensePaymentAttachments($pdo, $paymentId, $uploadedPaymentImages, (int)$_SESSION['user_id']);
 
                 // Update expense status/paid_amount
                 $new_status = ($pay_amount >= $amount) ? 'paid' : 'partially-paid';
@@ -151,8 +170,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                      $stmt->execute([$pay_amount, $vendor_id]);
 
                      // Record Wallet Transaction History
-                     $stmt = $pdo->prepare("INSERT INTO vendor_wallet_transactions (vendor_id, amount, type, notes, transaction_date, created_by) VALUES (?, ?, 'payment', ?, ?, ?)");
-                     $stmt->execute([$vendor_id, $pay_amount, 'Payment for expense: ' . $name, $transactionDate, $_SESSION['user_id']]);
+                     $stmt = $pdo->prepare("INSERT INTO vendor_wallet_transactions (vendor_id, amount, type, reference_id, reference_type, notes, transaction_date, created_by) VALUES (?, ?, 'payment', ?, 'expense_payment', ?, ?, ?)");
+                     $stmt->execute([$vendor_id, $pay_amount, $paymentId, 'Payment for expense: ' . $name, $transactionDate, $_SESSION['user_id']]);
                 }
             }
         }
@@ -169,6 +188,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect('index.php');
     } catch (Exception $e) {
         $pdo->rollBack();
+        removeUploadedExpensePaymentImages($uploadedPaymentImages);
         setAlert('danger', 'Error: ' . $e->getMessage());
     }
 }
@@ -201,7 +221,7 @@ require_once '../../../includes/header.php';
 
     <?php include '../../../includes/messages.php'; ?>
 
-    <form method="post" id="expenseForm">
+    <form method="post" id="expenseForm" enctype="multipart/form-data">
         <div class="row">
             <div class="col-md-8">
                 <div class="card shadow-sm mb-4">
@@ -333,6 +353,11 @@ require_once '../../../includes/header.php';
                         <div class="mb-3">
                             <label class="form-label">Reference</label>
                             <input type="text" name="payment_reference" class="form-control" placeholder="Check #, Transaction ID">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Payment Image (Optional)</label>
+                            <input type="file" name="payment_image[]" class="form-control" accept="image/jpeg,image/png,image/gif,image/webp" multiple>
+                            <small class="text-muted">JPG, PNG, GIF, or WEBP; up to 5MB each.</small>
                         </div>
                     </div>
                 </div>

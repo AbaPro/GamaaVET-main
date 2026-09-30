@@ -327,14 +327,31 @@
             return;
         }
 
-        const csvRows = [exportIndexes.map(function (index) {
-            return csvValue(cellText(headerRow.cells[index]));
-        }).join(',')];
+        const lineHeaders = table.dataset.exportLineHeaders
+            ? JSON.parse(table.dataset.exportLineHeaders) : [];
+        const onceColumns = table.dataset.exportOnceColumns
+            ? JSON.parse(table.dataset.exportOnceColumns) : [];
+        const headers = exportIndexes.map(function (index) {
+            return cellText(headerRow.cells[index]);
+        }).concat(lineHeaders);
+
+        const csvRows = [headers.map(csvValue).join(',')];
 
         rows.forEach(function (row) {
-            csvRows.push(exportIndexes.map(function (index) {
-                return csvValue(row.cells[index] ? cellText(row.cells[index]) : '');
-            }).join(','));
+            const baseValues = exportIndexes.map(function (index) {
+                return row.cells[index] ? cellText(row.cells[index]) : '';
+            });
+            const lines = lineHeaders.length && row.dataset.exportLines
+                ? JSON.parse(row.dataset.exportLines) : [];
+            (lines.length ? lines : [[]]).forEach(function (line, lineIndex) {
+                const values = baseValues.map(function (value, index) {
+                    return lineIndex > 0 && onceColumns.includes(headers[index]) ? '' : value;
+                });
+                const itemValues = lineHeaders.map(function (_, index) {
+                    return line[index] === undefined ? '' : line[index];
+                });
+                csvRows.push(values.concat(itemValues).map(csvValue).join(','));
+            });
         });
 
         const now = new Date();

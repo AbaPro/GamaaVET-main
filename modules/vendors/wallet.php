@@ -126,14 +126,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect("wallet.php?id=$vendor_id");
 }
 
-// Get wallet transactions
-$transactions_sql = "SELECT wt.*, u.name as created_by_name 
-                     FROM vendor_wallet_transactions wt 
-                     LEFT JOIN users u ON wt.created_by = u.id 
-                     WHERE wt.vendor_id = ? 
-                     ORDER BY wt.transaction_date DESC, wt.created_at DESC";
+// Show cash/bank expense payments alongside wallet movements without changing
+// wallet credit. Wallet-funded expense payments already have a wallet row.
+$transactions_sql = "SELECT wt.id AS source_id, 'wallet' AS source, wt.reference_id, wt.reference_type, wt.amount, wt.type,
+                            wt.notes, wt.transaction_date, wt.created_at, u.name AS created_by_name
+                     FROM vendor_wallet_transactions wt
+                     LEFT JOIN users u ON wt.created_by = u.id
+                     WHERE wt.vendor_id = ?
+                     UNION ALL
+                     SELECT ep.id AS source_id, 'expense_payment' AS source, NULL AS reference_id, NULL AS reference_type, ep.amount,
+                            'expense_payment' AS type,
+                            CONCAT('Expense: ', e.name, ' (', CASE ep.payment_method WHEN 'cash' THEN 'Cash' ELSE 'Bank transfer' END,
+                                   IF(ep.reference IS NULL OR ep.reference = '', '', CONCAT('; Ref: ', ep.reference)), ')') AS notes,
+                            ep.transaction_date, ep.created_at, u.name AS created_by_name
+                     FROM expense_payments ep
+                     JOIN expenses e ON ep.expense_id = e.id
+                     LEFT JOIN users u ON ep.created_by = u.id
+                     WHERE e.vendor_id = ? AND ep.payment_method IN ('cash', 'transfer')
+                     ORDER BY transaction_date DESC, created_at DESC";
 $transactions_stmt = $conn->prepare($transactions_sql);
-$transactions_stmt->bind_param("i", $vendor_id);
+$transactions_stmt->bind_param("ii", $vendor_id, $vendor_id);
 $transactions_stmt->execute();
 $transactions_result = $transactions_stmt->get_result();
 
@@ -143,9 +155,22 @@ $waStmt->bind_param("i", $vendor_id);
 $waStmt->execute();
 $waResult = $waStmt->get_result();
 while ($waRow = $waResult->fetch_assoc()) {
-    $walletAttachmentsByTxn[$waRow['vendor_wallet_transaction_id']][] = $waRow;
+    $walletAttachmentsByTxn['wallet_' . $waRow['vendor_wallet_transaction_id']][] = $waRow;
 }
 $waStmt->close();
+
+$expenseAttStmt = $conn->prepare("SELECT epa.expense_payment_id, epa.file_path, epa.original_name
+                                  FROM expense_payment_attachments epa
+                                  JOIN expense_payments ep ON ep.id = epa.expense_payment_id
+                                  JOIN expenses e ON e.id = ep.expense_id
+                                  WHERE e.vendor_id = ? ORDER BY epa.created_at, epa.id");
+$expenseAttStmt->bind_param('i', $vendor_id);
+$expenseAttStmt->execute();
+$expenseAttResult = $expenseAttStmt->get_result();
+while ($attachment = $expenseAttResult->fetch_assoc()) {
+    $walletAttachmentsByTxn['expense_payment_' . $attachment['expense_payment_id']][] = $attachment;
+}
+$expenseAttStmt->close();
 require_once '../../includes/header.php';
 ?>
 
@@ -252,6 +277,7 @@ require_once '../../includes/header.php';
         <h5 class="card-title mb-0">Transaction History</h5>
     </div>
     <div class="card-body">
+        <p class="text-muted small">Cash and bank expense payments appear here for reference and do not change the wallet balance.</p>
         <div class="table-responsive">
             <table class="table js-datatable table-hover">
                 <thead>
@@ -270,21 +296,27 @@ require_once '../../includes/header.php';
                             <tr>
                                 <td><?php echo date('M d, Y', strtotime($transaction['transaction_date'])); ?></td>
                                 <td>
-                                    <span class="badge bg-<?php echo $transaction['type'] === 'deposit' || $transaction['type'] === 'refund' ? 'success' : 'danger'; ?>">
-                                        <?php echo ucfirst($transaction['type']); ?>
+                                    <span class="badge bg-<?php echo $transaction['type'] === 'expense_payment' ? 'primary' : ($transaction['type'] === 'deposit' || $transaction['type'] === 'refund' ? 'success' : 'danger'); ?>">
+                                        <?php echo $transaction['type'] === 'expense_payment' ? 'Expense payment' : ucfirst($transaction['type']); ?>
                                     </span>
                                 </td>
                                 <td><?php echo number_format($transaction['amount'], 2); ?></td>
                                 <td><?php echo $transaction['notes'] ? htmlspecialchars($transaction['notes']) : '-'; ?></td>
                                 <td>
-                                    <?php echo renderAttachmentThumbnails($walletAttachmentsByTxn[$transaction['id']] ?? []); ?>
+                                    <?php
+                                    $attachments = $walletAttachmentsByTxn[$transaction['source'] . '_' . $transaction['source_id']] ?? [];
+                                    if ($transaction['reference_type'] === 'expense_payment' && $transaction['reference_id']) {
+                                        $attachments = array_merge($attachments, $walletAttachmentsByTxn['expense_payment_' . $transaction['reference_id']] ?? []);
+                                    }
+                                    echo renderAttachmentThumbnails($attachments);
+                                    ?>
                                 </td>
                                 <td><?php echo $transaction['created_by_name'] ? htmlspecialchars($transaction['created_by_name']) : 'System'; ?></td>
                             </tr>
                         <?php endwhile; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="5" class="text-center">No transactions found</td>
+                            <td colspan="6" class="text-center">No transactions found</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>

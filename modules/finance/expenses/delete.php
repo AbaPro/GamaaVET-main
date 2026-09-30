@@ -23,6 +23,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdo->beginTransaction();
 
         // Fetch payments to reverse balances
+        $stmt = $pdo->prepare("SELECT epa.file_path FROM expense_payment_attachments epa JOIN expense_payments ep ON ep.id = epa.expense_payment_id WHERE ep.expense_id = ?");
+        $stmt->execute([$expense_id]);
+        $filesToDelete = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
         $stmt = $pdo->prepare("SELECT * FROM expense_payments WHERE expense_id = ?");
         $stmt->execute([$expense_id]);
         $payments = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -46,11 +50,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                  $stmt->execute([$p['amount'], $exp['po_id']]);
             }
             
-            if (($_SESSION['login_region'] ?? 'factory') === 'factory' && $exp && $exp['vendor_id'] && $p['payment_method'] == 'wallet') {
-                 $stmt = $pdo->prepare("UPDATE vendors SET wallet_balance = wallet_balance + ? WHERE id = ?");
-                 $stmt->execute([$p['amount'], $exp['vendor_id']]);
+            if (($_SESSION['login_region'] ?? 'factory') === 'factory' && $p['payment_method'] == 'wallet') {
+                 $walletStmt = $pdo->prepare("SELECT vendor_id FROM vendor_wallet_transactions WHERE reference_type = 'expense_payment' AND reference_id = ? LIMIT 1");
+                 $walletStmt->execute([$p['id']]);
+                 $walletVendorId = $walletStmt->fetchColumn() ?: ($exp['vendor_id'] ?? null);
+                 if ($walletVendorId) {
+                     $stmt = $pdo->prepare("UPDATE vendors SET wallet_balance = wallet_balance + ? WHERE id = ?");
+                     $stmt->execute([$p['amount'], $walletVendorId]);
+                 }
             }
+
+            $stmt = $pdo->prepare("DELETE FROM vendor_wallet_transactions WHERE reference_type = 'expense_payment' AND reference_id = ?");
+            $stmt->execute([$p['id']]);
         }
+
+        $stmt = $pdo->prepare("DELETE epa FROM expense_payment_attachments epa JOIN expense_payments ep ON ep.id = epa.expense_payment_id WHERE ep.expense_id = ?");
+        $stmt->execute([$expense_id]);
 
         // Delete payments (CASCADE should handle it if set in SQL, but let's be explicit)
         $stmt = $pdo->prepare("DELETE FROM expense_payments WHERE expense_id = ?");
@@ -61,6 +76,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->execute([$expense_id]);
 
         $pdo->commit();
+        foreach ($filesToDelete as $path) {
+            $fullPath = ROOT_PATH . '/' . $path;
+            if (is_file($fullPath)) {
+                unlink($fullPath);
+            }
+        }
         logActivity("Deleted expense ID: $expense_id", null, 'delete', 'expense', $expense_id);
         setAlert('success', 'Expense and associated payments deleted successfully.');
     } catch (Exception $e) {

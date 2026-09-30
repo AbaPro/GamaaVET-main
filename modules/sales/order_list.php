@@ -78,6 +78,23 @@ $stmt = $pdo->prepare($query);
 $stmt->execute($params);
 $orders = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+// Load line items in one query so each exported order includes its products.
+$orderItems = [];
+if ($orders) {
+    $orderIds = array_column($orders, 'id');
+    $itemPlaceholders = implode(',', array_fill(0, count($orderIds), '?'));
+    $itemsStmt = $pdo->prepare("SELECT oi.order_id, oi.product_id, oi.quantity, oi.unit_price,
+                                      oi.total_price, oi.is_free_sample, p.name AS product_name, p.sku
+                               FROM order_items oi
+                               LEFT JOIN products p ON p.id = oi.product_id
+                               WHERE oi.order_id IN ($itemPlaceholders)
+                               ORDER BY oi.order_id, oi.id");
+    $itemsStmt->execute($orderIds);
+    foreach ($itemsStmt->fetchAll(PDO::FETCH_ASSOC) as $item) {
+        $orderItems[$item['order_id']][] = $item;
+    }
+}
+
 // Get only customers visible in the current assignment scope.
 $customerQuery = "SELECT c.id, c.name FROM customers c LEFT JOIN factories f ON f.id = c.factory_id WHERE 1=1";
 $customerParams = [];
@@ -174,7 +191,9 @@ $canDeleteOrders = hasPermission('sales.orders.delete');
             </form>
             
             <div class="table-responsive">
-                <table class="table js-datatable table-striped table-hover">
+                <table class="table js-datatable table-striped table-hover"
+                       data-export-line-headers='<?= htmlspecialchars(json_encode($canViewPrices ? ['Product', 'SKU', 'Quantity', 'Unit Price', 'Line Total', 'Free Sample'] : ['Product', 'SKU', 'Quantity', 'Free Sample']), ENT_QUOTES, 'UTF-8') ?>'
+                       data-export-once-columns='["Total","Paid","Balance"]'>
                     <thead>
                         <tr>
                             <th width="40"><?php if ($canDeleteOrders): ?><input type="checkbox" class="form-check-input" id="selectAll"><?php endif; ?></th>
@@ -194,6 +213,22 @@ $canDeleteOrders = hasPermission('sales.orders.delete');
                     <tbody>
                         <?php foreach ($orders as $order) : 
                             $balance = $order['total_amount'] - $order['paid_amount'];
+                            $exportOrderId = trim((string) ($order['internal_id'] ?? '')) !== ''
+                                ? $order['internal_id'] : (string) $order['id'];
+                            $exportLines = [];
+                            foreach ($orderItems[$order['id']] ?? [] as $item) {
+                                $exportLine = [
+                                    $item['product_name'] ?? ('Product #' . $item['product_id']),
+                                    $item['sku'] ?? '',
+                                    (string) $item['quantity']
+                                ];
+                                if ($canViewPrices) {
+                                    $exportLine[] = number_format((float) $item['unit_price'], 2, '.', '');
+                                    $exportLine[] = number_format((float) $item['total_price'], 2, '.', '');
+                                }
+                                $exportLine[] = $item['is_free_sample'] ? 'Yes' : 'No';
+                                $exportLines[] = $exportLine;
+                            }
                             $status_class = [
                                 'new' => 'bg-primary',
                                 'in-production' => 'bg-info',
@@ -206,14 +241,15 @@ $canDeleteOrders = hasPermission('sales.orders.delete');
                                 'partially-returned-refunded' => 'bg-secondary'
                             ];
                         ?>
-                            <tr data-id="<?= $order['id'] ?>">
+                            <tr data-id="<?= $order['id'] ?>"
+                                data-export-lines="<?= htmlspecialchars(json_encode($exportLines, JSON_INVALID_UTF8_SUBSTITUTE), ENT_QUOTES, 'UTF-8') ?>">
                                 <td><?php if ($canDeleteOrders): ?><input type="checkbox" class="form-check-input row-select" name="order_ids[]" value="<?= $order['id'] ?>"><?php endif; ?></td>
-                                <td>
+                                <td data-export-value="<?= htmlspecialchars($exportOrderId, ENT_QUOTES, 'UTF-8') ?>">
                                     <button type="button"
                                             class="btn btn-link p-0 text-decoration-none js-order-preview"
                                             data-order-id="<?= (int)$order['id'] ?>"
                                             title="Quick view order">
-                                        <?= htmlspecialchars($order['internal_id']) ?>
+                                        <?= htmlspecialchars($exportOrderId) ?>
                                         <i class="fas fa-caret-down ms-1"></i>
                                     </button>
                                 </td>
