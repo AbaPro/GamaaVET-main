@@ -1,6 +1,7 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+require_once '../../includes/formula_access.php';
 
 if (!hasPermission('manufacturing.view')) {
     setAlert('danger', 'Access denied.');
@@ -13,8 +14,7 @@ if (!$canViewFormula) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['unlock_formula_password'])) {
-    if ($_POST['unlock_formula_password'] === '123456') {
-        $_SESSION['formula_unlocked'] = true;
+    if (unlockFormulas($_POST['unlock_formula_password'])) {
         setAlert('success', 'Formulas unlocked.');
     } else {
         setAlert('danger', 'Incorrect password.');
@@ -24,7 +24,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['unlock_formula_passwo
     exit;
 }
 
-if (empty($_SESSION['formula_unlocked'])) {
+if (!areFormulasUnlocked()) {
     $page_title = 'Unlock Formulas';
     require_once '../../includes/header.php';
     ?>
@@ -41,6 +41,9 @@ if (empty($_SESSION['formula_unlocked'])) {
                             <input type="password" name="unlock_formula_password" class="form-control" required autofocus>
                         </div>
                         <button type="submit" class="btn btn-primary w-100">Unlock</button>
+                        <?php if (isAdminUser()): ?>
+                            <a href="formula_password.php" class="btn btn-outline-secondary w-100 mt-2">Reset Formula Password</a>
+                        <?php endif; ?>
                     </form>
                 </div>
             </div>
@@ -117,6 +120,9 @@ $canViewComponentName = hasPermission('manufacturing.component.name.view');
         <p class="text-muted mb-0">Manage product recipes and components for each customer.</p>
     </div>
     <div class="d-flex gap-2">
+        <?php if (isAdminUser()): ?>
+            <a href="formula_password.php" class="btn btn-outline-secondary">Reset Formula Password</a>
+        <?php endif; ?>
         <a href="index.php" class="btn btn-outline-secondary">
             <i class="fas fa-arrow-left me-1"></i> Back to Orders
         </a>

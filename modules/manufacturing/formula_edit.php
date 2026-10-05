@@ -1,6 +1,7 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+require_once '../../includes/formula_access.php';
 require_once 'lib.php';
 
 if (!hasPermission('manufacturing.view')) {
@@ -11,7 +12,7 @@ if (!hasPermission('manufacturing.formula.view_all')) {
     setAlert('danger', 'Access denied. You do not have permission to view formulas.');
     redirect('../../dashboard.php');
 }
-if (empty($_SESSION['formula_unlocked'])) {
+if (!areFormulasUnlocked()) {
     setAlert('info', 'Please unlock formulas first.');
     redirect('formulas.php');
 }

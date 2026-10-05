@@ -1,6 +1,7 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+require_once '../../includes/formula_access.php';
 require_once 'lib.php';
 
 /**
@@ -378,8 +379,7 @@ if ($deliveryCount == 0) {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['unlock_formula_password'])) {
-        if ($_POST['unlock_formula_password'] === '123456') {
-            $_SESSION['formula_unlocked'] = true;
+        if (unlockFormulas($_POST['unlock_formula_password'])) {
             setAlert('success', 'Formula view unlocked.');
         } else {
             setAlert('danger', 'Incorrect password.');
@@ -1244,11 +1244,16 @@ $isCompletedOrder = $order['status'] === 'completed';
     </div>
     <div class="col-lg-4">
         <div class="card h-100">
-            <div class="card-header">Formula components</div>
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Formula components</span>
+                <?php if (isAdminUser()): ?>
+                    <a href="formula_password.php" class="btn btn-sm btn-outline-secondary">Reset Formula Password</a>
+                <?php endif; ?>
+            </div>
             <div class="card-body">
                 <?php if (!$canViewFormula): ?>
                     <p class="text-muted small mb-0">You do not have permission to view the entire formula details.</p>
-                <?php elseif (empty($_SESSION['formula_unlocked'])): ?>
+                <?php elseif (!areFormulasUnlocked()): ?>
                     <p class="text-muted small mb-3">Formula is locked. Enter password to view.</p>
                     <form method="post">
                         <div class="input-group">

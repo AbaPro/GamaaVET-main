@@ -19,6 +19,9 @@ if (!canAccessCustomer($customer_id) || !isCustomerInCurrentChannel($customer_id
 }
 $page_title = 'Customer Details';
 $canViewPhoneNumbers = hasPermission('contacts.phone.view');
+$canViewOrderPrices = hasPermission('sales.orders.price.view');
+$canViewOrderDiscounts = hasPermission('sales.orders.discount.view');
+$canViewOrderShipping = hasPermission('sales.orders.shipping.view') && $canViewOrderPrices;
 $canViewCustomerWallet = hasPermission('customers.wallet.view')
     || hasPermission('customers.wallet')
     || hasPermission('customers.wallet.balance.edit')
@@ -71,7 +74,7 @@ $outstanding_balance = (float)$outstanding_stmt->get_result()->fetch_assoc()['ou
 $outstanding_stmt->close();
 
 // Get all orders for this customer (paginated client-side via js-datatable)
-$orders_sql = "SELECT o.id, o.internal_id, o.order_date, o.total_amount, o.paid_amount, o.status,
+$orders_sql = "SELECT o.*,
                (SELECT SUM(quantity) FROM order_items WHERE order_id = o.id) as total_quantity
                FROM orders o
                WHERE o.customer_id = ?
@@ -80,6 +83,38 @@ $orders_stmt = $conn->prepare($orders_sql);
 $orders_stmt->bind_param("i", $customer_id);
 $orders_stmt->execute();
 $orders_result = $orders_stmt->get_result();
+
+// Fetch all exported products together, scoped to the customer already authorized above.
+$orderItems = [];
+$items_stmt = $conn->prepare("SELECT oi.*, p.name AS product_name, p.sku
+                             FROM order_items oi
+                             JOIN orders o ON o.id = oi.order_id
+                             LEFT JOIN products p ON p.id = oi.product_id
+                             WHERE o.customer_id = ?
+                             ORDER BY oi.order_id, oi.id");
+$items_stmt->bind_param("i", $customer_id);
+$items_stmt->execute();
+$items_result = $items_stmt->get_result();
+while ($item = $items_result->fetch_assoc()) {
+    $orderItems[$item['order_id']][] = $item;
+}
+$items_stmt->close();
+
+$exportLineHeaders = ['Product', 'SKU', 'Item Quantity'];
+if ($canViewOrderPrices) {
+    $exportLineHeaders = array_merge($exportLineHeaders, ['Unit Price', 'Line Total']);
+}
+$exportLineHeaders = array_merge($exportLineHeaders, ['Free Sample', 'Currency']);
+if ($canViewOrderPrices) {
+    $exportLineHeaders[] = 'Balance';
+}
+if ($canViewOrderShipping) {
+    $exportLineHeaders[] = 'Shipping';
+}
+if ($canViewOrderDiscounts) {
+    $exportLineHeaders = array_merge($exportLineHeaders, ['Discount Type', 'Discount %', 'Discount Amount', 'Discounted Products', 'Free Sample Count']);
+}
+$exportLineHeaders[] = 'Notes';
 
 // Get customer products with inventory details
 $customer_products_sql = "SELECT p.id, p.name, p.sku, p.type, 
@@ -241,27 +276,68 @@ if (($_SESSION['login_region'] ?? 'factory') === 'factory') {
             </div>
             <div class="card-body">
                 <div class="table-responsive">
-                    <table class="table table-hover js-datatable">
+                    <table class="table table-hover js-datatable"
+                           data-export-line-headers="<?= htmlspecialchars(json_encode($exportLineHeaders), ENT_QUOTES, 'UTF-8') ?>"
+                           data-export-once-columns='["Quantity","Total Amount","Paid Amount"]'>
                         <thead>
                             <tr>
                                 <th>Order ID</th>
                                 <th>Date</th>
                                 <th>Quantity</th>
+                                <?php if ($canViewOrderPrices): ?>
                                 <th>Total Amount</th>
                                 <th>Paid Amount</th>
+                                <?php endif; ?>
                                 <th>Status</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php if ($orders_result->num_rows > 0): ?>
-                                <?php while ($order = $orders_result->fetch_assoc()): ?>
-                                    <tr>
-                                        <td><?php echo e($order['internal_id']); ?></td>
+                                <?php while ($order = $orders_result->fetch_assoc()):
+                                    $exportLines = [];
+                                    // Keep orders without products in the export, including their notes and currency.
+                                    foreach ($orderItems[$order['id']] ?? [null] as $item) {
+                                        $line = [
+                                            $item === null ? '' : ($item['product_name'] ?? ('Product #' . $item['product_id'])),
+                                            $item['sku'] ?? '',
+                                            $item === null ? '' : (string) $item['quantity']
+                                        ];
+                                        if ($canViewOrderPrices) {
+                                            $line[] = $item === null ? '' : number_format((float) $item['unit_price'], 2, '.', '');
+                                            $line[] = $item === null ? '' : number_format((float) $item['total_price'], 2, '.', '');
+                                        }
+                                        $line[] = $item === null ? '' : ($item['is_free_sample'] ? 'Yes' : 'No');
+                                        $line[] = $order['currency'] ?? 'EGP';
+                                        // Order-level amounts/counts appear once to avoid multiplying spreadsheet totals.
+                                        $firstLine = !$exportLines;
+                                        if ($canViewOrderPrices) {
+                                            $line[] = $firstLine ? number_format($order['total_amount'] - $order['paid_amount'], 2, '.', '') : '';
+                                        }
+                                        if ($canViewOrderShipping) {
+                                            $line[] = $firstLine ? number_format($order['shipping_cost_type'] === 'manual' ? (float) $order['shipping_cost'] : 0, 2, '.', '') : '';
+                                        }
+                                        if ($canViewOrderDiscounts) {
+                                            $line[] = $order['discount_basis'];
+                                            $line[] = $firstLine ? (string) $order['discount_percentage'] : '';
+                                            $line[] = $firstLine ? (string) $order['discount_amount'] : '';
+                                            $line[] = $firstLine ? (string) $order['discount_product_count'] : '';
+                                            $line[] = $firstLine ? (string) $order['free_sample_count'] : '';
+                                        }
+                                        $line[] = $order['notes'] ?? '';
+                                        $exportLines[] = $line;
+                                    }
+                                    $exportOrderId = trim((string) ($order['internal_id'] ?? '')) !== ''
+                                        ? $order['internal_id'] : (string) $order['id'];
+                                ?>
+                                    <tr data-export-lines="<?= htmlspecialchars(json_encode($exportLines, JSON_INVALID_UTF8_SUBSTITUTE), ENT_QUOTES, 'UTF-8') ?>">
+                                        <td><?php echo e($exportOrderId); ?></td>
                                         <td><?php echo date('M d, Y', strtotime($order['order_date'])); ?></td>
                                         <td><?php echo number_format($order['total_quantity'] ?? 0); ?></td>
+                                        <?php if ($canViewOrderPrices): ?>
                                         <td><?php echo number_format($order['total_amount'], 2); ?></td>
                                         <td><?php echo number_format($order['paid_amount'], 2); ?></td>
+                                        <?php endif; ?>
                                         <td>
                                             <span class="badge bg-<?php echo getStatusColor($order['status']); ?>">
                                                 <?php echo ucfirst(str_replace('-', ' ', $order['status'])); ?>
@@ -276,7 +352,7 @@ if (($_SESSION['login_region'] ?? 'factory') === 'factory') {
                                 <?php endwhile; ?>
                             <?php else: ?>
                                 <tr>
-                                    <td colspan="7" class="text-center">No orders found</td>
+                                    <td colspan="<?= $canViewOrderPrices ? 7 : 5 ?>" class="text-center">No orders found</td>
                                 </tr>
                             <?php endif; ?>
                         </tbody>
