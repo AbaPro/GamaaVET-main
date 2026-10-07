@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . "/../../includes/export_helpers.php";
 require_once '../../includes/auth.php';
 require_once '../../config/database.php';
 
@@ -130,24 +131,28 @@ function describeLogUser(array $log, ?array $details): string
 }
 
 if (($_GET['export'] ?? '') === 'csv') {
-    $stmt = $pdo->prepare($selectSql . ' LIMIT 50000');
+    $stmt = $pdo->prepare($selectSql);
     $stmt->execute($params);
 
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename=activity_logs_' . date('Y-m-d_His') . '.csv');
     $output = fopen('php://output', 'w');
     fwrite($output, "\xEF\xBB\xBF"); // UTF-8 BOM so Excel shows Arabic correctly
-    fputcsv($output, ['Timestamp', 'User', 'Action Type', 'Object', 'Object ID', 'Description', 'Details', 'IP Address']);
+    exportCsvRow($output, ['Timestamp', 'User', 'Action Type', 'Object', 'Object ID', 'Description', 'Details', 'IP Address']);
     while ($log = $stmt->fetch(PDO::FETCH_ASSOC)) {
         $details = !empty($log['details']) ? json_decode($log['details'], true) : null;
-        fputcsv($output, [
+        $detailLines = [];
+        foreach (is_array($details) ? $details : [] as $key => $value) {
+            $detailLines[] = humanizeLogKey((string)$key) . ': ' . formatLogValue($value);
+        }
+        exportCsvRow($output, [
             $log['created_at'],
             describeLogUser($log, is_array($details) ? $details : null),
-            $actionTypes[$log['action_type'] ?? ''][0] ?? '',
+            $actionTypes[$log['action_type'] ?? ''][0] ?? humanizeLogKey($log['action_type'] ?? ''),
             $entityTypes[$log['entity_type'] ?? ''][0] ?? ($log['entity_type'] ?? ''),
             $log['entity_id'] ?? '',
             $log['action'],
-            $log['details'],
+            $detailLines ? implode("\n", $detailLines) : ($log['details'] ?? ''),
             $log['ip_address'],
         ]);
     }

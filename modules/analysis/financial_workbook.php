@@ -21,6 +21,8 @@ require_once '../../includes/messages.php';
                     <h5 class="mb-0"><i class="fas fa-file-excel me-2"></i>Financial Workbook Export</h5>
                 </div>
                 <div class="card-body">
+                    <p>Download one Excel workbook with customer balances, vendor balances, cash movements, current stock, purchase items and sales items.</p>
+                    <p class="small text-muted">The date range applies to order and payment dates. Inventory shows current stock. Each product has its own row; order totals appear once, and sales totals are grouped by currency. Only details permitted for your account are included.</p>
                     <form action="financial_export.php" method="GET">
                         <div class="row mb-3">
                             <div class="col-md-6">

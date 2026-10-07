@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . "/../../includes/export_helpers.php";
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
 require_once '../../config/database.php';
@@ -822,13 +823,13 @@ if ($format === 'csv') {
     header('Content-Disposition: attachment; filename="analysis_' . $requestedKey . '_' . date('Y-m-d') . '.csv"');
     $output = fopen('php://output', 'w');
     fwrite($output, "\xEF\xBB\xBF");
-    fputcsv($output, array_column($visibleColumns, 'label'));
+    exportCsvRow($output, array_column($visibleColumns, 'label'));
     foreach ($rows as $row) {
         $line = [];
         foreach ($visibleColumns as $column) {
             $line[] = $row[$column['key']] ?? '';
         }
-        fputcsv($output, $line);
+        exportCsvRow($output, $line);
     }
     fclose($output);
     exit;
@@ -845,6 +846,7 @@ if ($format === 'pdf') {
     $pdf->SetFont('dejavusans', 'B', 14);
     $pdf->Cell(0, 9, $report['title'], 0, 1, 'L');
     $pdf->SetFont('dejavusans', '', 8);
+    $pdf->MultiCell(0, 5, 'Period: ' . ($filters['date_from'] ?: 'All dates') . ' to ' . ($filters['date_to'] ?: 'Present') . ' | Records: ' . count($rows) . ' | Exported: ' . date('Y-m-d H:i'));
     $table = '<table border="1" cellpadding="4"><thead><tr style="font-weight:bold;background-color:#f1f3f5;">';
     foreach ($visibleColumns as $column) {
         $table .= '<th>' . htmlspecialchars($column['label']) . '</th>';
@@ -853,7 +855,7 @@ if ($format === 'pdf') {
     foreach ($rows as $row) {
         $table .= '<tr>';
         foreach ($visibleColumns as $column) {
-            $table .= '<td>' . htmlspecialchars((string)($row[$column['key']] ?? '')) . '</td>';
+            $table .= '<td>' . analysisFormatValue($row[$column['key']] ?? '', $column['format'] ?? 'text', $row) . '</td>';
         }
         $table .= '</tr>';
     }

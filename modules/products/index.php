@@ -286,8 +286,8 @@ $currentReturnUrl = 'index.php' . (!empty($returnQuery) ? '?' . http_build_query
         <a href="upload.php" class="btn btn-info me-2">
             <i class="fas fa-upload"></i> Bulk Upload
         </a>
-        <a href="export.php<?php echo '?' . http_build_query(array_merge($_GET, ['format' => 'excel'])); ?>" class="btn btn-success me-2">
-            <i class="fas fa-file-excel"></i> Export Excel
+        <a href="export.php<?php echo '?' . http_build_query(array_merge($_GET, ['format' => 'excel'])); ?>" class="btn btn-success me-2" title="Download product details for all records matching the product filters">
+            <i class="fas fa-file-excel"></i> Download Excel
         </a>
         <?php if (productsSupportArchiving()): ?>
             <?php

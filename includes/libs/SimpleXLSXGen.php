@@ -925,7 +925,7 @@ class SimpleXLSXGen
                                     }
                                 }
                                 // formatted raw?
-                                if (preg_match('/<raw>(.*)<\/raw>/', $v, $m)) {
+                                if (preg_match('/<raw>(.*)<\/raw>/s', $v, $m)) {
                                     $FR = 1;
                                     $v = $m[1];
                                 } elseif (preg_match('/<f([^>]*)>/', $v, $m)) {

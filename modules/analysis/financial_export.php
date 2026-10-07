@@ -1,6 +1,7 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+require_once '../../includes/export_helpers.php';
 require_once '../../config/database.php';
 
 if (!hasPermission('analysis.view_reports') || !hasPermission('analysis.view_finance_reports')) {
@@ -12,6 +13,46 @@ require_once '../../includes/libs/SimpleXLSXGen.php';
 
 $dateFrom = isset($_GET['date_from']) && $_GET['date_from'] !== '' ? $_GET['date_from'] : null;
 $dateTo = isset($_GET['date_to']) && $_GET['date_to'] !== '' ? $_GET['date_to'] : null;
+
+// Validate dates before building report queries.
+foreach ([$dateFrom, $dateTo] as $date) {
+    if ($date === null) continue;
+    $parsed = is_string($date) ? DateTime::createFromFormat('!Y-m-d', $date) : false;
+    if (!$parsed || $parsed->format('Y-m-d') !== $date) {
+        setAlert('danger', 'Please enter a valid date.');
+        redirect('financial_workbook.php');
+    }
+}
+if ($dateFrom !== null && $dateTo !== null && $dateFrom > $dateTo) {
+    setAlert('danger', 'The start date must be before the end date.');
+    redirect('financial_workbook.php');
+}
+
+function addFinancialSheet($xlsx, $data, $name) {
+    // Match the price permissions used by the corresponding reports.
+    $blocked = [];
+    $headers = array_map('strip_tags', $data[2]);
+    if ((strpos($name, 'Receivable') !== false || strpos($name, 'Sales') !== false) && !canViewProductPrice('final')) {
+        $blocked = ['Total', 'Paid', 'Balance', 'Unit Price', 'Line Total', 'Discount', 'Shipping', 'Order Total'];
+    }
+    if ((strpos($name, 'Payable') !== false || strpos($name, 'Purchasing') !== false) && !hasPermission('purchases.po.price.view')) {
+        $blocked = ['Total', 'Paid', 'Balance', 'Unit Price', 'Line Total', 'PO Total', 'PO Paid', 'PO Balance'];
+    }
+    if (strpos($name, 'Inventory') !== false) {
+        if (!canViewProductCost('material') || !canViewProductCost('final')) {
+            $blocked = array_merge($blocked, ['Unit Cost', 'Avg Unit Price', 'Total Value']);
+        }
+        if (!canViewProductPrice('final')) $blocked[] = 'Avg Sell Price';
+    }
+    $indexes = array_keys(array_filter($headers, static function ($label) use ($blocked) { return in_array($label, $blocked, true); }));
+    foreach ($data as $rowIndex => &$row) {
+        if ($rowIndex < 2 || count($row) < 2) continue;
+        foreach ($indexes as $index) unset($row[$index]);
+        $row = array_values($row);
+    }
+    unset($row);
+    exportWorkbookSheet($xlsx, $data, $name, 3);
+}
 
 function dateFilterClause($column, $from, $to) {
     $clauses = [];
@@ -53,6 +94,8 @@ function appendQueryErrorRow(&$sheetData, $message, $colspan = 1) {
     while (count($row) < $colspan) {
         $row[] = '';
     }
+    error_log('Financial export: ' . $message);
+    $row[1] = 'This section could not be loaded. Please contact an administrator.';
     $sheetData[] = $row;
 }
 
@@ -97,6 +140,11 @@ $indexData = [];
 $indexData[] = [
     '<b><style color="FFFFFF" bgcolor="1F4E79" height="30" font-size="14">GammaVET ERP - Financial Workbook</style></b>'
 ];
+$indexData[] = ['Scope', 'Only records available to your account are included.'];
+$indexData[] = ['Reading the registers', 'One row per product. Order totals, discounts and shipping appear only on the first row of each order.'];
+$indexData[] = ['Currency', 'Sales and cash totals are grouped by currency. Purchase amounts use the system currency (EGP).'];
+$indexData[] = ['Inventory', 'Current stock snapshot; the date filter applies to orders and payment dates, not stock. Quantities may use different units.'];
+$indexData[] = ['Transfers', 'Internal transfers are shown separately and excluded from inflow, outflow and net flow totals.'];
 $indexData[] = [''];
 $indexData[] = ['<b><style color="1F4E79" font-size="12">Export Date</style></b>', date('Y-m-d H:i:s')];
 if ($dateFrom !== null || $dateTo !== null) {
@@ -118,7 +166,11 @@ foreach ($sheets as $s) {
     $indexData[] = $s;
 }
 
-$xlsx->addSheet($indexData, 'INDEX');
+foreach ($indexData as &$indexRow) {
+    if (isset($indexRow[1]) && strpos($indexRow[1], '<b>') !== 0) $indexRow[1] = exportText($indexRow[1]);
+}
+unset($indexRow);
+$xlsx->addSheet($indexData, 'INDEX')->setColWidth(1, 30)->setColWidth(2, 110);
 
 // ============================================================
 // SHEET 1: Accounts Receivable
@@ -130,11 +182,13 @@ $arData[] = [
 $arData[] = [''];
 
 $arWhere = dateFilterClause('o.order_date', $dateFrom, $dateTo);
-$arSql = "SELECT o.order_date, o.status, o.total_amount, o.paid_amount, o.currency,
+$arWhere[] = getCustomerChannelScopeSql('c', 'customer_factory');
+$arSql = "SELECT o.id, o.internal_id, o.notes, o.order_date, o.status, o.total_amount, o.paid_amount, o.currency,
                  c.name as customer_name, ct.name as customer_type
           FROM orders o
           LEFT JOIN customers c ON o.customer_id = c.id
-          LEFT JOIN customer_types ct ON c.type = ct.id";
+          LEFT JOIN customer_types ct ON c.type = ct.id
+          LEFT JOIN factories customer_factory ON customer_factory.id = c.factory_id";
 if (!empty($arWhere)) {
     $arSql .= ' WHERE ' . implode(' AND ', $arWhere);
 }
@@ -142,49 +196,48 @@ $arSql .= ' ORDER BY o.order_date DESC';
 $arResult = $conn->query($arSql);
 if (!$arResult) { $arResult = null; }
 
-$arHeaders = ['<b>Customer</b>', '<b>Type</b>', '<b>Order Date</b>', '<b>Currency</b>', '<b>Total</b>', '<b>Paid</b>', '<b>Balance</b>', '<b>Status</b>'];
+$arHeaders = ['<b>Customer</b>', '<b>Type</b>', '<b>Order Date</b>', '<b>Currency</b>', '<b>Total</b>', '<b>Paid</b>', '<b>Balance</b>', '<b>Status</b>', '<b>Order Reference</b>', '<b>Notes</b>'];
 $arData[] = $arHeaders;
 if ($arResult === null) {
     appendQueryErrorRow($arData, $conn->error, count($arHeaders));
 }
 
-$arTotalAmount = 0;
-$arTotalPaid = 0;
-$arTotalBalance = 0;
-$arRowCount = 0;
+$arCurrencyTotals = [];
+
 
 if ($arResult) {
     while ($row = $arResult->fetch_assoc()) {
         $total = fmtNum($row['total_amount']);
         $paid = fmtNum($row['paid_amount']);
         $balance = $total - $paid;
-        $currency = $row['currency'] ?? 'EGP';
+        $currency = $row['currency'] ?: 'EGP';
 
         $arData[] = [
-            $row['customer_name'] ?? '',
-            ucfirst($row['customer_type'] ?? ''),
+            exportText($row['customer_name'] ?? ''),
+            exportText(ucfirst($row['customer_type'] ?? '')),
             fmtDate($row['order_date']),
             $currency,
             $total,
             $paid,
             $balance,
             statusLabel($row['status']),
+            exportText($row['internal_id'] ?: ('Order #' . $row['id'])),
+            exportText($row['notes'] ?? ''),
         ];
-        $arTotalAmount += $total;
-        $arTotalPaid += $paid;
-        $arTotalBalance += $balance;
-        $arRowCount++;
+        if (!isset($arCurrencyTotals[$currency])) $arCurrencyTotals[$currency] = [0, 0, 0];
+        $arCurrencyTotals[$currency][0] += $total;
+        $arCurrencyTotals[$currency][1] += $paid;
+        $arCurrencyTotals[$currency][2] += $balance;
+
     }
 }
 
 $arData[] = [''];
-$lastRow = count($arData) + 1;
-$arData[] = [
-    '<b>Totals (' . $arRowCount . ' orders)</b>', '', '', '',
-    $arTotalAmount, $arTotalPaid, $arTotalBalance, ''
-];
+foreach ($arCurrencyTotals as $currency => $totals) {
+    $arData[] = ['<b>Totals by currency</b>', '', '', exportText($currency), $totals[0], $totals[1], $totals[2], '', '', ''];
+}
 
-$xlsx->addSheet($arData, '1. Accounts Receivable');
+addFinancialSheet($xlsx, $arData, '1. Accounts Receivable');
 
 // ============================================================
 // SHEET 2: Accounts Payable
@@ -196,7 +249,7 @@ $apData[] = [
 $apData[] = [''];
 
 $apWhere = dateFilterClause('po.order_date', $dateFrom, $dateTo);
-$apSql = "SELECT po.order_date, po.status, po.total_amount, po.paid_amount, po.notes,
+$apSql = "SELECT po.id, po.order_date, po.status, po.total_amount, po.paid_amount, po.notes,
                  v.name as vendor_name, vt.name as vendor_type
           FROM purchase_orders po
           LEFT JOIN vendors v ON po.vendor_id = v.id
@@ -208,7 +261,7 @@ $apSql .= ' ORDER BY po.order_date DESC';
 $apResult = $conn->query($apSql);
 if (!$apResult) { $apResult = null; }
 
-$apHeaders = ['<b>Vendor</b>', '<b>Vendor Type</b>', '<b>Order Date</b>', '<b>Total</b>', '<b>Paid</b>', '<b>Balance</b>', '<b>Status</b>', '<b>Notes</b>'];
+$apHeaders = ['<b>Vendor</b>', '<b>Vendor Type</b>', '<b>Order Date</b>', '<b>Total</b>', '<b>Paid</b>', '<b>Balance</b>', '<b>Status</b>', '<b>Notes</b>', '<b>Purchase Order Reference</b>'];
 $apData[] = $apHeaders;
 if ($apResult === null) {
     appendQueryErrorRow($apData, $conn->error, count($apHeaders));
@@ -226,14 +279,15 @@ if ($apResult) {
         $balance = $total - $paid;
 
         $apData[] = [
-            $row['vendor_name'] ?? '',
-            $row['vendor_type'] ?? '',
+            exportText($row['vendor_name'] ?? ''),
+            exportText($row['vendor_type'] ?? ''),
             fmtDate($row['order_date']),
             $total,
             $paid,
             $balance,
             statusLabel($row['status']),
-            $row['notes'] ?? '',
+            exportText($row['notes'] ?? ''),
+            exportText('PO #' . $row['id']),
         ];
         $apTotalAmount += $total;
         $apTotalPaid += $paid;
@@ -248,7 +302,7 @@ $apData[] = [
     $apTotalAmount, $apTotalPaid, $apTotalBalance, '', ''
 ];
 
-$xlsx->addSheet($apData, '2. Accounts Payable');
+addFinancialSheet($xlsx, $apData, '2. Accounts Payable');
 
 // ============================================================
 // SHEET 3: Cash & Bank
@@ -262,16 +316,21 @@ $cbData[] = [''];
 $cbDateFrom = $dateFrom;
 $cbDateTo = $dateTo;
 
+$cbHeaders = ['<b>Date</b>', '<b>Source</b>', '<b>Account</b>', '<b>Inflow</b>', '<b>Outflow</b>', '<b>Note</b>', '<b>Payment Reference</b>', '<b>Internal Transfer</b>', '<b>Currency</b>'];
+$cbData[] = $cbHeaders;
+
 $allTransactions = [];
 
 // 1. Order payments (inflows)
 $opWhere = dateFilterClause('op.transaction_date', $cbDateFrom, $cbDateTo);
 $opWhere[] = getSafeReferenceScopeSql('op.safe_id');
-$opSql = "SELECT op.amount, op.payment_method, op.reference, op.notes, op.transaction_date,
+$opWhere[] = getCustomerChannelScopeSql('c', 'customer_factory');
+$opSql = "SELECT o.currency, op.amount, op.payment_method, op.reference, op.notes, op.transaction_date,
                  c.name as customer_name
           FROM order_payments op
           LEFT JOIN orders o ON op.order_id = o.id
-          LEFT JOIN customers c ON o.customer_id = c.id";
+          LEFT JOIN customers c ON o.customer_id = c.id
+          LEFT JOIN factories customer_factory ON customer_factory.id = c.factory_id";
 if (!empty($opWhere)) {
     $opSql .= ' WHERE ' . implode(' AND ', $opWhere);
 }
@@ -284,12 +343,15 @@ if (!$opResult) {
 if ($opResult) {
     while ($row = $opResult->fetch_assoc()) {
         $allTransactions[] = [
+            'currency' => $row['currency'] ?? 'EGP',
             'date' => fmtDate($row['transaction_date']),
             'source' => 'Sales Receipt',
             'account' => paymentMethodLabel($row['payment_method']),
             'inflow' => fmtNum($row['amount']),
             'outflow' => 0,
-            'note' => ($row['customer_name'] ?? '') . ($row['notes'] ? ' - ' . $row['notes'] : ''),
+            'reference' => exportText($row['reference'] ?? ''),
+            'transfer' => 0,
+            'note' => (exportText($row['customer_name'] ?? '')) . ($row['notes'] ? ' - ' . $row['notes'] : ''),
         ];
     }
 }
@@ -316,12 +378,15 @@ if (!$popResult) {
 if ($popResult) {
     while ($row = $popResult->fetch_assoc()) {
         $allTransactions[] = [
+            'currency' => $row['currency'] ?? 'EGP',
             'date' => fmtDate($row['transaction_date']),
             'source' => 'PO Payment',
             'account' => paymentMethodLabel($row['payment_method']),
             'inflow' => 0,
             'outflow' => fmtNum($row['amount']),
-            'note' => ($row['vendor_name'] ?? '') . ($row['notes'] ? ' - ' . $row['notes'] : ''),
+            'reference' => exportText($row['reference'] ?? ''),
+            'transfer' => 0,
+            'note' => (exportText($row['vendor_name'] ?? '')) . ($row['notes'] ? ' - ' . $row['notes'] : ''),
         ];
     }
 }
@@ -331,7 +396,7 @@ $epWhere = dateFilterClause('ep.transaction_date', $cbDateFrom, $cbDateTo);
 $exportSafeScope = getSafeScopeSql('s');
 $epWhere[] = "(ep.safe_id IS NULL OR EXISTS (SELECT 1 FROM safes s WHERE s.id = ep.safe_id AND $exportSafeScope))";
 $epSql = "SELECT ep.amount, ep.payment_method, ep.reference, ep.notes, ep.transaction_date,
-                 e.name as expense_name, e.category_id,
+                 e.name as expense_name, e.category_id, e.currency,
                  s.name as safe_name, ba.bank_name
           FROM expense_payments ep
           LEFT JOIN expenses e ON ep.expense_id = e.id
@@ -353,11 +418,14 @@ if ($epResult) {
         if (!empty($row['safe_name'])) $accountParts[] = $row['safe_name'];
         if (!empty($row['bank_name'])) $accountParts[] = $row['bank_name'];
         $allTransactions[] = [
+            'currency' => $row['currency'] ?? 'EGP',
             'date' => fmtDate($row['transaction_date']),
             'source' => 'Expense',
             'account' => implode(' / ', $accountParts),
             'inflow' => 0,
             'outflow' => fmtNum($row['amount']),
+            'reference' => exportText($row['reference'] ?? ''),
+            'transfer' => 0,
             'note' => ($row['expense_name'] ?? 'Expense') . ($row['notes'] ? ' - ' . $row['notes'] : ''),
         ];
     }
@@ -368,8 +436,10 @@ $ftWhere = dateFilterClause('ft.transaction_date', $cbDateFrom, $cbDateTo);
 $ftWhere[] = "ft.status = 'approved'";
 require_once __DIR__ . '/../finance/transfer_helpers.php';
 $ftWhere[] = financeTransferScopeSql('ft');
-$ftSql = "SELECT ft.amount, ft.from_type, ft.from_id, ft.to_type, ft.to_id, ft.reason, ft.notes, ft.transaction_date
-          FROM finance_transfers ft";
+$ftSql = "SELECT COALESCE(from_safe.currency, from_bank.currency, 'EGP') AS currency, ft.amount, ft.from_type, ft.from_id, ft.to_type, ft.to_id, ft.reason, ft.notes, ft.transaction_date
+          FROM finance_transfers ft
+          LEFT JOIN safes from_safe ON ft.from_type = 'safe' AND from_safe.id = ft.from_id
+          LEFT JOIN bank_accounts from_bank ON ft.from_type = 'bank' AND from_bank.id = ft.from_id";
 if (!empty($ftWhere)) {
     $ftSql .= ' WHERE ' . implode(' AND ', $ftWhere);
 }
@@ -407,12 +477,15 @@ if ($ftResult) {
         }
 
         $allTransactions[] = [
+            'currency' => $row['currency'] ?? 'EGP',
             'date' => fmtDate($row['transaction_date']),
-            'source' => 'Transfer',
+            'source' => 'Internal Transfer',
             'account' => $fromLabel . ' -> ' . $toLabel,
             'inflow' => 0,
-            'outflow' => fmtNum($row['amount']),
-            'note' => $row['reason'] ?: ($row['notes'] ?? ''),
+            'outflow' => 0,
+            'reference' => '',
+            'transfer' => fmtNum($row['amount']),
+            'note' => implode(' - ', array_filter([$row['reason'] ?? '', $row['notes'] ?? ''])),
         ];
     }
 }
@@ -422,35 +495,36 @@ usort($allTransactions, function($a, $b) {
     return strcmp($b['date'], $a['date']);
 });
 
-$cbHeaders = ['<b>Date</b>', '<b>Source</b>', '<b>Account</b>', '<b>Inflow</b>', '<b>Outflow</b>', '<b>Note</b>'];
-$cbData[] = $cbHeaders;
-
-$totalInflow = 0;
-$totalOutflow = 0;
+$cashCurrencyTotals = [];
 $cbRowCount = 0;
 
 foreach ($allTransactions as $t) {
     $cbData[] = [
         $t['date'],
         $t['source'],
-        $t['account'],
+        exportText($t['account']),
         $t['inflow'],
         $t['outflow'],
-        $t['note'],
+        exportText($t['note']),
+        $t['reference'],
+        $t['transfer'],
+        exportText($t['currency']),
     ];
-    $totalInflow += $t['inflow'];
-    $totalOutflow += $t['outflow'];
+    $currency = $t['currency'] ?: 'EGP';
+    if (!isset($cashCurrencyTotals[$currency])) $cashCurrencyTotals[$currency] = [0, 0, 0];
+    $cashCurrencyTotals[$currency][0] += $t['inflow'];
+    $cashCurrencyTotals[$currency][1] += $t['outflow'];
+    $cashCurrencyTotals[$currency][2] += $t['transfer'];
     $cbRowCount++;
 }
 
 $cbData[] = [''];
-$cbData[] = [
-    '<b>Totals (' . $cbRowCount . ' transactions)</b>', '', '',
-    $totalInflow, $totalOutflow, ''
-];
-$cbData[] = ['<b>Net Flow</b>', '', '', ($totalInflow - $totalOutflow), '', ''];
+foreach ($cashCurrencyTotals as $currency => $totals) {
+    $cbData[] = ['<b>Totals by currency</b>', '', '', $totals[0], $totals[1], '', '', $totals[2], exportText($currency)];
+    $cbData[] = ['<b>Net Flow</b>', '', '', $totals[0] - $totals[1], '', '', '', '', exportText($currency)];
+}
 
-$xlsx->addSheet($cbData, '3. Cash & Bank');
+addFinancialSheet($xlsx, $cbData, '3. Cash & Bank');
 
 // ============================================================
 // SHEET 4: Inventory
@@ -492,16 +566,19 @@ $priceAverageJoin = tableExists('product_price_logs')
             FROM products p2
        ) price_avg ON price_avg.product_id = p.id";
 
-$invSql = "SELECT p.sku, p.name as product_name, p.type, p.unit, p.cost_price, p.min_stock_level,
+$invSql = "SELECT p.id, p.sku, p.name as product_name, p.type, p.unit, p.cost_price, p.min_stock_level,
                    c1.name as category_name, c2.name as subcategory_name,
                    price_avg.avg_unit_price, price_avg.avg_sell_price,
                    COALESCE((SELECT SUM(ip.quantity) FROM inventory_products ip
                              JOIN inventories inv ON ip.inventory_id = inv.id
-                             WHERE ip.product_id = p.id AND inv.is_active = 1), 0) AS total_quantity
+                             WHERE ip.product_id = p.id AND inv.is_active = 1 AND " . getInventoryChannelScopeSql('inv') . "), 0) AS total_quantity
             FROM products p
             LEFT JOIN categories c1 ON p.category_id = c1.id
             LEFT JOIN categories c2 ON p.subcategory_id = c2.id
+            LEFT JOIN customers inv_customer ON inv_customer.id = p.customer_id
+            LEFT JOIN factories inv_factory ON inv_factory.id = inv_customer.factory_id
             $priceAverageJoin
+            WHERE " . getProductChannelScopeSql('p', 'inv_customer', 'inv_factory') . "
             ORDER BY p.name";
 $invResult = $conn->query($invSql);
 if (!$invResult) { $invResult = null; }
@@ -512,15 +589,17 @@ if ($invResult === null) {
     appendQueryErrorRow($invData, $conn->error, count($invHeaders));
 }
 
-$invTotalQty = 0;
+$inventoryRows = $invResult ? $invResult->fetch_all(MYSQLI_ASSOC) : [];
+$inventoryCosts = getCalculatedProductCostDetails(array_column($inventoryRows, 'id'));
+
 $invTotalValue = 0;
 $invRowCount = 0;
 $lowStockCount = 0;
 
 if ($invResult) {
-    while ($row = $invResult->fetch_assoc()) {
+    foreach ($inventoryRows as $row) {
         $qty = fmtNum($row['total_quantity']);
-        $cost = fmtNum($row['cost_price']);
+        $cost = fmtNum($inventoryCosts[(int)$row['id']]['value'] ?? $row['cost_price']);
         $avgUnitPrice = $row['avg_unit_price'] !== null ? fmtNum($row['avg_unit_price']) : '';
         $avgSellPrice = $row['avg_sell_price'] !== null ? fmtNum($row['avg_sell_price']) : '';
         $totalValue = $qty * $cost;
@@ -530,12 +609,12 @@ if ($invResult) {
         if ($lowStock === 'Yes') $lowStockCount++;
 
         $invData[] = [
-            $row['sku'] ?? '',
-            $row['product_name'] ?? '',
-            $row['category_name'] ?? '',
-            $row['subcategory_name'] ?? '',
+            exportText($row['sku'] ?? ''),
+            exportText($row['product_name'] ?? ''),
+            exportText($row['category_name'] ?? ''),
+            exportText($row['subcategory_name'] ?? ''),
             ucfirst($row['type'] ?? ''),
-            ucfirst($row['unit'] ?? ''),
+            getProductUnitLabel($row['unit'] ?? ''),
             $qty,
             $cost,
             $avgUnitPrice,
@@ -544,7 +623,7 @@ if ($invResult) {
             $minStock,
             $lowStock,
         ];
-        $invTotalQty += $qty;
+
         $invTotalValue += $totalValue;
         $invRowCount++;
     }
@@ -552,11 +631,11 @@ if ($invResult) {
 
 $invData[] = [''];
 $invData[] = [
-    '<b>Totals (' . $invRowCount . ' products)</b>', '', '', '', '', '',
-    $invTotalQty, '', '', '', $invTotalValue, '', $lowStockCount . ' low-stock items'
+    '<b>Stock value (' . $invRowCount . ' products)</b>', '', '', '', '', '',
+    '', '', '', '', $invTotalValue, '', $lowStockCount . ' low-stock items'
 ];
 
-$xlsx->addSheet($invData, '4. Inventory');
+addFinancialSheet($xlsx, $invData, '4. Inventory');
 
 // ============================================================
 // SHEET 5: Purchasing
@@ -583,7 +662,7 @@ $purSql .= ' ORDER BY po.order_date DESC, po.id DESC, poi.id ASC';
 $purResult = $conn->query($purSql);
 if (!$purResult) { $purResult = null; }
 
-$purHeaders = ['<b>Vendor</b>', '<b>Order Date</b>', '<b>Product</b>', '<b>SKU</b>', '<b>Qty Ordered</b>', '<b>Qty Received</b>', '<b>Unit Price</b>', '<b>Line Total</b>', '<b>PO Total</b>', '<b>PO Paid</b>', '<b>PO Balance</b>', '<b>Status</b>'];
+$purHeaders = ['<b>Vendor</b>', '<b>Order Date</b>', '<b>Product</b>', '<b>SKU</b>', '<b>Qty Ordered</b>', '<b>Qty Received</b>', '<b>Unit Price</b>', '<b>Line Total</b>', '<b>PO Total</b>', '<b>PO Paid</b>', '<b>PO Balance</b>', '<b>Status</b>', '<b>Purchase Order Reference</b>', '<b>Notes</b>'];
 $purData[] = $purHeaders;
 if ($purResult === null) {
     appendQueryErrorRow($purData, $conn->error, count($purHeaders));
@@ -596,21 +675,24 @@ $prevPoId = null;
 
 if ($purResult) {
     while ($row = $purResult->fetch_assoc()) {
+        $firstLine = $prevPoId !== $row['id'];
         $poBalance = fmtNum($row['total_amount']) - fmtNum($row['paid_amount']);
 
         $purData[] = [
-            $row['vendor_name'] ?? '',
+            exportText($row['vendor_name'] ?? ''),
             fmtDate($row['order_date']),
-            $row['product_name'] ?? '',
-            $row['sku'] ?? '',
+            exportText($row['product_name'] ?? ''),
+            exportText($row['sku'] ?? ''),
             fmtNum($row['quantity']),
             fmtNum($row['received_quantity']),
             fmtNum($row['unit_price']),
             fmtNum($row['line_total']),
-            fmtNum($row['total_amount']),
-            fmtNum($row['paid_amount']),
-            $poBalance,
+            $firstLine ? fmtNum($row['total_amount']) : '',
+            $firstLine ? fmtNum($row['paid_amount']) : '',
+            $firstLine ? $poBalance : '',
             statusLabel($row['status']),
+            exportText('PO #' . $row['id']),
+            exportText($row['notes'] ?? ''),
         ];
 
         if ($prevPoId !== $row['id']) {
@@ -628,7 +710,7 @@ $purData[] = [
     $purTotalOrdered, $purTotalPaid, ($purTotalOrdered - $purTotalPaid), ''
 ];
 
-$xlsx->addSheet($purData, '5. Purchasing');
+addFinancialSheet($xlsx, $purData, '5. Purchasing');
 
 // ============================================================
 // SHEET 6: Sales & Billing
@@ -640,13 +722,15 @@ $salesData[] = [
 $salesData[] = [''];
 
 $salesWhere = dateFilterClause('o.order_date', $dateFrom, $dateTo);
-$salesSql = "SELECT o.id, o.internal_id, o.order_date, o.status, o.total_amount, o.paid_amount, o.discount_amount, o.shipping_cost, o.currency,
+$salesWhere[] = getCustomerChannelScopeSql('c', 'customer_factory');
+$salesSql = "SELECT o.id, o.internal_id, o.notes, o.order_date, o.status, o.total_amount, o.paid_amount, o.discount_amount, o.shipping_cost, o.currency,
                     c.name as customer_name, ct.name as customer_type,
                     oi.product_id, oi.quantity, oi.unit_price, oi.total_price as line_total, oi.is_free_sample,
                     p.name as product_name, p.sku
              FROM orders o
              LEFT JOIN customers c ON o.customer_id = c.id
              LEFT JOIN customer_types ct ON c.type = ct.id
+          LEFT JOIN factories customer_factory ON customer_factory.id = c.factory_id
              LEFT JOIN order_items oi ON oi.order_id = o.id
              LEFT JOIN products p ON oi.product_id = p.id";
 if (!empty($salesWhere)) {
@@ -656,56 +740,63 @@ $salesSql .= ' ORDER BY o.order_date DESC, o.id DESC, oi.id ASC';
 $salesResult = $conn->query($salesSql);
 if (!$salesResult) { $salesResult = null; }
 
-$salesHeaders = ['<b>Customer</b>', '<b>Type</b>', '<b>Order Date</b>', '<b>Product</b>', '<b>SKU</b>', '<b>Qty</b>', '<b>Unit Price</b>', '<b>Line Total</b>', '<b>Discount</b>', '<b>Shipping</b>', '<b>Order Total</b>', '<b>Paid</b>', '<b>Balance</b>', '<b>Currency</b>', '<b>Status</b>'];
+$salesHeaders = ['<b>Customer</b>', '<b>Type</b>', '<b>Order Date</b>', '<b>Product</b>', '<b>SKU</b>', '<b>Qty</b>', '<b>Unit Price</b>', '<b>Line Total</b>', '<b>Discount</b>', '<b>Shipping</b>', '<b>Order Total</b>', '<b>Paid</b>', '<b>Balance</b>', '<b>Currency</b>', '<b>Status</b>', '<b>Order Reference</b>', '<b>Free Sample</b>', '<b>Notes</b>'];
 $salesData[] = $salesHeaders;
 if ($salesResult === null) {
     appendQueryErrorRow($salesData, $conn->error, count($salesHeaders));
 }
 
-$salesTotalAmount = 0;
-$salesTotalPaid = 0;
-$salesRowCount = 0;
+$salesCurrencyTotals = [];
+
 $prevOrderId = null;
 
 if ($salesResult) {
     while ($row = $salesResult->fetch_assoc()) {
+        $firstLine = $prevOrderId !== $row['id'];
         $orderBalance = fmtNum($row['total_amount']) - fmtNum($row['paid_amount']);
-        $isSample = ($row['is_free_sample'] == 1) ? 'Yes' : '';
+        $isSample = ($row['is_free_sample'] == 1) ? 'Yes' : 'No';
 
         $salesData[] = [
-            $row['customer_name'] ?? '',
-            ucfirst($row['customer_type'] ?? ''),
+            exportText($row['customer_name'] ?? ''),
+            exportText(ucfirst($row['customer_type'] ?? '')),
             fmtDate($row['order_date']),
-            $row['product_name'] ?? '',
-            $row['sku'] ?? '',
+            exportText($row['product_name'] ?? ''),
+            exportText($row['sku'] ?? ''),
             fmtNum($row['quantity']),
             fmtNum($row['unit_price']),
             fmtNum($row['line_total']),
-            fmtNum($row['discount_amount']),
-            fmtNum($row['shipping_cost']),
-            fmtNum($row['total_amount']),
-            fmtNum($row['paid_amount']),
-            $orderBalance,
+            $firstLine ? fmtNum($row['discount_amount']) : '',
+            $firstLine ? fmtNum($row['shipping_cost']) : '',
+            $firstLine ? fmtNum($row['total_amount']) : '',
+            $firstLine ? fmtNum($row['paid_amount']) : '',
+            $firstLine ? $orderBalance : '',
             $row['currency'] ?? 'EGP',
             statusLabel($row['status']),
+            exportText($row['internal_id'] ?: ('Order #' . $row['id'])),
+            $isSample,
+            exportText($row['notes'] ?? ''),
         ];
 
-        if ($prevOrderId !== $row['id']) {
-            $salesTotalAmount += fmtNum($row['total_amount']);
-            $salesTotalPaid += fmtNum($row['paid_amount']);
+        if ($firstLine) {
+            $currency = $row['currency'] ?: 'EGP';
+            if (!isset($salesCurrencyTotals[$currency])) $salesCurrencyTotals[$currency] = [0, 0, 0];
+            $salesCurrencyTotals[$currency][0] += fmtNum($row['total_amount']);
+            $salesCurrencyTotals[$currency][1] += fmtNum($row['paid_amount']);
+            $salesCurrencyTotals[$currency][2] += $orderBalance;
+
             $prevOrderId = $row['id'];
         }
-        $salesRowCount++;
+
     }
 }
 
 $salesData[] = [''];
-$salesData[] = [
-    '<b>Totals (' . $salesRowCount . ' lines)</b>', '', '', '', '', '', '', '', '', '',
-    $salesTotalAmount, $salesTotalPaid, ($salesTotalAmount - $salesTotalPaid), '', ''
-];
+foreach ($salesCurrencyTotals as $currency => $totals) {
+    $salesData[] = ['<b>Totals by currency</b>', '', '', '', '', '', '', '', '', '',
+        $totals[0], $totals[1], $totals[2], exportText($currency), '', '', '', ''];
+}
 
-$xlsx->addSheet($salesData, '6. Sales & Billing');
+addFinancialSheet($xlsx, $salesData, '6. Sales & Billing');
 
 // ============================================================
 // DOWNLOAD

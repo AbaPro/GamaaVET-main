@@ -26,7 +26,7 @@ if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date_to)) $date_to = '';
 
 // Build query
 $query = "SELECT po.id, po.order_date, po.total_amount, po.paid_amount, 
-                 po.status, po.warehouse_location, v.name AS vendor_name 
+                 po.status, po.notes, po.warehouse_location, v.name AS vendor_name
           FROM purchase_orders po
           JOIN vendors v ON po.vendor_id = v.id
           WHERE 1=1";
@@ -75,6 +75,19 @@ $vendors = $pdo->query("SELECT id, name FROM vendors ORDER BY name")->fetchAll(P
 $canViewPrices = hasPermission('purchases.po.price.view');
 $canDeletePO = hasPermission('purchases.orders.delete');
 $canViewPODetails = hasPermission('purchases.view');
+$poExportHeaders = $canViewPODetails ? ['Product', 'SKU', 'Quantity Ordered', 'Quantity Received'] : [];
+if ($canViewPODetails && $canViewPrices) $poExportHeaders = array_merge($poExportHeaders, ['Unit Price', 'Line Total']);
+if ($canViewPODetails) $poExportHeaders[] = 'Notes';
+$poExportItems = [];
+if ($canViewPODetails && $purchase_orders) {
+    $ids = array_column($purchase_orders, 'id');
+    $itemsStmt = $pdo->prepare('SELECT poi.*, p.name AS product_name, p.sku
+        FROM purchase_order_items poi LEFT JOIN products p ON p.id = poi.product_id
+        WHERE poi.purchase_order_id IN (' . implode(',', array_fill(0, count($ids), '?')) . ')
+        ORDER BY poi.purchase_order_id, poi.id');
+    $itemsStmt->execute($ids);
+    while ($item = $itemsStmt->fetch(PDO::FETCH_ASSOC)) $poExportItems[$item['purchase_order_id']][] = $item;
+}
 ?>
 
 <div class="container mt-4">
@@ -147,7 +160,10 @@ $canViewPODetails = hasPermission('purchases.view');
             </form>
             
             <div class="table-responsive">
-                <table class="table js-datatable table-striped table-hover">
+                <table class="table js-datatable table-striped table-hover"
+                       data-export-name="Purchase Orders"
+                       data-export-line-headers="<?= htmlspecialchars(json_encode($poExportHeaders), ENT_QUOTES, 'UTF-8') ?>"
+                       data-export-once-columns='["Total","Paid","Balance"]'>
                     <thead>
                         <tr>
                             <th width="40"><?php if ($canDeletePO): ?><input type="checkbox" class="form-check-input" id="selectAll"><?php endif; ?></th>
@@ -166,6 +182,15 @@ $canViewPODetails = hasPermission('purchases.view');
                     </thead>
                     <tbody>
                         <?php foreach ($purchase_orders as $po) : 
+                            $exportLines = [];
+                            if ($canViewPODetails) {
+                                foreach ($poExportItems[$po['id']] ?? [null] as $item) {
+                                    $line = [$item['product_name'] ?? '', $item['sku'] ?? '', $item['quantity'] ?? '', $item['received_quantity'] ?? ''];
+                                    if ($canViewPrices) $line = array_merge($line, [$item['unit_price'] ?? '', $item['total_price'] ?? '']);
+                                    $line[] = $exportLines ? '' : ($po['notes'] ?? '');
+                                    $exportLines[] = $line;
+                                }
+                            }
                             $balance = $po['total_amount'] - $po['paid_amount'];
                             $status_class = [
                                 'new' => 'bg-secondary',
@@ -175,9 +200,9 @@ $canViewPODetails = hasPermission('purchases.view');
                                 'cancelled' => 'bg-danger'
                             ];
                         ?>
-                            <tr>
+                            <tr data-export-lines="<?= htmlspecialchars(json_encode($exportLines, JSON_INVALID_UTF8_SUBSTITUTE), ENT_QUOTES, 'UTF-8') ?>">
                                 <td><?php if ($canDeletePO): ?><input type="checkbox" class="form-check-input row-select" name="order_ids[]" value="<?= $po['id'] ?>"><?php endif; ?></td>
-                                <td>
+                                <td data-export-value="PO-<?= (int)$po['id'] ?>">
                                     <button type="button"
                                             class="btn btn-link p-0 text-decoration-none js-po-preview"
                                             data-po-id="<?= (int)$po['id'] ?>"

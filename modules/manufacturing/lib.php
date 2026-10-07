@@ -775,11 +775,60 @@ function manufacturing_generate_step_documents($conn, $order, $orderStep, $formu
 function manufacturing_create_excel_document($order, $stepKey, $htmlContent) {
     $orderNumber = $order['order_number'] ?? 'order';
     $storageDir = manufacturing_get_storage_path_for_step($orderNumber, $stepKey);
+    require_once __DIR__ . '/../../includes/libs/SimpleXLSXGen.php';
+    require_once __DIR__ . '/../../includes/export_helpers.php';
     $timestamp = date('YmdHis');
-    $fileName = "{$orderNumber}_{$stepKey}_{$timestamp}.xls";
-    $fileName = str_replace(' ', '_', $fileName);
+    $fileName = preg_replace('/[^\p{L}\p{N}._-]+/u', '_', "{$orderNumber}_{$stepKey}_{$timestamp}") . '.xlsx';
     $filePath = $storageDir . '/' . $fileName;
-    file_put_contents($filePath, $htmlContent);
+
+    // Produce a real workbook, retaining the same sections as the PDF handoff.
+    $dom = new DOMDocument();
+    $previousErrors = libxml_use_internal_errors(true);
+    $dom->loadHTML('<?xml encoding="UTF-8"><html><body>' . $htmlContent . '</body></html>');
+    libxml_clear_errors();
+    libxml_use_internal_errors($previousErrors);
+    $xpath = new DOMXPath($dom);
+    foreach ($xpath->query('//br') as $br) $br->parentNode->replaceChild($dom->createTextNode("\n"), $br);
+    foreach ($xpath->query('//img') as $image) {
+        $label = $image->getAttribute('alt') ?: 'Attached image';
+        $image->parentNode->replaceChild($dom->createTextNode($label), $image);
+    }
+    $data = [];
+    $maxColumns = 1;
+    $appendElement = function ($element) use (&$appendElement, &$data, &$maxColumns, $xpath) {
+        if ($element->nodeName === 'style') return;
+        if ($element->nodeName === 'div' || $element->nodeName === 'section') {
+            foreach ($element->childNodes as $child) {
+                if ($child instanceof DOMElement) $appendElement($child);
+                elseif (trim($child->textContent) !== '') $data[] = [exportText(trim($child->textContent))];
+            }
+            return;
+        }
+        if ($element->nodeName === 'table') {
+            foreach ($xpath->query('.//tr', $element) as $tr) {
+                $values = [];
+                foreach ($xpath->query('./th|./td', $tr) as $cell) {
+                    $value = trim($cell->textContent);
+                    $values[] = $cell->nodeName === 'th'
+                        ? '<b><wraptext><style bgcolor="1F4E79" color="FFFFFF">' . htmlspecialchars($value, ENT_QUOTES, 'UTF-8') . '</style></wraptext></b>'
+                        : exportText($value);
+                    // Retain merged cells without shifting the columns after them.
+                    for ($i = 1; $i < max(1, (int)$cell->getAttribute('colspan')); $i++) $values[] = '';
+                }
+                $maxColumns = max($maxColumns, count($values));
+                $data[] = $values;
+            }
+        } else {
+            $value = trim($element->textContent);
+            if ($value !== '') $data[] = [exportText($value)];
+        }
+        $data[] = [''];
+    };
+    foreach ($xpath->query('//body/*') as $element) $appendElement($element);
+    $xlsx = Shuchkin\SimpleXLSXGen::fromArray($data, 'Manufacturing Handoff');
+    $xlsx->freezePanes('A2');
+    for ($column = 1; $column <= $maxColumns; $column++) $xlsx->setColWidth($column, 32);
+    $xlsx->saveAs($filePath);
 
     return [
         'file_name' => $fileName,

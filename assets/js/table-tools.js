@@ -5,7 +5,7 @@
     const ACTION_HEADER_PATTERN = /^(action|actions)$/i;
 
     function normaliseText(value) {
-        return String(value || '')
+        return String(value == null ? '' : value)
             .replace(/\u00a0/g, ' ')
             .replace(/[\t\r ]+/g, ' ')
             .replace(/\n\s+/g, '\n')
@@ -257,6 +257,7 @@
         const selectAll = table.querySelector('thead input.js-table-select-all');
         const filteredButton = toolbar.querySelector('.js-export-filtered');
         const selectedButton = toolbar.querySelector('.js-export-selected');
+        toolbar.querySelector('.js-export-filtered-count').textContent = String(filteredRows.length);
         const selectedCountElement = toolbar.querySelector('.js-export-selected-count');
 
         if (selectAll) {
@@ -287,6 +288,9 @@
             image.replaceWith(replacement);
         });
 
+        clone.querySelectorAll('div, p, li').forEach(function (element) {
+            element.appendChild(document.createTextNode('\n'));
+        });
         return normaliseText(clone.textContent);
     }
 
@@ -376,13 +380,13 @@
         toolbar.className = 'table-export-toolbar d-flex flex-wrap align-items-center gap-2 mb-3';
         toolbar.innerHTML = ''
             + '<button type="button" class="btn btn-sm btn-success js-export-filtered">'
-            + '<i class="fas fa-file-csv me-1" aria-hidden="true"></i>Export filtered CSV'
+            + '<i class="fas fa-file-csv me-1" aria-hidden="true"></i>Download CSV (<span class="js-export-filtered-count">0</span> records)'
             + '</button>'
             + '<button type="button" class="btn btn-sm btn-outline-success js-export-selected" disabled>'
-            + '<i class="fas fa-check-square me-1" aria-hidden="true"></i>Export selected '
+            + '<i class="fas fa-check-square me-1" aria-hidden="true"></i>Download selected CSV '
             + '(<span class="js-export-selected-count">0</span>)'
             + '</button>'
-            + '<span class="small text-muted">Filtered export includes all matching rows, not only this page.</span>';
+            + '<span class="small text-muted">Downloads all records matching your filters across every page. Select checkboxes to download specific records. Product details are included where available.</span>';
 
         const wrapper = table.closest('.dataTables_wrapper');
         if (wrapper) {

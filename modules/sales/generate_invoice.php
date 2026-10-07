@@ -20,8 +20,8 @@ $stmt = $pdo->prepare("
            u.name AS created_by_name, f.name AS factory_name
     FROM orders o
     JOIN customers c ON o.customer_id = c.id
-    JOIN customer_contacts cc ON o.contact_id = cc.id
-    JOIN users u ON o.created_by = u.id
+    LEFT JOIN customer_contacts cc ON o.contact_id = cc.id
+    LEFT JOIN users u ON o.created_by = u.id
     LEFT JOIN factories f ON o.factory_id = f.id
     WHERE o.id = ?
 ");
@@ -31,6 +31,7 @@ $order = $stmt->fetch(PDO::FETCH_ASSOC);
 if (!$order) {
     die("Order not found");
 }
+$order['internal_id'] = trim((string)($order['internal_id'] ?? '')) !== '' ? $order['internal_id'] : 'Order #' . $order['id'];
 $canViewInvoiceContactPhone = hasExplicitPermission('sales.invoice.contact_phone.view');
 
 // Fetch order items
@@ -89,6 +90,8 @@ $pdf->SetSubject($viewMode === 'statement' ? 'Order Statement' : 'Order Invoice'
 $pdf->SetMargins(15, 15, 15);
 $pdf->SetHeaderMargin(10);
 $pdf->SetFooterMargin(10);
+$pdf->SetAutoPageBreak(true, 20);
+$pdf->setPrintHeader(false);
 $primaryFont = 'aealarabiya';
 
 if ($viewMode === 'statement') {
@@ -111,18 +114,15 @@ if ($viewMode === 'statement') {
     $pdf->Cell(40, 6, 'اسم العميل:', 0, 0, 'L');
     $pdf->Cell(0, 6, $order['customer_name'], 0, 1, 'R');
     $pdf->Ln(5);
-    $pdf->SetFont('aealarabiya', 'B', 12);
-    $pdf->Cell(120, 7, 'المنتج', 1, 0, 'C');
-    $pdf->Cell(40, 7, 'الكمية', 1, 1, 'C');
     $pdf->SetFont('aealarabiya', '', 11);
+    $table = '<table border="1" cellpadding="5"><thead><tr style="font-weight:bold;background-color:#e9ecef;"><th width="75%">المنتج</th><th width="25%">الكمية</th></tr></thead><tbody>';
     foreach ($items as $item) {
-        $label = $item['product_name'];
-        if (!empty($item['is_free_sample'])) {
-            $label .= ' (عينة مجانية)';
-        }
-        $pdf->Cell(120, 7, $label, 1, 0, 'C');
-        $pdf->Cell(40, 7, $item['quantity'], 1, 1, 'C');
+        $label = $item['product_name'] . (!empty($item['is_free_sample']) ? ' (عينة مجانية)' : '');
+        $table .= '<tr><td width="75%">' . htmlspecialchars($label) . '<br /><small>SKU: ' . htmlspecialchars($item['sku'] ?? '') . '</small></td>'
+            . '<td width="25%">' . htmlspecialchars((string)$item['quantity']) . '</td></tr>';
     }
+    $table .= '</tbody></table>';
+    $pdf->writeHTML($table, true, false, true, false, '');
     // Dispatch Prep section
     $pdf->Ln(8);
     $pdf->SetFont('aealarabiya', 'B', 13);
@@ -182,27 +182,23 @@ if ($canViewInvoiceContactPhone && !empty($order['contact_phone'])) {
 $pdf->Cell(0, 5, $contactLine, 0, 1);
 $pdf->Ln(5);
 
-// Items table
-$pdf->SetFont($primaryFont, 'B', 10);
-$pdf->Cell(15, 7, '#', 1, 0, 'C');
-$pdf->Cell(75, 7, 'Product', 1, 0);
-$pdf->Cell(20, 7, 'Qty', 1, 0, 'C');
-$pdf->Cell(30, 7, 'Selling Price', 1, 0, 'R');
-$pdf->Cell(30, 7, 'Total', 1, 1, 'R');
-
+// Repeat headings and wrap long product names across pages.
 $pdf->SetFont($primaryFont, '', 10);
-$counter = 1;
-foreach ($items as $item) {
-    $pdf->Cell(15, 7, $counter++, 1, 0, 'C');
-    $productLabel = $item['product_name'];
-    if (!empty($item['is_free_sample'])) {
-        $productLabel .= ' (Free Sample)';
+$pdf->Cell(0, 6, 'Currency: ' . ($order['currency'] ?? 'EGP'), 0, 1);
+$table = '<table border="1" cellpadding="5"><thead><tr style="font-weight:bold;background-color:#e9ecef;">'
+    . '<th width="7%">#</th><th width="43%">Product / SKU / Barcode</th><th width="12%">Quantity</th><th width="19%">Unit Price</th><th width="19%">Line Total</th></tr></thead><tbody>';
+foreach ($items as $index => $item) {
+    $label = htmlspecialchars($item['product_name'] . (!empty($item['is_free_sample']) ? ' (Free Sample)' : ''));
+    foreach (['sku' => 'SKU', 'barcode' => 'Barcode'] as $key => $field) {
+        if (!empty($item[$key])) $label .= '<br /><small>' . $field . ': ' . htmlspecialchars($item[$key]) . '</small>';
     }
-    $pdf->Cell(75, 7, $productLabel, 1, 0);
-    $pdf->Cell(20, 7, $item['quantity'], 1, 0, 'C');
-    $pdf->Cell(30, 7, number_format($item['unit_price'], 2), 1, 0, 'R');
-    $pdf->Cell(30, 7, number_format($item['total_price'], 2), 1, 1, 'R');
+    $table .= '<tr><td width="7%">' . ($index + 1) . '</td><td width="43%">' . $label . '</td>'
+        . '<td width="12%" align="right">' . htmlspecialchars((string)$item['quantity']) . '</td>'
+        . '<td width="19%" align="right">' . number_format($item['unit_price'], 2) . '</td>'
+        . '<td width="19%" align="right">' . number_format($item['total_price'], 2) . '</td></tr>';
 }
+$table .= '</tbody></table>';
+$pdf->writeHTML($table, true, false, true, false, '');
 
 $hasDiscountSection = (float)$order['discount_amount'] > 0
     || (float)$order['discount_percentage'] > 0
@@ -254,17 +250,15 @@ if (!empty($returns)) {
     $pdf->Ln(8);
     $pdf->SetFont($primaryFont, 'B', 11);
     $pdf->Cell(0, 7, 'Return Details', 0, 1);
-    $pdf->SetFont($primaryFont, 'B', 10);
-    $pdf->Cell(80, 7, 'Product', 1, 0);
-    $pdf->Cell(25, 7, 'Qty', 1, 0, 'C');
-    $pdf->Cell(65, 7, 'Reason', 1, 1);
     $pdf->SetFont($primaryFont, '', 10);
+    $table = '<table border="1" cellpadding="5"><thead><tr style="font-weight:bold;background-color:#e9ecef;"><th width="45%">Product</th><th width="15%">Quantity</th><th width="40%">Reason</th></tr></thead><tbody>';
     foreach ($returns as $return) {
-        $pdf->Cell(80, 7, $return['product_name'], 1, 0);
-        $pdf->Cell(25, 7, $return['returned_quantity'], 1, 0, 'C');
-        $reasonText = $return['reason'] ?? '';
-        $pdf->MultiCell(65, 7, $reasonText, 1, 'L', 0, 1);
+        $table .= '<tr><td width="45%">' . htmlspecialchars($return['product_name']) . '</td>'
+            . '<td width="15%">' . htmlspecialchars((string)$return['returned_quantity']) . '</td>'
+            . '<td width="40%">' . nl2br(htmlspecialchars($return['reason'] ?? '')) . '</td></tr>';
     }
+    $table .= '</tbody></table>';
+    $pdf->writeHTML($table, true, false, true, false, '');
 }
 
 // Notes
@@ -273,7 +267,7 @@ $pdf->SetFont($primaryFont, 'I', 9);
 $pdf->MultiCell(0, 5, 'Notes: ' . ($order['notes'] ?? ''));
 
 // Footer
-$pdf->SetY(-30);
+$pdf->Ln(8);
 $pdf->SetFont($primaryFont, 'I', 8);
 $pdf->Cell(0, 5, 'Generated by ' . $order['created_by_name'] . ' on ' . date('Y-m-d H:i:s'), 0, 1);
 $pdf->Cell(0, 5, 'Thank you for your business!', 0, 1, 'C');
