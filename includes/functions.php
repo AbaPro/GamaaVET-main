@@ -272,13 +272,16 @@ function isLoggedIn() {
 function loadUserAccessToSession($userId) {
     global $conn;
     if (!isset($userId)) return;
+    unset($_SESSION['role_id'], $_SESSION['role_slug']);
+    $_SESSION['permissions'] = [];
 
     // Fetch role info
-    $stmt = $conn->prepare("SELECT u.role_id, r.slug AS role_slug FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.id = ?");
+    $stmt = $conn->prepare("SELECT u.role_id, u.role, r.slug AS role_slug FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.id = ?");
     $stmt->bind_param("i", $userId);
     $stmt->execute();
     $res = $stmt->get_result();
     if ($row = $res->fetch_assoc()) {
+        $_SESSION['user_role'] = $row['role'];
         if (!empty($row['role_slug'])) {
             $_SESSION['role_id'] = (int)$row['role_id'];
             $_SESSION['role_slug'] = $row['role_slug'];

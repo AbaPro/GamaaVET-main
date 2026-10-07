@@ -18,6 +18,8 @@ if (isset($_POST['login'])) {
     if ($result->num_rows === 1) {
         $user = $result->fetch_assoc();
         if (password_verify($password, $user['password'])) {
+            // Do not carry another account's role or permissions into this login.
+            unset($_SESSION['role_id'], $_SESSION['role_slug'], $_SESSION['user_role'], $_SESSION['permissions'], $_SESSION['login_region']);
             $_SESSION['user_id'] = $user['id'];
             $_SESSION['user_name'] = $user['name'];
             $_SESSION['user_email'] = $user['email'];
@@ -40,17 +42,16 @@ if (isset($_POST['login'])) {
 
             // Region Permission Check
             $selected_region = $_POST['region'] ?? 'factory';
-            if ($selected_region !== 'factory') {
-                $perm_key = "region." . $selected_region;
-                // Since hasPermission checks $_SESSION['permissions'], we can use it here
-                if (!hasPermission($perm_key)) {
+            $allowed_regions = ['factory', 'curva', 'primer', 'naturous', 'activita'];
+            if (!is_string($selected_region)
+                || !in_array($selected_region, $allowed_regions, true)
+                || !hasPermission('region.' . $selected_region)) {
                     session_unset();
                     session_destroy();
                     session_start();
-                    setAlert('danger', "You do not have permission to access the " . ucfirst($selected_region) . " section.");
+                    setAlert('danger', 'You do not have permission to access the selected company.');
                     redirect('index.php');
                     exit;
-                }
             }
             $_SESSION['login_region'] = $selected_region;
             
@@ -72,6 +73,20 @@ if (isset($_POST['login'])) {
         setAlert('danger', 'Invalid username or password');
     }
     $stmt->close();
+}
+
+// Revalidate company access for existing sessions as well as new logins.
+if (isLoggedIn() && !isset($_GET['logout'])) {
+    loadUserAccessToSession($_SESSION['user_id']);
+    $sessionRegion = $_SESSION['login_region'] ?? 'factory';
+    if (!is_string($sessionRegion)
+        || !in_array($sessionRegion, ['factory', 'curva', 'primer', 'naturous', 'activita'], true)
+        || !hasPermission('region.' . $sessionRegion)) {
+        session_unset();
+        setAlert('danger', 'You do not have permission to access the selected company.');
+        redirect(defined('BASE_URL') ? BASE_URL . 'index.php' : 'index.php');
+        exit;
+    }
 }
 
 // Check if user is trying to logout
