@@ -23,6 +23,58 @@ function getUserById($id) {
     return $result->fetch_assoc();
 }
 
+function userSafeAccessFromForm($data) {
+    global $conn;
+    if (!isset($data['safe_access_mode'])) return null;
+    $token = $data['safe_access_token'] ?? '';
+    if (!is_string($token) || !hash_equals($_SESSION['user_safe_access_token'] ?? '', $token) || $token === '') {
+        throw new DomainException('Invalid safe access request. Refresh the page.');
+    }
+    if ($data['safe_access_mode'] === 'all') return null;
+    if ($data['safe_access_mode'] !== 'selected' || (isset($data['safe_ids']) && !is_array($data['safe_ids']))) {
+        throw new DomainException('Invalid safe selection.');
+    }
+    $ids = [];
+    foreach ($data['safe_ids'] ?? [] as $value) {
+        $id = filter_var($value, FILTER_VALIDATE_INT);
+        if (!$id || $id < 1) throw new DomainException('Invalid safe selection.');
+        $ids[$id] = $id;
+    }
+    if ($ids) {
+        $result = $conn->query('SELECT id FROM safes WHERE id IN (' . implode(',', $ids) . ')');
+        if ($result->num_rows !== count($ids)) throw new DomainException('A selected safe no longer exists.');
+    }
+    return json_encode(array_values($ids));
+}
+
+function renderUserSafeAccessForm($user = []) {
+    global $conn;
+    if (empty($_SESSION['user_safe_access_token'])) $_SESSION['user_safe_access_token'] = bin2hex(random_bytes(32));
+    $restricted = isset($user['safe_access_ids']);
+    $selected = $restricted ? (json_decode($user['safe_access_ids'], true) ?: []) : [];
+    $safes = $conn->query("SELECT s.id, s.name, s.currency, COALESCE(a.name, 'GammaVet') AS brand FROM safes s LEFT JOIN accounts a ON a.id = s.account_id ORDER BY brand, s.name")->fetch_all(MYSQLI_ASSOC);
+    ?>
+    <div class="mt-3 user-safe-access">
+        <input type="hidden" name="safe_access_token" value="<?= e($_SESSION['user_safe_access_token']) ?>">
+        <label class="form-label" for="safe_access_mode">Safe Access</label>
+        <select class="form-select" id="safe_access_mode" name="safe_access_mode" onchange="this.closest('.user-safe-access').querySelector('.safe-selection').hidden = this.value === 'all'">
+            <option value="all" <?= !$restricted ? 'selected' : '' ?>>All safes in permitted brands</option>
+            <option value="selected" <?= $restricted ? 'selected' : '' ?>>Only selected safes</option>
+        </select>
+        <div class="safe-selection mt-2" <?= !$restricted ? 'hidden' : '' ?>>
+            <label class="form-label" for="safe_ids">Allowed Safes</label>
+            <select class="form-select" id="safe_ids" name="safe_ids[]" multiple size="6">
+                <?php foreach ($safes as $safe): ?>
+                    <option value="<?= (int)$safe['id'] ?>" <?= in_array((int)$safe['id'], $selected, true) ? 'selected' : '' ?>><?= e($safe['brand'] . ' — ' . $safe['name'] . ' (' . $safe['currency'] . ')') ?></option>
+                <?php endforeach; ?>
+            </select>
+            <small class="text-muted">Select one safe to limit this user to it. Select none to deny access to all safes.</small>
+        </div>
+        <small class="text-muted">Role permissions still control which actions the user can perform. Brand permissions still apply.</small>
+    </div>
+    <?php
+}
+
 function createUser($data) {
     global $conn;
     
@@ -50,9 +102,10 @@ function createUser($data) {
     if ($role_slug === null) { $role_slug = 'salesman'; }
 
     $region = !empty($data['region']) ? $data['region'] : NULL;
+    try { $safeAccess = userSafeAccessFromForm($data); } catch (DomainException $e) { return false; }
 
-    $stmt = $conn->prepare("INSERT INTO users (username, password, name, email, role, role_id, is_active, region) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-    $stmt->bind_param("sssssiis",
+    $stmt = $conn->prepare("INSERT INTO users (username, password, name, email, role, role_id, is_active, region, safe_access_ids) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    $stmt->bind_param("sssssiiss",
         $data['username'],
         $hashed_password,
         $data['name'],
@@ -60,7 +113,8 @@ function createUser($data) {
         $role_slug,
         $role_id,
         $is_active,
-        $region
+        $region,
+        $safeAccess
     );
 
     if (!$stmt->execute()) {
@@ -91,6 +145,9 @@ function updateUser($id, $data) {
     }
 
     $region = !empty($data['region']) ? $data['region'] : NULL;
+    try { $safeAccess = userSafeAccessFromForm($data); } catch (DomainException $e) { return false; }
+
+    if (!isset($data['safe_access_mode'])) $safeAccess = getUserById($id)['safe_access_ids'] ?? null;
 
     // Check if password is being updated
     if (!empty($data['password'])) {
@@ -99,8 +156,8 @@ function updateUser($id, $data) {
         }
         $hashed_password = password_hash($data['password'], PASSWORD_DEFAULT);
         
-        $stmt = $conn->prepare("UPDATE users SET username = ?, password = ?, name = ?, email = ?, role = ?, role_id = ?, is_active = ?, region = ? WHERE id = ?");
-        $stmt->bind_param("sssssiiis", 
+        $stmt = $conn->prepare("UPDATE users SET username = ?, password = ?, name = ?, email = ?, role = ?, role_id = ?, is_active = ?, region = ?, safe_access_ids = ? WHERE id = ?");
+        $stmt->bind_param("sssssiissi",
             $data['username'],
             $hashed_password,
             $data['name'],
@@ -109,11 +166,12 @@ function updateUser($id, $data) {
             $role_id,
             $is_active,
             $region,
+            $safeAccess,
             $id
         );
     } else {
-        $stmt = $conn->prepare("UPDATE users SET username = ?, name = ?, email = ?, role = ?, role_id = ?, is_active = ?, region = ? WHERE id = ?");
-        $stmt->bind_param("sssssiis", 
+        $stmt = $conn->prepare("UPDATE users SET username = ?, name = ?, email = ?, role = ?, role_id = ?, is_active = ?, region = ?, safe_access_ids = ? WHERE id = ?");
+        $stmt->bind_param("ssssiissi",
             $data['username'],
             $data['name'],
             $data['email'],
@@ -121,6 +179,7 @@ function updateUser($id, $data) {
             $role_id,
             $is_active,
             $region,
+            $safeAccess,
             $id
         );
     }
@@ -128,7 +187,7 @@ function updateUser($id, $data) {
     if (!$stmt->execute()) {
         return false;
     }
-    $changes = ['username' => $data['username'], 'role' => $role_slug, 'active' => (bool)$is_active];
+    $changes = ['username' => $data['username'], 'role' => $role_slug, 'active' => (bool)$is_active, 'safe_access_ids' => $safeAccess];
     if (!empty($data['password'])) {
         $changes['password'] = 'changed';
     }

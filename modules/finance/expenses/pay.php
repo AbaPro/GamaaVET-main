@@ -139,7 +139,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$safes = $pdo->query("SELECT id, name, balance FROM safes WHERE " . getAccountScopeSql() . " ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+$safes = $pdo->query("SELECT id, name, balance FROM safes WHERE " . getSafeScopeSql() . " ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
 $banks = $pdo->query("SELECT id, bank_name, account_number, balance FROM bank_accounts WHERE " . getAccountScopeSql() . " ORDER BY bank_name ASC")->fetchAll(PDO::FETCH_ASSOC);
 
 $page_title = 'Record Payment: ' . $expense['name'];

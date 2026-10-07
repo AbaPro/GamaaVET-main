@@ -90,6 +90,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'email' => $email,
         'role_id' => $role_id,
         'region' => $region,
+        'safe_access_mode' => $_POST['safe_access_mode'] ?? 'invalid',
+        'safe_access_token' => $_POST['safe_access_token'] ?? '',
+        'safe_ids' => $_POST['safe_ids'] ?? [],
         'is_active' => $is_active
     ];
     
@@ -200,6 +203,7 @@ include __DIR__ . '/../../includes/header.php';
                                 </div>
                             </div>
                         </div>
+                        <?php renderUserSafeAccessForm($user); ?>
                         <div class="row mt-4">
                             <div class="col-12">
                                 <button type="submit" class="btn btn-primary">Update User</button>

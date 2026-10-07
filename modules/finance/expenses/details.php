@@ -30,14 +30,15 @@ if (!$expense) {
 }
 
 // Fetch Payments
-$safeScope = getAccountScopeSql('s');
+$safeScope = getSafeScopeSql('s');
 $bankScope = getAccountScopeSql('b');
+$safePaymentScope = getSafeReferenceScopeSql('ep.safe_id');
 $sql_payments = "SELECT ep.*, u.name as recorder_name, s.name as safe_name, b.bank_name, b.account_number
                  FROM expense_payments ep
                  JOIN users u ON ep.created_by = u.id
                  LEFT JOIN safes s ON ep.safe_id = s.id AND $safeScope
                  LEFT JOIN bank_accounts b ON ep.bank_account_id = b.id AND $bankScope
-                 WHERE ep.expense_id = ?
+                 WHERE ep.expense_id = ? AND $safePaymentScope
                  ORDER BY ep.transaction_date DESC, ep.created_at DESC";
 $stmt = $pdo->prepare($sql_payments);
 $stmt->execute([$expense_id]);

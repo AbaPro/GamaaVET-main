@@ -33,6 +33,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         foreach ($payments as $p) {
             if ($p['payment_method'] == 'cash' && $p['safe_id']) {
+                if (!isSafeInCurrentAccount($p['safe_id'])) {
+                    throw new DomainException('You do not have access to a safe used by this expense.');
+                }
                 $stmt = $pdo->prepare("UPDATE safes SET balance = balance + ? WHERE id = ?");
                 $stmt->execute([$p['amount'], $p['safe_id']]);
             } elseif ($p['payment_method'] == 'transfer' && $p['bank_account_id']) {

@@ -59,6 +59,13 @@ if (!$hasStructuredColumns) {
 // Everything except the action type, so the summary counts stay meaningful while a type is selected.
 $baseConditions = [];
 $baseParams = [];
+if ($hasStructuredColumns && getUserSafeAccessIds() !== null) {
+    $safeLogScope = getSafeScopeSql('log_safe');
+    require_once __DIR__ . '/../finance/transfer_helpers.php';
+    $transferLogScope = financeTransferScopeSql('log_transfer');
+    $baseConditions[] = "(al.entity_type IS NULL OR al.entity_type <> 'safe' OR EXISTS (SELECT 1 FROM safes log_safe WHERE log_safe.id = al.entity_id AND $safeLogScope))";
+    $baseConditions[] = "(al.entity_type IS NULL OR al.entity_type <> 'finance_transfer' OR EXISTS (SELECT 1 FROM finance_transfers log_transfer WHERE log_transfer.id = al.entity_id AND $transferLogScope))";
+}
 
 if ($filters['user_id'] === 'none') {
     $baseConditions[] = 'al.user_id IS NULL';

@@ -196,7 +196,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Fetch Data for form
 $categories = $pdo->query("SELECT * FROM expense_categories ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
 $vendors    = $loginRegion === 'factory' ? $pdo->query("SELECT id, name FROM vendors ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC) : [];
-$safes      = $pdo->query("SELECT id, name, balance FROM safes WHERE " . getAccountScopeSql() . " ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+$safes      = $pdo->query("SELECT id, name, balance FROM safes WHERE " . getSafeScopeSql() . " ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
 $banks      = $pdo->query("SELECT id, bank_name, account_number, balance FROM bank_accounts WHERE " . getAccountScopeSql() . " ORDER BY bank_name ASC")->fetchAll(PDO::FETCH_ASSOC);
 $accountStmt = $pdo->prepare('SELECT * FROM accounts WHERE id = ? AND is_active = 1');
 $accountStmt->execute([$currentAccountId]);

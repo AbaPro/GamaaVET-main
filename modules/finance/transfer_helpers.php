@@ -24,7 +24,7 @@ function financeTransferGetAccount($type, $id, $forUpdate = false) {
     if (!$config || $id <= 0) return null;
 
     $currencySql = $config['currency'] ? "`{$config['currency']}`" : "'EGP'";
-    $scope = getAccountScopeSql();
+    $scope = $type === 'safe' ? getSafeScopeSql() : getAccountScopeSql();
     $sql = "SELECT id, `{$config['name']}` AS account_name, `{$config['balance']}` AS balance,
                    $currencySql AS currency
             FROM `{$config['table']}` WHERE id = ? AND $scope" . ($forUpdate ? ' FOR UPDATE' : '');
@@ -43,10 +43,11 @@ function financeTransferGetAccount($type, $id, $forUpdate = false) {
  */
 function financeTransferScopeSql($transferAlias = 'f') {
     $accountScope = getAccountScopeSql('scope_account');
-    $sideScope = static function ($typeColumn, $idColumn) use ($accountScope) {
+    $safeScope = getSafeScopeSql('scope_account');
+    $sideScope = static function ($typeColumn, $idColumn) use ($accountScope, $safeScope) {
         return "(
             ($typeColumn = 'safe' AND EXISTS (
-                SELECT 1 FROM safes scope_account WHERE scope_account.id = $idColumn AND $accountScope
+                SELECT 1 FROM safes scope_account WHERE scope_account.id = $idColumn AND $safeScope
             )) OR
             ($typeColumn = 'bank' AND EXISTS (
                 SELECT 1 FROM bank_accounts scope_account WHERE scope_account.id = $idColumn AND $accountScope
@@ -83,6 +84,7 @@ function financeTransferAdjustBalance($type, $id, $delta) {
     $id = (int)$id;
     $delta = round((float)$delta, 2);
     if (!$config || $id <= 0 || abs($delta) < 0.005) return false;
+    if (!isFinanceAccountInCurrentAccount($type, $id)) return false;
 
     if ($delta < 0) {
         $required = abs($delta);

@@ -4,7 +4,7 @@ require_once '../../includes/functions.php';
 require_once __DIR__ . '/account_deletion.php';
 require_once __DIR__ . '/account_balance_adjustments.php';
 
-$canCreate = hasPermission('finance.safes.create');
+$canCreate = hasPermission('finance.safes.create') && getUserSafeAccessIds() === null;
 $canEdit = hasPermission('finance.safes.edit');
 $canDelete = hasPermission('finance.safes.delete');
 $canForceDelete = hasPermission('finance.safes.force_delete');
@@ -91,7 +91,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_safe'])) {
     } elseif (!isset($currencies[$currency])) {
         setAlert('danger', 'Please select an available currency.');
     } else {
-        $scope = getAccountScopeSql();
+        $scope = getSafeScopeSql();
         $existingStmt = $conn->prepare("SELECT balance, currency FROM safes WHERE id = ? AND $scope LIMIT 1");
         $existingStmt->bind_param('i', $safeId);
         $existingStmt->execute();
@@ -120,7 +120,7 @@ if ($selectedLocation && !isset($allowedLocationIds[$selectedLocation])) {
     $selectedLocation = 0;
 }
 
-$safeScope = getAccountScopeSql('s');
+$safeScope = getSafeScopeSql('s');
 $safeSql = "
     SELECT s.*, a.name AS account_name, l.name AS location_name, l.address AS location_address
     FROM safes s

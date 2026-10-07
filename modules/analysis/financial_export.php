@@ -266,6 +266,7 @@ $allTransactions = [];
 
 // 1. Order payments (inflows)
 $opWhere = dateFilterClause('op.transaction_date', $cbDateFrom, $cbDateTo);
+$opWhere[] = getSafeReferenceScopeSql('op.safe_id');
 $opSql = "SELECT op.amount, op.payment_method, op.reference, op.notes, op.transaction_date,
                  c.name as customer_name
           FROM order_payments op
@@ -295,6 +296,9 @@ if ($opResult) {
 
 // 2. Purchase order payments (outflows)
 $popWhere = dateFilterClause('pop.transaction_date', $cbDateFrom, $cbDateTo);
+$popWhere[] = getSafeReferenceScopeSql('pop.safe_id');
+$poSourceSafeScope = getSafeReferenceScopeSql('pop.payment_source_id');
+$popWhere[] = "(pop.payment_source_type IS NULL OR pop.payment_source_type <> 'safe' OR $poSourceSafeScope)";
 $popSql = "SELECT pop.amount, pop.payment_method, pop.reference, pop.notes, pop.transaction_date,
                   v.name as vendor_name
            FROM purchase_order_payments pop
@@ -324,6 +328,8 @@ if ($popResult) {
 
 // 3. Expense payments (outflows)
 $epWhere = dateFilterClause('ep.transaction_date', $cbDateFrom, $cbDateTo);
+$exportSafeScope = getSafeScopeSql('s');
+$epWhere[] = "(ep.safe_id IS NULL OR EXISTS (SELECT 1 FROM safes s WHERE s.id = ep.safe_id AND $exportSafeScope))";
 $epSql = "SELECT ep.amount, ep.payment_method, ep.reference, ep.notes, ep.transaction_date,
                  e.name as expense_name, e.category_id,
                  s.name as safe_name, ba.bank_name
@@ -360,6 +366,8 @@ if ($epResult) {
 // 4. Finance transfers
 $ftWhere = dateFilterClause('ft.transaction_date', $cbDateFrom, $cbDateTo);
 $ftWhere[] = "ft.status = 'approved'";
+require_once __DIR__ . '/../finance/transfer_helpers.php';
+$ftWhere[] = financeTransferScopeSql('ft');
 $ftSql = "SELECT ft.amount, ft.from_type, ft.from_id, ft.to_type, ft.to_id, ft.reason, ft.notes, ft.transaction_date
           FROM finance_transfers ft";
 if (!empty($ftWhere)) {

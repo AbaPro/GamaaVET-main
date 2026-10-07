@@ -11,8 +11,8 @@ function poPaymentSourceConfig($type) {
 function poPaymentSources() {
     global $pdo;
     $sources = [];
-    $scope = getAccountScopeSql();
     foreach (['safe', 'bank', 'personal'] as $type) {
+        $scope = $type === 'safe' ? getSafeScopeSql() : getAccountScopeSql();
         $config = poPaymentSourceConfig($type);
         $active = $type === 'personal' ? ' AND is_active = 1' : '';
         $nameSql = $type === 'bank' ? "CONCAT(bank_name, ' — ', account_number)" : "`{$config['name']}`";
@@ -29,7 +29,7 @@ function debitPoPaymentSource($type, $id, $amount) {
     global $pdo;
     $config = poPaymentSourceConfig($type);
     if (!$config || $id <= 0) throw new DomainException('Select a valid payment source.');
-    $scope = getAccountScopeSql();
+    $scope = $type === 'safe' ? getSafeScopeSql() : getAccountScopeSql();
     $active = $type === 'personal' ? ' AND is_active = 1' : '';
     $stmt = $pdo->prepare("UPDATE `{$config['table']}` SET balance = balance - ? WHERE id = ? AND $scope $active AND balance >= ?");
     $stmt->execute([$amount, $id, $amount]);
@@ -41,6 +41,9 @@ function refundPoPaymentSource(array $payment) {
     if (empty($payment['payment_source_type'])) return; // Historical payments were not debited here.
     $config = poPaymentSourceConfig($payment['payment_source_type']);
     if (!$config || empty($payment['payment_source_id'])) throw new DomainException('Invalid payment source.');
+    if (!isFinanceAccountInCurrentAccount($payment['payment_source_type'], $payment['payment_source_id'])) {
+        throw new DomainException('You do not have access to this payment source.');
+    }
     $stmt = $pdo->prepare("UPDATE `{$config['table']}` SET balance = balance + ? WHERE id = ?");
     $stmt->execute([$payment['amount'], $payment['payment_source_id']]);
     if ($stmt->rowCount() !== 1) throw new DomainException('Payment source no longer exists; cannot refund this payment.');

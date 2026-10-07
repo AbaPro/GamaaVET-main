@@ -218,7 +218,8 @@ if ($imageResult) {
 
 $safeAccounts = [];
 $accountScope = getAccountScopeSql();
-$safeResult = $conn->query("SELECT id, name, balance, currency FROM safes WHERE $accountScope ORDER BY name");
+$safeScope = getSafeScopeSql();
+$safeResult = $conn->query("SELECT id, name, balance, currency FROM safes WHERE $safeScope ORDER BY name");
 while ($row = $safeResult->fetch_assoc()) {
     $safeAccounts[] = ['id' => (int)$row['id'], 'label' => $row['name'] . ' — ' . number_format((float)$row['balance'], 2) . ' ' . ($row['currency'] ?: 'EGP')];
 }

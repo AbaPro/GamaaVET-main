@@ -74,7 +74,7 @@ if ($roleSlug === 'admin') {
 $result->execute();
 $notifications = $result->get_result()->fetch_all(MYSQLI_ASSOC);
 $result->close();
-if (($_SESSION['login_region'] ?? 'factory') !== 'factory') {
+if (($_SESSION['login_region'] ?? 'factory') !== 'factory' || getUserSafeAccessIds() !== null) {
     $notifications = array_values(array_filter($notifications, 'isNotificationVisibleInCurrentChannel'));
 }
 

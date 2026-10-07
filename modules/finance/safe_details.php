@@ -20,7 +20,7 @@ if (!$safeId) {
     redirect('safes.php');
 }
 
-$safeScope = getAccountScopeSql('s');
+$safeScope = getSafeScopeSql('s');
 $safeStmt = $conn->prepare("SELECT s.*, a.name AS account_name, l.name AS location_name, l.address AS location_address
                             FROM safes s
                             LEFT JOIN accounts a ON a.id = s.account_id

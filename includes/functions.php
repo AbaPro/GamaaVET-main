@@ -1468,6 +1468,44 @@ function getAccountScopeSql($alias = '') {
     return "{$prefix}account_id = $accountId";
 }
 
+/** Per-user safe access is read from the database on each request, not the login session.
+ * NULL = all safes, [] = none. Role permissions and brand scope still apply.
+ */
+function getUserSafeAccessIds() {
+    global $conn;
+    static $cache = [];
+    $userId = (int)($_SESSION['user_id'] ?? 0);
+    if (!$userId) return [];
+    if (array_key_exists($userId, $cache)) return $cache[$userId];
+    $stmt = $conn->prepare('SELECT safe_access_ids FROM users WHERE id = ?');
+    $stmt->bind_param('i', $userId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if (!$row) return $cache[$userId] = [];
+    if ($row['safe_access_ids'] === null) return $cache[$userId] = null;
+    $ids = json_decode($row['safe_access_ids'], true);
+    return $cache[$userId] = is_array($ids) ? array_values(array_filter(array_map('intval', $ids), static fn($id) => $id > 0)) : [];
+}
+
+function getSafeAccessSql($alias = '') {
+    $ids = getUserSafeAccessIds();
+    $prefix = $alias ? "$alias." : '';
+    if ($ids === null) return '1=1';
+    return $ids ? "{$prefix}id IN (" . implode(',', $ids) . ')' : '1=0';
+}
+
+function getSafeScopeSql($alias = '') {
+    return '(' . getAccountScopeSql($alias) . ' AND ' . getSafeAccessSql($alias) . ')';
+}
+
+/** Filter a transaction's optional safe reference. Non-safe transactions remain visible. */
+function getSafeReferenceScopeSql($idColumn) {
+    if (getUserSafeAccessIds() === null) return '1=1';
+    $scope = getSafeScopeSql('permitted_safe');
+    return "($idColumn IS NULL OR $idColumn = 0 OR EXISTS (SELECT 1 FROM safes permitted_safe WHERE permitted_safe.id = $idColumn AND $scope))";
+}
+
 /**
  * True when a finance account belongs to the currently selected brand.
  * Legacy NULL account_id rows belong to the Factory channel only.
@@ -1483,7 +1521,7 @@ function isFinanceAccountInCurrentAccount($type, $accountId) {
     $accountId = (int)$accountId;
     if (!isset($tables[$type]) || $accountId <= 0) return false;
 
-    $scope = getAccountScopeSql();
+    $scope = $type === 'safe' ? getSafeScopeSql() : getAccountScopeSql();
     $stmt = $conn->prepare("SELECT id FROM `{$tables[$type]}` WHERE id = ? AND $scope LIMIT 1");
     $stmt->bind_param('i', $accountId);
     $stmt->execute();
@@ -2069,7 +2107,8 @@ function canViewProductCost($productType) {
 function isNotificationVisibleInCurrentChannel(array $notification) {
     global $conn;
 
-    if (($_SESSION['login_region'] ?? 'factory') === 'factory') {
+    if (($_SESSION['login_region'] ?? 'factory') === 'factory'
+        && (!in_array($notification['entity_type'] ?? '', ['safe', 'finance_transfer'], true) || getUserSafeAccessIds() === null)) {
         return true;
     }
 
@@ -2078,6 +2117,8 @@ function isNotificationVisibleInCurrentChannel(array $notification) {
     if ($entityId <= 0) {
         return false;
     }
+
+    if ($entityType === 'safe') return isSafeInCurrentAccount($entityId);
 
     if ($entityType === 'order') {
         return canAccessOrder($entityId);
@@ -2129,7 +2170,7 @@ function getUnreadNotificationsCount() {
     $userId = $_SESSION['user_id'];
     $roleSlug = $_SESSION['role_slug'] ?? null;
     
-    if (($_SESSION['login_region'] ?? 'factory') !== 'factory') {
+    if (($_SESSION['login_region'] ?? 'factory') !== 'factory' || getUserSafeAccessIds() !== null) {
         if ($roleSlug === 'admin') {
             $stmt = $conn->prepare('SELECT type, module, entity_type, entity_id FROM notifications WHERE is_read = 0');
         } else {

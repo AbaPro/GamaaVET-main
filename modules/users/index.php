@@ -214,6 +214,7 @@ include __DIR__ . '/../../includes/header.php';
                             </div>
                         </div>
                     </div>
+                    <?php renderUserSafeAccessForm(); ?>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>

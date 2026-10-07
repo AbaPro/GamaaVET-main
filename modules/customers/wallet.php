@@ -147,7 +147,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['set_wallet_balance'])
 
 // Fetch safes and bank accounts for payment methods, scoped to the current brand
 $safes_data = [];
-$safes_result = $conn->query("SELECT id, CONCAT(name, ' — ', currency) AS name FROM safes WHERE " . getAccountScopeSql() . " ORDER BY name");
+$safes_result = $conn->query("SELECT id, CONCAT(name, ' — ', currency) AS name FROM safes WHERE " . getSafeScopeSql() . " ORDER BY name");
 if ($safes_result) {
     while ($safe = $safes_result->fetch_assoc()) {
         $safes_data[] = $safe;
@@ -258,8 +258,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // Get wallet transactions with payment method info. Account names are joined
 // only when the destination belongs to the active brand.
-$safeScope = getAccountScopeSql('s');
+$safeScope = getSafeScopeSql('s');
 $bankScope = getAccountScopeSql('ba');
+$safePaymentScope = getSafeReferenceScopeSql('wt.safe_id');
 $transactions_sql = "SELECT wt.*, u.name as created_by_name,
                             CASE
                                 WHEN wt.payment_method = 'cash' THEN s.name
@@ -270,7 +271,7 @@ $transactions_sql = "SELECT wt.*, u.name as created_by_name,
                      LEFT JOIN users u ON wt.created_by = u.id
                      LEFT JOIN safes s ON wt.safe_id = s.id AND $safeScope
                      LEFT JOIN bank_accounts ba ON wt.bank_account_id = ba.id AND $bankScope
-                     WHERE wt.customer_id = ?
+                     WHERE wt.customer_id = ? AND $safePaymentScope
                      ORDER BY wt.transaction_date DESC, wt.created_at DESC";
 $transactions_stmt = $conn->prepare($transactions_sql);
 $transactions_stmt->bind_param("i", $customer_id);
@@ -283,6 +284,7 @@ $transactions_stmt->close();
 
 // Order payments are part of the customer's financial activity even when they
 // are paid directly into a cash safe or bank account instead of prepaid credit.
+$orderSafeScope = getSafeReferenceScopeSql('op.safe_id');
 $orderPaymentsStmt = $conn->prepare("
     SELECT op.*, o.internal_id AS order_number, u.name AS created_by_name,
            CASE
@@ -295,7 +297,7 @@ $orderPaymentsStmt = $conn->prepare("
     LEFT JOIN users u ON u.id = op.created_by
     LEFT JOIN safes s ON s.id = op.safe_id AND $safeScope
     LEFT JOIN bank_accounts ba ON ba.id = op.bank_account_id AND $bankScope
-    WHERE o.customer_id = ?
+    WHERE o.customer_id = ? AND $orderSafeScope
     ORDER BY op.transaction_date DESC, op.created_at DESC, op.id DESC
 ");
 $orderPaymentsStmt->bind_param('i', $customer_id);

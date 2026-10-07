@@ -34,7 +34,7 @@ if (!$order) {
 }
 
 // Fetch available Safes, scoped to the current brand
-$stmtSafes = $pdo->query("SELECT id, CONCAT(name, ' — ', currency) AS name, currency FROM safes WHERE " . getAccountScopeSql() . " ORDER BY name");
+$stmtSafes = $pdo->query("SELECT id, CONCAT(name, ' — ', currency) AS name, currency FROM safes WHERE " . getSafeScopeSql() . " ORDER BY name");
 $allSafes = $stmtSafes->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
 // Fetch available Banks, scoped to the current brand
