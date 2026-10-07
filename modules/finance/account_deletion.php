@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/transfer_helpers.php';
+require_once __DIR__ . '/deletion_approval.php';
 
 function handleFinanceAccountDeletion($type, $canDelete, $returnPage, $canForceDelete = false) {
     global $conn;
@@ -33,8 +34,17 @@ function handleFinanceAccountDeletion($type, $canDelete, $returnPage, $canForceD
         redirect($returnPage);
     }
 
+    try {
+        if (!financeTransferGetAccount($type, $id)) throw new DomainException('Account not found.');
+        financeDeletionRequest($type, $id, $isForce, $returnPage);
+    } catch (Throwable $error) {
+        setAlert('danger', $error->getMessage());
+        redirect($returnPage);
+        return;
+    }
     $conn->begin_transaction();
     try {
+        financeDeletionApprove($conn, $type, $id, $isForce);
         $account = financeTransferGetAccount($type, $id, true);
         if (!$account) {
             throw new DomainException('Account not found.');
@@ -144,14 +154,16 @@ function renderFinanceAccountDeleteButton(array $account, $canForceDelete = fals
         return;
     }
     ?>
-    <form method="post" class="d-inline" onsubmit="return confirm('Delete this account permanently? Accounts linked to financial records cannot be deleted.');">
+    <form method="post" class="d-inline" onsubmit="return confirm('Request approval to delete this account? Accounts linked to financial records cannot be deleted.');">
+        <input type="hidden" name="deletion_token" value="<?= htmlspecialchars(financeDeletionToken(), ENT_QUOTES, 'UTF-8'); ?>">
         <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['finance_account_delete_token'], ENT_QUOTES, 'UTF-8'); ?>">
-        <button type="submit" name="delete_account" value="<?= (int)$account['id']; ?>" class="btn btn-sm btn-danger">Delete</button>
+        <button type="submit" name="delete_account" value="<?= (int)$account['id']; ?>" class="btn btn-sm btn-danger">Request Deletion</button>
     </form>
     <?php if ($canForceDelete): ?>
-    <form method="post" class="d-inline" onsubmit="return confirm('Force delete this account even if it is linked to transfers, PO payments, or other financial records? Those historical records will remain but will point to a deleted account. This cannot be undone. Continue?');">
+    <form method="post" class="d-inline" onsubmit="return confirm('Request approval to force delete this account even if it is linked to transfers, PO payments, or other financial records? Those historical records will remain but will point to a deleted account. This cannot be undone. Continue?');">
+        <input type="hidden" name="deletion_token" value="<?= htmlspecialchars(financeDeletionToken(), ENT_QUOTES, 'UTF-8'); ?>">
         <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['finance_account_delete_token'], ENT_QUOTES, 'UTF-8'); ?>">
-        <button type="submit" name="force_delete_account" value="<?= (int)$account['id']; ?>" class="btn btn-sm btn-outline-danger" title="Force delete even if linked to financial history">Force Delete</button>
+        <button type="submit" name="force_delete_account" value="<?= (int)$account['id']; ?>" class="btn btn-sm btn-outline-danger" title="Force delete even if linked to financial history">Request Force Delete</button>
     </form>
     <?php endif; ?>
     <?php

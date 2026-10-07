@@ -2,6 +2,7 @@
 require_once '../../../includes/auth.php';
 require_once '../../../config/database.php';
 require_once '../../../includes/functions.php';
+require_once __DIR__ . '/../deletion_approval.php';
 
 if (!hasPermission('finance.expenses.manage')) {
     setAlert('danger', 'Access denied.');
@@ -20,14 +21,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     try {
+        financeDeletionRequest('expense', $expense_id, false, 'index.php');
         $pdo->beginTransaction();
+        financeDeletionApprove($pdo, 'expense', $expense_id);
+        $lock = $pdo->prepare("SELECT id FROM expenses WHERE id = ? AND $expenseScope FOR UPDATE");
+        $lock->execute([$expense_id]);
+        if (!$lock->fetchColumn()) throw new DomainException('Expense not found.');
 
         // Fetch payments to reverse balances
         $stmt = $pdo->prepare("SELECT epa.file_path FROM expense_payment_attachments epa JOIN expense_payments ep ON ep.id = epa.expense_payment_id WHERE ep.expense_id = ?");
         $stmt->execute([$expense_id]);
         $filesToDelete = $stmt->fetchAll(PDO::FETCH_COLUMN);
 
-        $stmt = $pdo->prepare("SELECT * FROM expense_payments WHERE expense_id = ?");
+        $stmt = $pdo->prepare("SELECT * FROM expense_payments WHERE expense_id = ? FOR UPDATE");
         $stmt->execute([$expense_id]);
         $payments = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -87,8 +93,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         logActivity("Deleted expense ID: $expense_id", null, 'delete', 'expense', $expense_id);
         setAlert('success', 'Expense and associated payments deleted successfully.');
-    } catch (Exception $e) {
-        $pdo->rollBack();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
         setAlert('danger', 'Error deleting expense: ' . $e->getMessage());
     }
 }

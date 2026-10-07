@@ -375,7 +375,10 @@
 
                     <!-- Finance -->
                     <?php
-                    $canFinance = hasPermission('finance.customer_wallet.view')
+                    $canFinance = hasPermission('finance.deletions.approve')
+                        || hasPermission('finance.expenses.manage')
+                        || hasPermission('finance.expenses.categories')
+                        || hasPermission('finance.customer_wallet.view')
                         || hasPermission('finance.balances.settle')
                         || hasPermission('finance.customer_payment.process')
                         || hasPermission('finance.safes.create')
@@ -401,6 +404,7 @@
                                 <i class="fas fa-coins me-1"></i> Finance
                             </a>
                             <ul class="dropdown-menu">
+                                <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/deletion_requests.php"><i class="fas fa-check-circle me-2"></i> Deletion Requests</a></li>
                                 <?php if (hasPermission('finance.customer_wallet.view') || hasPermission('finance.balances.settle')): ?>
                                     <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/customers.php"><i class="fas fa-wallet me-2"></i> Customer Accounts</a></li>
                                 <?php endif; ?>

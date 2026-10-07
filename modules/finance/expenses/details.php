@@ -231,13 +231,15 @@ require_once '../../../includes/header.php';
 </div>
 
 <!-- Delete Confirmation Modal -->
+<?php require_once __DIR__ . '/../deletion_approval.php'; ?>
 <form id="deleteForm" method="post" action="delete.php" style="display:none;">
+    <input type="hidden" name="deletion_token" value="<?= htmlspecialchars(financeDeletionToken(), ENT_QUOTES, 'UTF-8'); ?>">
     <input type="hidden" name="expense_id" id="delete_expense_id">
 </form>
 
 <script>
 function confirmDelete(id) {
-    if (confirm('Are you sure you want to delete this expense? This will also delete all associated payment records.')) {
+    if (confirm('Request approval to delete this expense and all associated payment records?')) {
         document.getElementById('delete_expense_id').value = id;
         document.getElementById('deleteForm').submit();
     }

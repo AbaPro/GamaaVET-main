@@ -2,6 +2,7 @@
 require_once '../../../includes/auth.php';
 require_once '../../../config/database.php';
 require_once '../../../includes/functions.php';
+require_once __DIR__ . '/../deletion_approval.php';
 
 if (!hasPermission('finance.expenses.categories')) {
     setAlert('danger', 'Access denied.');
@@ -28,21 +29,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_category'])) {
 }
 
 // Handle Delete Category
-if (isset($_GET['delete'])) {
-    $id = intval($_GET['delete']);
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete'])) {
+    $id = intval($_POST['delete']);
     try {
+        financeDeletionRequest('category', $id, false, 'categories.php');
+        $pdo->beginTransaction();
+        financeDeletionApprove($pdo, 'category', $id);
+        $lock = $pdo->prepare('SELECT id FROM expense_categories WHERE id = ? FOR UPDATE');
+        $lock->execute([$id]);
+        if (!$lock->fetchColumn()) throw new DomainException('Category not found.');
         // Check if category is in use
         $check = $pdo->prepare("SELECT COUNT(*) FROM expenses WHERE category_id = ?");
         $check->execute([$id]);
         if ($check->fetchColumn() > 0) {
-            setAlert('danger', 'Cannot delete category that is in use by expenses.');
+            throw new DomainException('Cannot delete category that is in use by expenses.');
         } else {
             $stmt = $pdo->prepare("DELETE FROM expense_categories WHERE id = ?");
             $stmt->execute([$id]);
             logActivity("Deleted expense category ID: $id", null, 'delete', 'expense_category', $id);
             setAlert('success', 'Category deleted successfully.');
         }
-    } catch (PDOException $e) {
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
         setAlert('danger', 'Error deleting category: ' . $e->getMessage());
     }
     redirect('categories.php');
@@ -83,11 +92,10 @@ $categories = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                 <td><?= htmlspecialchars($cat['description']) ?></td>
                                 <td><?= date('M j, Y', strtotime($cat['created_at'])) ?></td>
                                 <td class="text-end">
-                                    <a href="categories.php?delete=<?= $cat['id'] ?>" 
-                                       class="btn btn-sm btn-outline-danger" 
-                                       onclick="return confirm('Are you sure you want to delete this category?')">
-                                        <i class="fas fa-trash"></i>
-                                    </a>
+                                    <form method="post" class="d-inline" onsubmit="return confirm('Request approval to delete this category?');">
+                                        <input type="hidden" name="deletion_token" value="<?= htmlspecialchars(financeDeletionToken(), ENT_QUOTES, 'UTF-8'); ?>">
+                                        <button name="delete" value="<?= (int)$cat['id'] ?>" class="btn btn-sm btn-outline-danger">Request Deletion</button>
+                                    </form>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
