@@ -4,6 +4,13 @@ if (session_status() === PHP_SESSION_NONE) {
 }
 require_once __DIR__ . '/functions.php';
 
+// Reject revoked sessions before processing any login, logout, or page action.
+if (isset($_SESSION['user_id']) && !isLoggedIn()) {
+    setAlert('danger', 'Your account is no longer available. Please login again.');
+    redirect(defined('BASE_URL') ? BASE_URL . 'index.php' : 'index.php');
+    exit;
+}
+
 // Check if user is trying to login
 if (isset($_POST['login'])) {
     $username = sanitize($_POST['username']);

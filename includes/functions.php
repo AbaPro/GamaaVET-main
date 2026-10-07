@@ -265,7 +265,23 @@ function generateUniqueBarcode($db = null) {
 
 // Function to check if user is logged in
 function isLoggedIn() {
-    return isset($_SESSION['user_id']);
+    global $conn;
+    if (!isset($_SESSION['user_id'])) return false;
+
+    // Sessions on every device must stop granting access after account deletion
+    // or deactivation, even if they still contain cached admin permissions.
+    $stmt = $conn->prepare("SELECT id FROM users WHERE id = ? AND is_active = 1");
+    $stmt->bind_param("i", $_SESSION['user_id']);
+    $stmt->execute();
+    $active = $stmt->get_result()->num_rows === 1;
+    $stmt->close();
+    if (!$active) {
+        $_SESSION = [];
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_regenerate_id(true);
+        }
+    }
+    return $active;
 }
 
 // Load the current user's role + permissions from DB into session (idempotent)
