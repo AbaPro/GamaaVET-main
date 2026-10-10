@@ -476,6 +476,20 @@ document.addEventListener('DOMContentLoaded', function () {
     if (window.jQuery && jQuery.fn.select2) {
         jQuery('.js-searchable-select').select2({theme: 'bootstrap-5', dropdownParent: jQuery('#transferModal')});
     }
+
+    // Quick transfer links from the finance dashboard: ?new=1[&from_type=safe&from_id=5]
+    const params = new URLSearchParams(window.location.search);
+    const transferModal = document.getElementById('transferModal');
+    if (params.get('new') === '1' && transferModal && window.bootstrap) {
+        const fromType = document.querySelector('.js-account-type[name="from_type"]');
+        if (fromType && accountOptions[params.get('from_type')]) {
+            fromType.value = params.get('from_type');
+            populateAccountSelect(fromType);
+            const fromId = document.getElementById(fromType.dataset.target);
+            if (fromId && params.get('from_id')) fromId.value = params.get('from_id');
+        }
+        bootstrap.Modal.getOrCreateInstance(transferModal).show();
+    }
 });
 </script>
 

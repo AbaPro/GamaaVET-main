@@ -48,438 +48,350 @@
     $brand_logo = getBrandLogoFile($login_region);
     ?>
     <!-- Navigation -->
-    <nav class="navbar navbar-expand-lg navbar-dark <?= $navbar_bg ?> shadow-sm">
-        <div class="container-fluid px-4">
+    <?php
+    $navGroups = [];
+    if (isLoggedIn()) {
+        // Ensure freshest role/permissions each request
+        if (function_exists('loadUserAccessToSession')) {
+            loadUserAccessToSession($_SESSION['user_id']);
+        }
 
-            <!-- Brand -->
-            <a class="navbar-brand d-flex align-items-center gap-2 fw-semibold" href="<?= BASE_URL ?>dashboard.php">
-                <img src="<?= BASE_URL ?><?= $brand_logo ?>" alt="<?= $brand_name ?>" width="32" height="32">
-                <span><?= $brand_name ?></span>
-            </a>
+        $canSalesDashboard = hasPermission('sales.dashboard.view')
+            || hasPermission('sales.dashboard.orders_pending')
+            || hasPermission('sales.dashboard.overall_orders')
+            || hasPermission('sales.dashboard.this_month')
+            || hasPermission('sales.dashboard.recent_orders');
+        $canSales = $canSalesDashboard || hasPermission('sales.orders.view_all') || hasPermission('sales.orders.create') || hasPermission('quotations.manage') || hasPermission('sales.portal_orders.manage') || hasPermission('customers.view');
+        $canInventory = hasPermission('inventories.view') || hasPermission('inventories.create') || hasPermission('inventories.transfer');
+        $canProducts = hasPermission('products.view')
+            || hasPermission('products.create')
+            || hasPermission('products.bulk_upload')
+            || ($login_region === 'factory' && hasPermission('categories.manage'));
+        $canPurchases = hasPermission('purchases.view_all') || hasPermission('purchases.create') || hasPermission('vendors.view');
+        $canManageUsers = hasPermission('users.manage');
+        $canViewActivityLogs = hasPermission('users.activity_logs.view');
+        $canTickets = hasPermission('tickets.manage') || hasPermission('tickets.create') || hasPermission('tickets.view') || hasPermission('tickets.update_status');
+        $canFinance = hasPermission('finance.deletions.approve')
+            || hasPermission('finance.expenses.manage')
+            || hasPermission('finance.expenses.categories')
+            || hasPermission('finance.customer_wallet.view')
+            || hasPermission('finance.balances.settle')
+            || hasPermission('finance.customer_payment.process')
+            || hasPermission('finance.safes.create')
+            || hasPermission('finance.safes.edit')
+            || hasPermission('finance.safes.delete')
+            || hasPermission('finance.safes.balance.edit')
+            || hasPermission('finance.bank_accounts.create')
+            || hasPermission('finance.bank_accounts.edit')
+            || hasPermission('finance.bank_accounts.delete')
+            || hasPermission('finance.bank_accounts.balance.edit')
+            || hasPermission('finance.personal_accounts.create')
+            || hasPermission('finance.personal_accounts.delete')
+            || hasPermission('finance.transfers.create')
+            || hasPermission('finance.transfers.approve')
+            || ($login_region === 'factory' && (
+                hasPermission('finance.po_payment.process')
+                || hasPermission('finance.vendor_wallet.view')
+            ));
+        $isFactory = $login_region === 'factory';
 
-            <!-- Toggler -->
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNavbar">
-                <span class="navbar-toggler-icon"></span>
-            </button>
+        // Each group: a single link ('url') or a collapsible list of 'items'.
+        // 'show' carries the same permission checks the old navbar used.
+        $navGroups = [
+            ['key' => 'dashboard', 'label' => 'Dashboard', 'icon' => 'fa-gauge-high', 'url' => 'dashboard.php', 'show' => $isFactory],
+            ['key' => 'sales', 'label' => 'Sales', 'icon' => 'fa-cart-shopping', 'show' => $canSales, 'items' => [
+                ['label' => 'Dashboard', 'icon' => 'fa-chart-line', 'url' => 'modules/sales/', 'show' => $canSalesDashboard],
+                ['label' => 'All Orders', 'icon' => 'fa-list', 'url' => 'modules/sales/order_list.php', 'show' => hasPermission('sales.orders.view_all')],
+                ['label' => 'Create Order', 'icon' => 'fa-plus', 'url' => 'modules/sales/create_order.php', 'show' => hasPermission('sales.orders.create')],
+                ['label' => 'Quotations', 'icon' => 'fa-file-invoice', 'url' => 'modules/sales/quotations/quotation_list.php', 'show' => hasPermission('quotations.manage')],
+                ['label' => 'Portal Order Requests', 'icon' => 'fa-clipboard-check', 'url' => 'modules/sales/portal_orders/list.php', 'show' => hasPermission('sales.portal_orders.manage')],
+                ['label' => 'Customers', 'icon' => 'fa-users', 'url' => 'modules/customers/', 'show' => hasPermission('customers.view')],
+            ]],
+            ['key' => 'inventory', 'label' => 'Inventory', 'icon' => 'fa-warehouse', 'show' => $canInventory, 'items' => [
+                ['label' => 'All Inventories', 'icon' => 'fa-list', 'url' => 'modules/inventories/', 'show' => hasPermission('inventories.view')],
+                ['label' => 'Add Inventory', 'icon' => 'fa-plus', 'url' => 'modules/inventories/create.php', 'show' => hasPermission('inventories.create')],
+                ['label' => 'Transfer Items', 'icon' => 'fa-right-left', 'url' => 'modules/inventories/transfer.php', 'show' => hasPermission('inventories.transfer')],
+                ['label' => 'Regions', 'icon' => 'fa-globe', 'url' => 'modules/regions/', 'show' => hasPermission('regions.manage')],
+            ]],
+            ['key' => 'products', 'label' => 'Products', 'icon' => 'fa-boxes-stacked', 'show' => $canProducts, 'items' => [
+                ['label' => 'Final Products', 'icon' => 'fa-box', 'url' => 'modules/products/?type=final', 'show' => hasPermission('products.view')],
+                ['label' => 'Raw Materials', 'icon' => 'fa-layer-group', 'url' => 'modules/products/?type=material', 'show' => hasPermission('products.view') && $isFactory],
+                ['label' => 'Add Product', 'icon' => 'fa-plus', 'url' => 'modules/products/create.php', 'show' => hasPermission('products.create')],
+                ['label' => 'Bulk Upload', 'icon' => 'fa-upload', 'url' => 'modules/products/upload.php', 'show' => hasPermission('products.bulk_upload')],
+                ['label' => 'Categories', 'icon' => 'fa-tags', 'url' => 'modules/categories/', 'show' => $isFactory && hasPermission('categories.manage')],
+            ]],
+            ['key' => 'purchases', 'label' => 'Purchases', 'icon' => 'fa-basket-shopping', 'show' => $canPurchases && $isFactory, 'items' => [
+                ['label' => 'Purchase Orders', 'icon' => 'fa-list', 'url' => 'modules/purchases/', 'show' => hasPermission('purchases.view_all')],
+                ['label' => 'Create PO', 'icon' => 'fa-plus', 'url' => 'modules/purchases/create_po.php', 'show' => hasPermission('purchases.create')],
+                ['label' => 'Vendors', 'icon' => 'fa-truck', 'url' => 'modules/vendors/', 'show' => hasPermission('vendors.view')],
+            ]],
+            ['key' => 'manufacturing', 'label' => 'Manufacturing', 'icon' => 'fa-industry', 'show' => hasPermission('manufacturing.view') && $isFactory, 'items' => [
+                ['label' => 'Orders List', 'icon' => 'fa-list', 'url' => 'modules/manufacturing/', 'show' => true],
+                ['label' => 'Formulas', 'icon' => 'fa-flask', 'url' => 'modules/manufacturing/formulas.php', 'show' => true],
+                ['label' => 'Formula Templates', 'icon' => 'fa-layer-group', 'url' => 'modules/manufacturing/formula_templates.php', 'show' => hasPermission('manufacturing.formula.view_all')],
+                ['label' => 'Bottle Sizes', 'icon' => 'fa-wine-bottle', 'url' => 'modules/manufacturing/bottle_sizes.php', 'show' => true],
+                ['label' => 'Packaging Options', 'icon' => 'fa-box', 'url' => 'modules/manufacturing/packaging_options.php', 'show' => true],
+                ['label' => 'New Order', 'icon' => 'fa-plus', 'url' => 'modules/manufacturing/create.php', 'show' => hasPermission('manufacturing.orders.create')],
+            ]],
+            ['key' => 'users', 'label' => 'Users', 'icon' => 'fa-users', 'show' => ($canManageUsers || $canViewActivityLogs) && $isFactory, 'items' => [
+                ['label' => 'Manage Users', 'icon' => 'fa-user-cog', 'url' => 'modules/users/', 'show' => $canManageUsers],
+                ['label' => 'Activity Log', 'icon' => 'fa-history', 'url' => 'modules/users/activity_logs.php', 'show' => $canViewActivityLogs],
+            ]],
+            ['key' => 'analysis', 'label' => 'Analysis', 'icon' => 'fa-chart-line', 'url' => 'modules/analysis/', 'show' => hasPermission('analysis.view_reports') && $isFactory],
+            ['key' => 'tickets', 'label' => 'Tickets', 'icon' => 'fa-ticket-alt', 'url' => 'modules/tickets/', 'show' => $canTickets && $isFactory],
+            ['key' => 'finance', 'label' => 'Finance', 'icon' => 'fa-coins', 'show' => $canFinance && $login_region !== 'curva', 'items' => [
+                ['label' => 'Finance Dashboard', 'icon' => 'fa-gauge-high', 'url' => 'modules/finance/index.php', 'show' => true],
+                ['label' => 'Deletion Requests', 'icon' => 'fa-check-circle', 'url' => 'modules/finance/deletion_requests.php', 'show' => true],
+                ['label' => 'Customer Accounts', 'icon' => 'fa-wallet', 'url' => 'modules/finance/customers.php', 'show' => hasPermission('finance.customer_wallet.view') || hasPermission('finance.balances.settle')],
+                ['label' => 'Bills & Payments', 'icon' => 'fa-file-invoice-dollar', 'url' => 'modules/finance/bills.php', 'show' => hasPermission('finance.customer_payment.process')],
+                ['label' => 'Safes', 'icon' => 'fa-vault', 'url' => 'modules/finance/safes.php', 'show' => hasPermission('finance.safes.create') || hasPermission('finance.safes.edit') || hasPermission('finance.safes.delete') || hasPermission('finance.safes.balance.edit') || hasPermission('finance.balances.settle')],
+                ['label' => 'Bank Accounts', 'icon' => 'fa-university', 'url' => 'modules/finance/banks.php', 'show' => hasPermission('finance.bank_accounts.create') || hasPermission('finance.bank_accounts.edit') || hasPermission('finance.bank_accounts.delete') || hasPermission('finance.bank_accounts.balance.edit') || hasPermission('finance.balances.settle')],
+                ['label' => 'Personal Accounts', 'icon' => 'fa-user-shield', 'url' => 'modules/finance/personal.php', 'show' => hasPermission('finance.personal_accounts.create') || hasPermission('finance.personal_accounts.delete') || hasPermission('finance.balances.settle')],
+                ['label' => 'Transfers', 'icon' => 'fa-right-left', 'url' => 'modules/finance/transfers.php', 'show' => hasPermission('finance.transfers.create') || hasPermission('finance.transfers.approve')],
+                ['label' => 'PO Payments', 'icon' => 'fa-file-contract', 'url' => 'modules/finance/po.php', 'show' => $isFactory && hasPermission('finance.po_payment.process')],
+                ['label' => 'Expenses Tracking', 'icon' => 'fa-money-bill-wave', 'url' => 'modules/finance/expenses/', 'show' => hasPermission('finance.expenses.view')],
+                ['label' => 'Vendor Wallets', 'icon' => 'fa-truck-field', 'url' => 'modules/finance/vendors.php', 'show' => $isFactory && (hasPermission('finance.vendor_wallet.view') || hasPermission('finance.balances.settle'))],
+                ['label' => 'Financial Workbook Export', 'icon' => 'fa-file-excel', 'url' => 'modules/analysis/financial_workbook.php', 'show' => $isFactory && hasPermission('analysis.view_reports')],
+            ]],
+        ];
 
-            <!-- Navbar -->
-            <div class="collapse navbar-collapse" id="mainNavbar">
+        // Drop hidden groups/items, then mark the link for the current page.
+        $navPath = static function ($url) {
+            $path = (string)parse_url($url, PHP_URL_PATH);
+            return preg_replace('#/index\.php$#', '/', $path);
+        };
+        $currentPath = $navPath($_SERVER['REQUEST_URI'] ?? '');
+        $currentQuery = [];
+        parse_str((string)parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_QUERY), $currentQuery);
+        $basePath = rtrim($navPath(BASE_URL), '/') . '/';
+        $navMatches = static function ($url) use ($navPath, $basePath, $currentPath, $currentQuery) {
+            if ($navPath($basePath . $url) !== $currentPath) return false;
+            $itemQuery = [];
+            parse_str((string)parse_url($url, PHP_URL_QUERY), $itemQuery);
+            foreach ($itemQuery as $key => $value) {
+                if (($currentQuery[$key] ?? null) !== $value) return false;
+            }
+            return true;
+        };
+        $navDir = static function ($url) use ($navPath, $basePath) {
+            return preg_replace('#[^/]*$#', '', $navPath($basePath . $url));
+        };
 
-                <!-- Left -->
-                <ul class="navbar-nav me-auto mb-2 mb-lg-0 gap-lg-1">
+        $activeGroupKey = null;
+        foreach ($navGroups as $index => &$group) {
+            if (!$group['show']) { unset($navGroups[$index]); continue; }
+            if (isset($group['items'])) {
+                $group['items'] = array_values(array_filter($group['items'], static fn($item) => $item['show']));
+                if (!$group['items']) { unset($navGroups[$index]); continue; }
+                foreach ($group['items'] as &$item) {
+                    $item['active'] = $navMatches($item['url']);
+                    if ($item['active']) $activeGroupKey = $group['key'];
+                }
+                unset($item);
+            } else {
+                $group['active'] = $navMatches($group['url']);
+                if ($group['active']) $activeGroupKey = $group['key'];
+            }
+        }
+        unset($group);
 
-                    <?php if (isLoggedIn()): ?>
-                        <?php // Ensure freshest role/permissions each request
-                        if (function_exists('loadUserAccessToSession')) {
-                            loadUserAccessToSession($_SESSION['user_id']);
-                        }
-                        ?>
+        // Detail pages (e.g. safe_details.php) have no menu link: open the group that owns the folder.
+        if ($activeGroupKey === null && $currentPath !== $basePath) {
+            $bestLength = 0;
+            foreach ($navGroups as $group) {
+                foreach ($group['items'] ?? [['url' => $group['url']]] as $item) {
+                    $dir = $navDir($item['url']);
+                    if ($dir !== $basePath && strpos($currentPath, $dir) === 0 && strlen($dir) > $bestLength) {
+                        $bestLength = strlen($dir);
+                        $activeGroupKey = $group['key'];
+                    }
+                }
+            }
+        }
+    }
+    ?>
+    <style>
+        :root { --app-topbar-h: 60px; --app-sidebar-w: 250px; --app-sidebar-rail-w: 72px; }
+        .app-topbar { height: var(--app-topbar-h); z-index: 1035; }
+        .app-sidebar .nav-link { color: var(--bs-body-color); border-radius: .375rem; padding: .5rem .75rem; display: flex; align-items: center; gap: .6rem; }
+        .app-sidebar .nav-link:hover { background: var(--bs-tertiary-bg, #f1f3f5); }
+        .app-sidebar .nav-link.active { background: rgba(13, 110, 253, .1); color: var(--bs-primary); font-weight: 600; }
+        .app-sidebar .nav-link .nav-icon { width: 1.25rem; text-align: center; opacity: .75; }
+        .app-sidebar .nav-link.active .nav-icon { opacity: 1; }
+        .app-sidebar .nav-group-toggle .nav-caret { margin-left: auto; font-size: .75rem; transition: transform .2s ease; }
+        .app-sidebar .nav-group-toggle:not(.collapsed) .nav-caret { transform: rotate(90deg); }
+        .app-sidebar .nav-group-toggle.has-active { color: var(--bs-primary); font-weight: 600; }
+        .app-sidebar .nav-sub .nav-link { padding: .4rem .75rem .4rem 2.6rem; font-size: .925rem; }
+        .app-sidebar .offcanvas-body { display: block; }
+        @media (min-width: 992px) {
+            .app-sidebar {
+                position: fixed !important; top: var(--app-topbar-h); bottom: 0; left: 0;
+                width: var(--app-sidebar-w); z-index: 1030; overflow-y: auto;
+                background: #fff !important; border-right: 1px solid var(--bs-border-color);
+                visibility: visible !important; transform: none !important;
+            }
+            .app-sidebar .offcanvas-body { padding: 1rem .75rem !important; overflow-y: visible; }
+            .app-has-sidebar .app-main { margin-left: var(--app-sidebar-w); }
 
-                        <?php if ($login_region === 'factory'): ?>
-                            <li class="nav-item">
-                                <a class="nav-link" href="<?= BASE_URL ?>dashboard.php">
-                                    <i class="fas fa-gauge-high me-1"></i> Dashboard
-                                </a>
-                            </li>
-                        <?php endif; ?>
+            /* Collapsed: icon-only rail. Hovering an icon shows its label via the title tooltip. */
+            .sidebar-animate .app-sidebar { transition: width .2s ease; }
+            .sidebar-animate .app-main { transition: margin-left .2s ease; }
+            .sidebar-collapsed .app-sidebar { width: var(--app-sidebar-rail-w); overflow-x: hidden; }
+            .sidebar-collapsed .app-sidebar .offcanvas-body { padding: 1rem .5rem !important; }
+            .sidebar-collapsed .app-sidebar .nav-label,
+            .sidebar-collapsed .app-sidebar .nav-caret,
+            .sidebar-collapsed .app-sidebar .collapse { display: none !important; }
+            .sidebar-collapsed .app-sidebar .nav-link { justify-content: center; padding: .6rem 0; }
+            .sidebar-collapsed .app-sidebar .nav-link .nav-icon { width: auto; font-size: 1.1rem; }
+            .sidebar-collapsed .app-sidebar .nav-group-toggle.has-active { background: rgba(13, 110, 253, .1); }
+            .app-has-sidebar.sidebar-collapsed .app-main { margin-left: var(--app-sidebar-rail-w); }
+        }
+    </style>
 
-                        <!-- Sales -->
-                        <?php
-                        $canSalesDashboard = hasPermission('sales.dashboard.view')
-                            || hasPermission('sales.dashboard.orders_pending')
-                            || hasPermission('sales.dashboard.overall_orders')
-                            || hasPermission('sales.dashboard.this_month')
-                            || hasPermission('sales.dashboard.recent_orders');
-                        $canSales = $canSalesDashboard || hasPermission('sales.orders.view_all') || hasPermission('sales.orders.create') || hasPermission('quotations.manage') || hasPermission('sales.portal_orders.manage') || hasPermission('customers.view');
-                        ?>
-                        <?php if ($canSales): ?>
-                            <li class="nav-item dropdown">
-                                <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
-                                    <i class="fas fa-cart-shopping me-1"></i> Sales
-                                </a>
-                                <ul class="dropdown-menu">
-                                    <?php if ($canSalesDashboard): ?>
-                                        <li>
-                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/sales/">
-                                                <i class="fas fa-chart-line me-2"></i> Dashboard
-                                            </a>
-                                        </li>
-                                    <?php endif; ?>
-                                    <?php if (hasPermission('sales.orders.view_all')): ?>
-                                        <li>
-                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/sales/order_list.php">
-                                                <i class="fas fa-list me-2"></i> All Orders
-                                            </a>
-                                        </li>
-                                    <?php endif; ?>
-                                    <?php if (hasPermission('sales.orders.create')): ?>
-                                        <li>
-                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/sales/create_order.php">
-                                                <i class="fas fa-plus me-2"></i> Create Order
-                                            </a>
-                                        </li>
-                                    <?php endif; ?>
-                                    <?php if (hasPermission('quotations.manage')): ?>
-                                        <li>
-                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/sales/quotations/quotation_list.php">
-                                                <i class="fas fa-file-invoice me-2"></i> Quotations
-                                            </a>
-                                        </li>
-                                    <?php endif; ?>
-                                    <?php if (hasPermission('sales.portal_orders.manage')): ?>
-                                        <li>
-                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/sales/portal_orders/list.php">
-                                                <i class="fas fa-clipboard-check me-2"></i> Portal Order Requests
-                                            </a>
-                                        </li>
-                                    <?php endif; ?>
-                                    <li>
-                                        <hr class="dropdown-divider">
-                                    </li>
-                                    <?php if (hasPermission('customers.view')): ?>
-                                        <li>
-                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/customers/">
-                                                <i class="fas fa-users me-2"></i> Customers
-                                            </a>
-                                        </li>
-                                    <?php endif; ?>
-                                </ul>
-                            </li>
-                        <?php endif; ?>
-
-                        <!-- Inventory -->
-                        <?php $canInventory = hasPermission('inventories.view') || hasPermission('inventories.create') || hasPermission('inventories.transfer'); ?>
-                        <?php if ($canInventory): ?>
-                            <li class="nav-item dropdown">
-                                <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
-                                    <i class="fas fa-warehouse me-1"></i> Inventory
-                                </a>
-                                <ul class="dropdown-menu">
-                                    <?php if (hasPermission('inventories.view')): ?>
-                                        <li>
-                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/inventories/">
-                                                <i class="fas fa-list me-2"></i> All Inventories
-                                            </a>
-                                        </li>
-                                    <?php endif; ?>
-                                    <?php if (hasPermission('inventories.create')): ?>
-                                        <li>
-                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/inventories/create.php">
-                                                <i class="fas fa-plus me-2"></i> Add Inventory
-                                            </a>
-                                        </li>
-                                    <?php endif; ?>
-                                    <?php if (hasPermission('inventories.transfer')): ?>
-                                        <li>
-                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/inventories/transfer.php">
-                                                <i class="fas fa-right-left me-2"></i> Transfer Items
-                                            </a>
-                                        </li>
-                                    <?php endif; ?>
-                                    <?php if (hasPermission('regions.manage')): ?>
-                                        <li>
-                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/regions/">
-                                                <i class="fas fa-globe me-2"></i> Regions
-                                            </a>
-                                        </li>
-                                    <?php endif; ?>
-                                </ul>
-                            </li>
-                        <?php endif; ?>
-
-                        <!-- Products -->
-                        <?php $canProducts = hasPermission('products.view')
-                            || hasPermission('products.create')
-                            || hasPermission('products.bulk_upload')
-                            || ($login_region === 'factory' && hasPermission('categories.manage')); ?>
-                        <?php if ($canProducts): ?>
-                            <li class="nav-item dropdown">
-                                <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
-                                    <i class="fas fa-boxes-stacked me-1"></i> Products
-                                </a>
-                                <ul class="dropdown-menu">
-                                    <?php if (hasPermission('products.view')): ?>
-                                        <li>
-                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/products/?type=final">
-                                                <i class="fas fa-box me-2"></i> Final Products
-                                            </a>
-                                        </li>
-                                        <?php if ($login_region === 'factory'): ?>
-                                        <li>
-                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/products/?type=material">
-                                                <i class="fas fa-layer-group me-2"></i> Raw Materials
-                                            </a>
-                                        </li>
-                                        <?php endif; ?>
-                                        <li>
-                                            <hr class="dropdown-divider">
-                                        </li>
-                                       
-                                    <?php endif; ?>
-                                    <?php if (hasPermission('products.create')): ?>
-                                        <li>
-                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/products/create.php">
-                                                <i class="fas fa-plus me-2"></i> Add Product
-                                            </a>
-                                        </li>
-                                    <?php endif; ?>
-                                    <?php if (hasPermission('products.bulk_upload')): ?>
-                                        <li>
-                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/products/upload.php">
-                                                <i class="fas fa-upload me-2"></i> Bulk Upload
-                                            </a>
-                                        </li>
-                                    <?php endif; ?>
-                                    <li>
-                                        <hr class="dropdown-divider">
-                                    </li>
-                                    <?php if ($login_region === 'factory' && hasPermission('categories.manage')): ?>
-                                        <li>
-                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/categories/">
-                                                <i class="fas fa-tags me-2"></i> Categories
-                                            </a>
-                                        </li>
-                                    <?php endif; ?>
-                                </ul>
-                            </li>
-                        <?php endif; ?>
-
-                        <!-- Purchases -->
-                        <?php $canPurchases = hasPermission('purchases.view_all') || hasPermission('purchases.create') || hasPermission('vendors.view'); ?>
-                        <?php if ($canPurchases && $login_region === 'factory'): ?>
-                            <li class="nav-item dropdown">
-                                <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
-                                    <i class="fas fa-basket-shopping me-1"></i> Purchases
-                                </a>
-                                <ul class="dropdown-menu">
-                                    <?php if (hasPermission('purchases.view_all')): ?>
-                                        <li>
-                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/purchases/">
-                                                <i class="fas fa-list me-2"></i> Purchase Orders
-                                            </a>
-                                        </li>
-                                    <?php endif; ?>
-                                    <?php if (hasPermission('purchases.create')): ?>
-                                        <li>
-                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/purchases/create_po.php">
-                                                <i class="fas fa-plus me-2"></i> Create PO
-                                            </a>
-                                        </li>
-                                    <?php endif; ?>
-                                    <li>
-                                        <hr class="dropdown-divider">
-                                    </li>
-                                    <?php if (hasPermission('vendors.view')): ?>
-                                        <li>
-                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/vendors/">
-                                                <i class="fas fa-truck me-2"></i> Vendors
-                                            </a>
-                                        </li>
-                                    <?php endif; ?>
-                                </ul>
-                            </li>
-                        <?php endif; ?>
-
-                        <?php if (hasPermission('manufacturing.view') && $login_region === 'factory'): ?>
-                            <li class="nav-item dropdown">
-                                <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
-                                    <i class="fas fa-industry me-1"></i> Manufacturing
-                                </a>
-                                <ul class="dropdown-menu">
-                                    <li>
-                                        <a class="dropdown-item" href="<?= BASE_URL ?>modules/manufacturing/">
-                                            <i class="fas fa-list me-2"></i> Orders List
-                                        </a>
-                                    </li>
-                                    <li>
-                                        <a class="dropdown-item" href="<?= BASE_URL ?>modules/manufacturing/formulas.php">
-                                            <i class="fas fa-flask me-2"></i> Formulas
-                                        </a>
-                                    </li>
-                                    <?php if (hasPermission('manufacturing.formula.view_all')): ?>
-                                        <li>
-                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/manufacturing/formula_templates.php">
-                                                <i class="fas fa-layer-group me-2"></i> Formula Templates
-                                            </a>
-                                        </li>
-                                    <?php endif; ?>
-                                    <li>
-                                        <a class="dropdown-item" href="<?= BASE_URL ?>modules/manufacturing/bottle_sizes.php">
-                                            <i class="fas fa-wine-bottle me-2"></i> Bottle Sizes
-                                        </a>
-                                    </li>
-                                    <li>
-                                        <a class="dropdown-item" href="<?= BASE_URL ?>modules/manufacturing/packaging_options.php">
-                                            <i class="fas fa-box me-2"></i> Packaging Options
-                                        </a>
-                                    </li>
-                                    <?php if (hasPermission('manufacturing.orders.create')): ?>
-                                        <li>
-                                            <hr class="dropdown-divider">
-                                        </li>
-                                        <li>
-                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/manufacturing/create.php">
-                                                <i class="fas fa-plus me-2"></i> New Order
-                                            </a>
-                                        </li>
-                                    <?php endif; ?>
-                                </ul>
-                            </li>
-                        <?php endif; ?>
-
-                        <!-- Users -->
-                        <?php
-                            $canManageUsers = hasPermission('users.manage');
-                            $canViewActivityLogs = hasPermission('users.activity_logs.view');
-                        ?>
-                        <?php if (($canManageUsers || $canViewActivityLogs) && $login_region === 'factory'): ?>
-                            <li class="nav-item dropdown">
-                                <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
-                                    <i class="fas fa-users me-1"></i> Users
-                                </a>
-                                <ul class="dropdown-menu">
-                                    <?php if ($canManageUsers): ?>
-                                        <li>
-                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/users/">
-                                                <i class="fas fa-user-cog me-2"></i> Manage Users
-                                            </a>
-                                        </li>
-                                    <?php endif; ?>
-                                    <?php if ($canViewActivityLogs): ?>
-                                        <li>
-                                            <a class="dropdown-item" href="<?= BASE_URL ?>modules/users/activity_logs.php">
-                                                <i class="fas fa-history me-2"></i> Activity Log
-                                            </a>
-                                        </li>
-                                    <?php endif; ?>
-                                </ul>
-                            </li>
-                        <?php endif; ?>
-
-                    <?php endif; ?>
-                    <?php if (isLoggedIn() && hasPermission('analysis.view_reports') && $login_region === 'factory'): ?>
-                        <li class="nav-item">
-                            <a class="nav-link" href="<?= BASE_URL ?>modules/analysis/">
-                                <i class="fas fa-chart-line me-1"></i> Analysis
-                            </a>
-                        </li>
-                    <?php endif; ?>
-                    <!-- Tickets -->
-                    <?php if ((hasPermission('tickets.manage') || hasPermission('tickets.create') || hasPermission('tickets.view') || hasPermission('tickets.update_status')) && $login_region === 'factory'): ?>
-                        <li class="nav-item">
-                            <a class="nav-link" href="<?= BASE_URL ?>modules/tickets/">
-                                <i class="fas fa-ticket-alt me-1"></i> Tickets
-                            </a>
-                        </li>
-                    <?php endif; ?>
-
-                    <!-- Finance -->
-                    <?php
-                    $canFinance = hasPermission('finance.deletions.approve')
-                        || hasPermission('finance.expenses.manage')
-                        || hasPermission('finance.expenses.categories')
-                        || hasPermission('finance.customer_wallet.view')
-                        || hasPermission('finance.balances.settle')
-                        || hasPermission('finance.customer_payment.process')
-                        || hasPermission('finance.safes.create')
-                        || hasPermission('finance.safes.edit')
-                        || hasPermission('finance.safes.delete')
-                        || hasPermission('finance.safes.balance.edit')
-                        || hasPermission('finance.bank_accounts.create')
-                        || hasPermission('finance.bank_accounts.edit')
-                        || hasPermission('finance.bank_accounts.delete')
-                        || hasPermission('finance.bank_accounts.balance.edit')
-                        || hasPermission('finance.personal_accounts.create')
-                        || hasPermission('finance.personal_accounts.delete')
-                        || hasPermission('finance.transfers.create')
-                        || hasPermission('finance.transfers.approve')
-                        || ($login_region === 'factory' && (
-                            hasPermission('finance.po_payment.process')
-                            || hasPermission('finance.vendor_wallet.view')
-                        ));
-                    ?>
-                    <?php if ($canFinance && $login_region !== 'curva'): ?>
-                        <li class="nav-item dropdown">
-                            <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
-                                <i class="fas fa-coins me-1"></i> Finance
-                            </a>
-                            <ul class="dropdown-menu">
-                                <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/deletion_requests.php"><i class="fas fa-check-circle me-2"></i> Deletion Requests</a></li>
-                                <?php if (hasPermission('finance.customer_wallet.view') || hasPermission('finance.balances.settle')): ?>
-                                    <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/customers.php"><i class="fas fa-wallet me-2"></i> Customer Accounts</a></li>
-                                <?php endif; ?>
-                                <?php if (hasPermission('finance.customer_payment.process')): ?>
-                                    <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/bills.php"><i class="fas fa-file-invoice-dollar me-2"></i> Bills & Payments</a></li>
-                                <?php endif; ?>
-                                <?php if (hasPermission('finance.safes.create') || hasPermission('finance.safes.edit') || hasPermission('finance.safes.delete') || hasPermission('finance.safes.balance.edit') || hasPermission('finance.balances.settle')): ?>
-                                    <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/safes.php"><i class="fas fa-vault me-2"></i> Safes</a></li>
-                                <?php endif; ?>
-                                <?php if (hasPermission('finance.bank_accounts.create') || hasPermission('finance.bank_accounts.edit') || hasPermission('finance.bank_accounts.delete') || hasPermission('finance.bank_accounts.balance.edit') || hasPermission('finance.balances.settle')): ?>
-                                    <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/banks.php"><i class="fas fa-university me-2"></i> Bank Accounts</a></li>
-                                <?php endif; ?>
-                                <?php if (hasPermission('finance.personal_accounts.create') || hasPermission('finance.personal_accounts.delete') || hasPermission('finance.balances.settle')): ?>
-                                    <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/personal.php"><i class="fas fa-user-shield me-2"></i> Personal Accounts</a></li>
-                                <?php endif; ?>
-                                <?php if (hasPermission('finance.transfers.create') || hasPermission('finance.transfers.approve')): ?>
-                                    <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/transfers.php"><i class="fas fa-right-left me-2"></i> Transfers</a></li>
-                                <?php endif; ?>
-                                <?php if ($login_region === 'factory' && hasPermission('finance.po_payment.process')): ?>
-                                    <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/po.php"><i class="fas fa-file-contract me-2"></i> PO Payments</a></li>
-                                <?php endif; ?>
-                                <?php if (hasPermission('finance.expenses.view')): ?>
-                                    <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/expenses/"><i class="fas fa-money-bill-wave me-2"></i> Expenses Tracking</a></li>
-                                <?php endif; ?>
-                                <?php if ($login_region === 'factory' && (hasPermission('finance.vendor_wallet.view') || hasPermission('finance.balances.settle'))): ?>
-                                    <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/finance/vendors.php"><i class="fas fa-truck-field me-2"></i> Vendor Wallets</a></li>
-                                <?php endif; ?>
-                                <?php if ($login_region === 'factory' && hasPermission('analysis.view_reports')): ?>
-                                    <li><hr class="dropdown-divider"></li>
-                                    <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/analysis/financial_workbook.php"><i class="fas fa-file-excel me-2"></i> Financial Workbook Export</a></li>
-                                <?php endif; ?>
-                            </ul>
-                        </li>
-                    <?php endif; ?>
-
-                </ul>
-
-                <!-- Right -->
-                <ul class="navbar-nav ms-auto">
-                    <?php if (isLoggedIn()): ?>
-                        <?php $notifCount = function_exists('getUnreadNotificationsCount') ? getUnreadNotificationsCount() : 0; ?>
-                        <?php if (hasPermission('notifications.view')): ?>
-                            <li class="nav-item me-2" id="notifBell">
-                                <a class="nav-link position-relative" href="<?= BASE_URL ?>modules/notifications/index.php">
-                                    <i class="fas fa-bell"></i>
-                                    <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger <?= $notifCount > 0 ? '' : 'd-none' ?>" id="notifBadge">
-                                        <?= (int)$notifCount ?>
-                                    </span>
-                                </a>
-                            </li>
-                        <?php endif; ?>
-
-                        <li class="nav-item dropdown">
-                            <a class="nav-link dropdown-toggle d-flex align-items-center gap-1" href="#" data-bs-toggle="dropdown">
-                                <i class="fas fa-user-circle fs-5"></i>
-                                <span><?= $_SESSION['user_name'] ?></span>
-                            </a>
-                            <ul class="dropdown-menu dropdown-menu-end">
-                                <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/users/profile.php"><i class="fas fa-user me-2"></i> Profile</a></li>
-                                <li>
-                                    <hr class="dropdown-divider">
-                                </li>
-                                <li>
-                                    <a class="dropdown-item text-danger" href="<?= BASE_URL ?>logout.php?logout">
-                                        <i class="fas fa-sign-out-alt me-2"></i> Logout
-                                    </a>
-                                </li>
-                            </ul>
-                        </li>
-                    <?php endif; ?>
-                </ul>
-
+    <!-- Top bar -->
+    <nav class="navbar navbar-dark <?= $navbar_bg ?> shadow-sm sticky-top app-topbar">
+        <div class="container-fluid px-3 px-lg-4">
+            <div class="d-flex align-items-center gap-2">
+                <?php if ($navGroups): ?>
+                    <button class="navbar-toggler border-0 px-2 d-lg-none" type="button" data-bs-toggle="offcanvas" data-bs-target="#appSidebar" aria-controls="appSidebar" aria-label="Open menu">
+                        <span class="navbar-toggler-icon"></span>
+                    </button>
+                    <button class="btn btn-link text-white px-2 d-none d-lg-inline-flex" type="button" id="sidebarCollapseToggle" aria-controls="appSidebar" aria-expanded="true" aria-label="Collapse menu" title="Collapse menu">
+                        <i class="fas fa-bars fs-5"></i>
+                    </button>
+                <?php endif; ?>
+                <a class="navbar-brand d-flex align-items-center gap-2 fw-semibold me-0" href="<?= BASE_URL ?>dashboard.php">
+                    <img src="<?= BASE_URL ?><?= $brand_logo ?>" alt="<?= $brand_name ?>" width="32" height="32">
+                    <span class="d-none d-sm-inline"><?= $brand_name ?></span>
+                </a>
             </div>
+
+            <?php if (isLoggedIn()): ?>
+                <ul class="navbar-nav flex-row align-items-center gap-3 ms-auto">
+                    <?php $notifCount = function_exists('getUnreadNotificationsCount') ? getUnreadNotificationsCount() : 0; ?>
+                    <?php if (hasPermission('notifications.view')): ?>
+                        <li class="nav-item" id="notifBell">
+                            <a class="nav-link position-relative" href="<?= BASE_URL ?>modules/notifications/index.php" aria-label="Notifications">
+                                <i class="fas fa-bell"></i>
+                                <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger <?= $notifCount > 0 ? '' : 'd-none' ?>" id="notifBadge">
+                                    <?= (int)$notifCount ?>
+                                </span>
+                            </a>
+                        </li>
+                    <?php endif; ?>
+
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle d-flex align-items-center gap-1" href="#" data-bs-toggle="dropdown">
+                            <i class="fas fa-user-circle fs-5"></i>
+                            <span class="d-none d-sm-inline"><?= $_SESSION['user_name'] ?></span>
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end position-absolute">
+                            <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/users/profile.php"><i class="fas fa-user me-2"></i> Profile</a></li>
+                            <li>
+                                <hr class="dropdown-divider">
+                            </li>
+                            <li>
+                                <a class="dropdown-item text-danger" href="<?= BASE_URL ?>logout.php?logout">
+                                    <i class="fas fa-sign-out-alt me-2"></i> Logout
+                                </a>
+                            </li>
+                        </ul>
+                    </li>
+                </ul>
+            <?php endif; ?>
         </div>
     </nav>
+
+    <?php if ($navGroups): ?>
+    <!-- Sidebar: fixed on desktop, slide-in panel on mobile -->
+    <aside class="offcanvas-lg offcanvas-start app-sidebar" tabindex="-1" id="appSidebar" aria-labelledby="appSidebarLabel">
+        <div class="offcanvas-header <?= $navbar_bg ?> text-white">
+            <h5 class="offcanvas-title d-flex align-items-center gap-2 mb-0" id="appSidebarLabel">
+                <img src="<?= BASE_URL ?><?= $brand_logo ?>" alt="" width="28" height="28"><?= $brand_name ?>
+            </h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" data-bs-target="#appSidebar" aria-label="Close"></button>
+        </div>
+        <div class="offcanvas-body">
+            <ul class="nav flex-column gap-1 w-100">
+                <?php foreach ($navGroups as $group): ?>
+                    <?php if (!isset($group['items'])): ?>
+                        <li class="nav-item">
+                            <a class="nav-link <?= $group['active'] ? 'active' : '' ?>" href="<?= BASE_URL . $group['url'] ?>" title="<?= $group['label'] ?>" <?= $group['active'] ? 'aria-current="page"' : '' ?>>
+                                <i class="fas <?= $group['icon'] ?> nav-icon"></i><span class="nav-label"><?= $group['label'] ?></span>
+                            </a>
+                        </li>
+                    <?php else: $isOpen = $activeGroupKey === $group['key']; ?>
+                        <li class="nav-item">
+                            <a class="nav-link nav-group-toggle <?= $isOpen ? 'has-active' : 'collapsed' ?>" href="#nav-<?= $group['key'] ?>" data-bs-toggle="collapse" role="button" aria-expanded="<?= $isOpen ? 'true' : 'false' ?>" aria-controls="nav-<?= $group['key'] ?>" title="<?= $group['label'] ?>">
+                                <i class="fas <?= $group['icon'] ?> nav-icon"></i><span class="nav-label"><?= $group['label'] ?></span>
+                                <i class="fas fa-chevron-right nav-caret"></i>
+                            </a>
+                            <div class="collapse <?= $isOpen ? 'show' : '' ?>" id="nav-<?= $group['key'] ?>">
+                                <ul class="nav flex-column nav-sub gap-1 mt-1">
+                                    <?php foreach ($group['items'] as $item): ?>
+                                        <li class="nav-item">
+                                            <a class="nav-link <?= $item['active'] ? 'active' : '' ?>" href="<?= BASE_URL . $item['url'] ?>" <?= $item['active'] ? 'aria-current="page"' : '' ?>>
+                                                <i class="fas <?= $item['icon'] ?> nav-icon"></i><span class="nav-label"><?= $item['label'] ?></span>
+                                            </a>
+                                        </li>
+                                    <?php endforeach; ?>
+                                </ul>
+                            </div>
+                        </li>
+                    <?php endif; ?>
+                <?php endforeach; ?>
+            </ul>
+        </div>
+    </aside>
+    <script>
+        (function () {
+            const body = document.body;
+            const storageKey = 'sidebarCollapsed';
+            body.classList.add('app-has-sidebar');
+            try { if (localStorage.getItem(storageKey) === '1') body.classList.add('sidebar-collapsed'); } catch (e) {}
+
+            function syncToggle() {
+                const toggle = document.getElementById('sidebarCollapseToggle');
+                if (!toggle) return;
+                const collapsed = body.classList.contains('sidebar-collapsed');
+                const label = collapsed ? 'Expand menu' : 'Collapse menu';
+                toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+                toggle.setAttribute('aria-label', label);
+                toggle.title = label;
+            }
+            function setCollapsed(collapsed) {
+                body.classList.toggle('sidebar-collapsed', collapsed);
+                try { localStorage.setItem(storageKey, collapsed ? '1' : '0'); } catch (e) {}
+                syncToggle();
+            }
+
+            document.addEventListener('DOMContentLoaded', function () {
+                syncToggle();
+                // Animate only user-triggered changes, not the initial restore.
+                requestAnimationFrame(function () { body.classList.add('sidebar-animate'); });
+
+                const toggle = document.getElementById('sidebarCollapseToggle');
+                if (toggle) {
+                    toggle.addEventListener('click', function () {
+                        setCollapsed(!body.classList.contains('sidebar-collapsed'));
+                    });
+                }
+
+                // In the rail, a group icon expands the sidebar and opens that group.
+                document.querySelectorAll('#appSidebar .nav-group-toggle').forEach(function (link) {
+                    link.addEventListener('click', function (e) {
+                        if (!body.classList.contains('sidebar-collapsed') || window.innerWidth < 992) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setCollapsed(false);
+                        const target = document.querySelector(link.getAttribute('href'));
+                        if (target && window.bootstrap) bootstrap.Collapse.getOrCreateInstance(target, { toggle: false }).show();
+                    });
+                });
+            });
+        })();
+    </script>
+    <?php endif; ?>
     <!-- Notification toast + poller -->
     <?php if (isLoggedIn() && hasPermission('notifications.view')): ?>
         <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 1080">
@@ -607,5 +519,6 @@
 
 
 
+    <div class="app-main">
     <div class="container mt-4">
         <?php displayAlert(); ?>

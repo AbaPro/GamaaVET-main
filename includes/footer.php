@@ -1,16 +1,19 @@
         </div> <!-- Closing container div -->
 
-        <!-- Floating Webmail Button -->
-        <a href="https://webmail.gamma-vet.com" target="_blank" rel="noopener"
-           title="Webmail"
-           style="position:fixed;bottom:24px;left:24px;z-index:9999;
-                  width:52px;height:52px;border-radius:50%;
-                  background:linear-gradient(135deg,#0d6efd,#0a58ca);
-                  color:#fff;display:flex;align-items:center;justify-content:center;
-                  box-shadow:0 4px 14px rgba(13,110,253,.45);
-                  text-decoration:none;transition:transform .2s,box-shadow .2s;"
-           onmouseover="this.style.transform='scale(1.1)';this.style.boxShadow='0 6px 20px rgba(13,110,253,.6)'"
-           onmouseout="this.style.transform='scale(1)';this.style.boxShadow='0 4px 14px rgba(13,110,253,.45)'">
+        <!-- Floating Webmail Button: bottom-right, stacked above the ticket button when that is shown -->
+        <?php $hasTicketFab = isLoggedIn() && (hasPermission('tickets.create') || hasPermission('tickets.manage')) && (($_SESSION['login_region'] ?? 'factory') === 'factory'); ?>
+        <style>
+            #webmail-fab {
+                position: fixed; right: 24px; bottom: <?= $hasTicketFab ? '92px' : '24px' ?>; z-index: 1050;
+                width: 52px; height: 52px; border-radius: 50%;
+                background: linear-gradient(135deg, #20c997, #0f9d74);
+                color: #fff; display: flex; align-items: center; justify-content: center;
+                box-shadow: 0 4px 14px rgba(15, 157, 116, .45);
+                text-decoration: none; transition: transform .2s, box-shadow .2s;
+            }
+            #webmail-fab:hover, #webmail-fab:focus-visible { transform: scale(1.1); box-shadow: 0 6px 20px rgba(15, 157, 116, .6); color: #fff; }
+        </style>
+        <a id="webmail-fab" href="https://webmail.gamma-vet.com" target="_blank" rel="noopener" title="Webmail" aria-label="Webmail">
             <i class="fas fa-envelope" style="font-size:1.25rem;"></i>
         </a>
 
@@ -26,6 +29,7 @@
                 </div>
             </div>
         </footer>
+        </div> <!-- Closing app-main div -->
 
         <!-- Bootstrap 5 JS Bundle with Popper -->
         <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
