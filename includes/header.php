@@ -72,6 +72,7 @@
         $canViewActivityLogs = hasPermission('users.activity_logs.view');
         $canTickets = hasPermission('tickets.manage') || hasPermission('tickets.create') || hasPermission('tickets.view') || hasPermission('tickets.update_status');
         $canFinance = hasPermission('finance.deletions.approve')
+            || hasPermission('finance.deletions.request')
             || hasPermission('finance.expenses.manage')
             || hasPermission('finance.expenses.categories')
             || hasPermission('finance.customer_wallet.view')
@@ -79,14 +80,14 @@
             || hasPermission('finance.customer_payment.process')
             || hasPermission('finance.safes.create')
             || hasPermission('finance.safes.edit')
-            || hasPermission('finance.safes.delete')
+            || hasPermission('finance.safes.delete') || hasPermission('finance.safes.force_delete')
             || hasPermission('finance.safes.balance.edit')
             || hasPermission('finance.bank_accounts.create')
             || hasPermission('finance.bank_accounts.edit')
-            || hasPermission('finance.bank_accounts.delete')
+            || hasPermission('finance.bank_accounts.delete') || hasPermission('finance.bank_accounts.force_delete')
             || hasPermission('finance.bank_accounts.balance.edit')
             || hasPermission('finance.personal_accounts.create')
-            || hasPermission('finance.personal_accounts.delete')
+            || hasPermission('finance.personal_accounts.delete') || hasPermission('finance.personal_accounts.force_delete')
             || hasPermission('finance.transfers.create')
             || hasPermission('finance.transfers.approve')
             || ($login_region === 'factory' && (
@@ -127,6 +128,7 @@
             ]],
             ['key' => 'manufacturing', 'label' => 'Manufacturing', 'icon' => 'fa-industry', 'show' => hasPermission('manufacturing.view') && $isFactory, 'items' => [
                 ['label' => 'Orders List', 'icon' => 'fa-list', 'url' => 'modules/manufacturing/', 'show' => true],
+                ['label' => 'Deletion Requests', 'icon' => 'fa-check-circle', 'url' => 'modules/manufacturing/deletion_requests.php', 'show' => hasPermission('manufacturing.deletions.request') || hasPermission('manufacturing.deletions.approve')],
                 ['label' => 'Formulas', 'icon' => 'fa-flask', 'url' => 'modules/manufacturing/formulas.php', 'show' => true],
                 ['label' => 'Formula Templates', 'icon' => 'fa-layer-group', 'url' => 'modules/manufacturing/formula_templates.php', 'show' => hasPermission('manufacturing.formula.view_all')],
                 ['label' => 'Bottle Sizes', 'icon' => 'fa-wine-bottle', 'url' => 'modules/manufacturing/bottle_sizes.php', 'show' => true],
@@ -141,13 +143,13 @@
             ['key' => 'tickets', 'label' => 'Tickets', 'icon' => 'fa-ticket-alt', 'url' => 'modules/tickets/', 'show' => $canTickets && $isFactory],
             ['key' => 'finance', 'label' => 'Finance', 'icon' => 'fa-coins', 'show' => $canFinance && $login_region !== 'curva', 'items' => [
                 ['label' => 'Finance Dashboard', 'icon' => 'fa-gauge-high', 'url' => 'modules/finance/index.php', 'show' => true],
-                ['label' => 'Deletion Requests', 'icon' => 'fa-check-circle', 'url' => 'modules/finance/deletion_requests.php', 'show' => true],
+                ['label' => 'Deletion Requests', 'icon' => 'fa-check-circle', 'url' => 'modules/finance/deletion_requests.php', 'show' => hasPermission('finance.deletions.request') || hasPermission('finance.deletions.approve')],
                 ['label' => 'Customer Accounts', 'icon' => 'fa-wallet', 'url' => 'modules/finance/customers.php', 'show' => hasPermission('finance.customer_wallet.view') || hasPermission('finance.balances.settle')],
                 ['label' => 'Bills & Payments', 'icon' => 'fa-file-invoice-dollar', 'url' => 'modules/finance/bills.php', 'show' => hasPermission('finance.customer_payment.process')],
-                ['label' => 'Safes', 'icon' => 'fa-vault', 'url' => 'modules/finance/safes.php', 'show' => hasPermission('finance.safes.create') || hasPermission('finance.safes.edit') || hasPermission('finance.safes.delete') || hasPermission('finance.safes.balance.edit') || hasPermission('finance.balances.settle')],
-                ['label' => 'Bank Accounts', 'icon' => 'fa-university', 'url' => 'modules/finance/banks.php', 'show' => hasPermission('finance.bank_accounts.create') || hasPermission('finance.bank_accounts.edit') || hasPermission('finance.bank_accounts.delete') || hasPermission('finance.bank_accounts.balance.edit') || hasPermission('finance.balances.settle')],
-                ['label' => 'Personal Accounts', 'icon' => 'fa-user-shield', 'url' => 'modules/finance/personal.php', 'show' => hasPermission('finance.personal_accounts.create') || hasPermission('finance.personal_accounts.delete') || hasPermission('finance.balances.settle')],
-                ['label' => 'Transfers', 'icon' => 'fa-right-left', 'url' => 'modules/finance/transfers.php', 'show' => hasPermission('finance.transfers.create') || hasPermission('finance.transfers.approve')],
+                ['label' => 'Safes', 'icon' => 'fa-vault', 'url' => 'modules/finance/safes.php', 'show' => hasPermission('finance.safes.create') || hasPermission('finance.safes.edit') || hasPermission('finance.safes.delete') || hasPermission('finance.safes.force_delete') || hasPermission('finance.safes.balance.edit') || hasPermission('finance.balances.settle')],
+                ['label' => 'Bank Accounts', 'icon' => 'fa-university', 'url' => 'modules/finance/banks.php', 'show' => hasPermission('finance.bank_accounts.create') || hasPermission('finance.bank_accounts.edit') || hasPermission('finance.bank_accounts.delete') || hasPermission('finance.bank_accounts.force_delete') || hasPermission('finance.bank_accounts.balance.edit') || hasPermission('finance.balances.settle')],
+                ['label' => 'Personal Accounts', 'icon' => 'fa-user-shield', 'url' => 'modules/finance/personal.php', 'show' => hasPermission('finance.personal_accounts.create') || hasPermission('finance.personal_accounts.delete') || hasPermission('finance.personal_accounts.force_delete') || hasPermission('finance.balances.settle')],
+                ['label' => 'Transfers', 'icon' => 'fa-right-left', 'url' => 'modules/finance/transfers.php', 'show' => hasPermission('finance.transfers.create') || hasPermission('finance.transfers.approve') || hasPermission('finance.transfers.delete')],
                 ['label' => 'PO Payments', 'icon' => 'fa-file-contract', 'url' => 'modules/finance/po.php', 'show' => $isFactory && hasPermission('finance.po_payment.process')],
                 ['label' => 'Expenses Tracking', 'icon' => 'fa-money-bill-wave', 'url' => 'modules/finance/expenses/', 'show' => hasPermission('finance.expenses.view')],
                 ['label' => 'Vendor Wallets', 'icon' => 'fa-truck-field', 'url' => 'modules/finance/vendors.php', 'show' => $isFactory && (hasPermission('finance.vendor_wallet.view') || hasPermission('finance.balances.settle'))],

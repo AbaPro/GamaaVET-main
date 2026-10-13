@@ -12,7 +12,7 @@ if (!hasPermission('finance.expenses.manage')) {
 $expense_id = $_GET['id'] ?? 0;
 
 $expenseScope = getAccountScopeSql('e');
-$stmt = $pdo->prepare("SELECT e.*, ec.name as category_name, v.name as vendor_name FROM expenses e JOIN expense_categories ec ON e.category_id = ec.id LEFT JOIN vendors v ON e.vendor_id = v.id WHERE e.id = ? AND $expenseScope");
+$stmt = $pdo->prepare("SELECT e.*, COALESCE(ec.name, 'Uncategorized') as category_name, v.name as vendor_name FROM expenses e LEFT JOIN expense_categories ec ON e.category_id = ec.id LEFT JOIN vendors v ON e.vendor_id = v.id WHERE e.id = ? AND $expenseScope");
 $stmt->execute([$expense_id]);
 $expense = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -107,15 +107,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                  $stmt = $pdo->prepare("UPDATE purchase_orders SET paid_amount = paid_amount + ? WHERE id = ?");
                  $stmt->execute([$pay_amount, $expense['po_id']]);
                  
-                 $stmt = $pdo->prepare("INSERT INTO purchase_order_payments (purchase_order_id, amount, payment_method, reference, notes, transaction_date, safe_id, bank_account_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-                 $stmt->execute([$expense['po_id'], $pay_amount, $payment_method, $reference, 'Payment via expense: ' . $expense['name'], $transactionDate, $safe_id, $bank_account_id, $_SESSION['user_id']]);
+                 $stmt = $pdo->prepare("INSERT INTO purchase_order_payments (purchase_order_id, amount, payment_method, reference, notes, transaction_date, safe_id, bank_account_id, created_by, expense_payment_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                 $stmt->execute([$expense['po_id'], $pay_amount, $payment_method, $reference, 'Payment via expense: ' . $expense['name'], $transactionDate, $safe_id, $bank_account_id, $_SESSION['user_id'], $paymentId]);
             }
             
             // Vendor Wallet
             if (($_SESSION['login_region'] ?? 'factory') === 'factory' && $expense['vendor_id'] && $payment_method == 'wallet') {
-                 $vStmt = $pdo->prepare("SELECT wallet_balance FROM vendors WHERE id = ?");
+                 $vStmt = $pdo->prepare("SELECT wallet_balance, finance_account_closed_at FROM vendors WHERE id = ? FOR UPDATE");
                  $vStmt->execute([$expense['vendor_id']]);
-                 $v_balance = $vStmt->fetchColumn();
+                 $walletRow = $vStmt->fetch(PDO::FETCH_ASSOC);
+                 if (!empty($walletRow['finance_account_closed_at'])) throw new DomainException('Reopen the vendor finance account before spending its wallet balance.');
+                 $v_balance = $walletRow['wallet_balance'];
                  if ($v_balance < $pay_amount) {
                       throw new Exception("Insufficient vendor wallet balance.");
                  }

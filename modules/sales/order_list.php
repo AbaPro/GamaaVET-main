@@ -1,5 +1,6 @@
 <?php
 require_once '../../includes/auth.php';
+require_once __DIR__ . '/../finance/deletion_approval.php';
 require_once '../../includes/header.php';
 require_once '../../config/database.php';
 
@@ -106,7 +107,7 @@ $customers = $customerStmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Check if user has permission to view prices
 $canViewPrices = hasPermission('sales.orders.price.view');
-$canDeleteOrders = hasPermission('sales.orders.delete');
+$canDeleteOrders = hasPermission('sales.orders.delete') && hasPermission('finance.deletions.request');
 ?>
 
 <div class="container mt-4">
@@ -276,7 +277,7 @@ $canDeleteOrders = hasPermission('sales.orders.delete');
                                         <?php endif; ?>
                                         <a href="generate_invoice.php?id=<?= $order['id'] ?>" class="btn btn-sm btn-secondary" target="_blank">Invoice</a>
                                         <?php if ($canDeleteOrders): ?>
-                                            <button type="button" class="btn btn-sm btn-danger js-delete-order" data-id="<?= $order['id'] ?>" data-number="<?= htmlspecialchars($order['internal_id']) ?>">Delete</button>
+                                            <button type="button" class="btn btn-sm btn-danger js-delete-order" data-id="<?= $order['id'] ?>" data-number="<?= htmlspecialchars($order['internal_id']) ?>">Request Deletion</button>
                                         <?php endif; ?>
                                     </div>
                                 </td>
@@ -465,10 +466,13 @@ document.addEventListener('DOMContentLoaded', function () {
             const selectedIds = Array.from(document.querySelectorAll('.row-select:checked')).map(cb => cb.value);
             if (selectedIds.length === 0) return;
 
-            if (confirm(`Are you sure you want to delete ${selectedIds.length} selected orders?`)) {
+            if (confirm(`Request approval to delete ${selectedIds.length} selected orders?`)) {
                 const form = document.createElement('form');
                 form.method = 'POST';
                 form.action = 'bulk_delete.php';
+                const token = document.createElement('input');
+                token.type = 'hidden'; token.name = 'deletion_token'; token.value = <?= json_encode(financeDeletionToken()) ?>;
+                form.appendChild(token);
                 
                 selectedIds.forEach(id => {
                     const input = document.createElement('input');
@@ -489,10 +493,13 @@ document.addEventListener('DOMContentLoaded', function () {
         if (e.target && e.target.classList.contains('js-delete-order')) {
             const id = e.target.dataset.id;
             const number = e.target.dataset.number;
-            if (confirm(`Are you sure you want to delete order ${number}?`)) {
+            if (confirm(`Request approval to delete order ${number}?`)) {
                 const form = document.createElement('form');
                 form.method = 'POST';
                 form.action = 'bulk_delete.php';
+                const token = document.createElement('input');
+                token.type = 'hidden'; token.name = 'deletion_token'; token.value = <?= json_encode(financeDeletionToken()) ?>;
+                form.appendChild(token);
                 const input = document.createElement('input');
                 input.type = 'hidden';
                 input.name = 'order_ids[]';

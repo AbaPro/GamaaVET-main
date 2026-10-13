@@ -9,7 +9,7 @@ $canEdit = hasPermission('finance.bank_accounts.edit');
 $canDelete = hasPermission('finance.bank_accounts.delete');
 $canForceDelete = hasPermission('finance.bank_accounts.force_delete');
 $canSetBalance = canSettleFinanceBalances() || hasPermission('finance.bank_accounts.balance.edit');
-$canView = $canCreate || $canEdit || $canDelete || $canSetBalance
+$canView = $canCreate || $canEdit || $canDelete || $canForceDelete || $canSetBalance
     || hasPermission('finance.transfers.create') || hasPermission('finance.transfers.approve');
 
 if (!$canView) {
@@ -183,7 +183,7 @@ require_once '../../includes/header.php';
                     <a href="bank_details.php?id=<?= (int)$row['id']; ?>" class="btn btn-sm btn-outline-primary"><i class="fas fa-history me-1"></i>History</a>
                     <?php if ($canEdit): ?><button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editBankModal<?= (int)$row['id']; ?>"><i class="fas fa-pen me-1"></i>Edit</button><?php endif; ?>
                     <?php if ($canSetBalance): ?><a href="bank_details.php?id=<?= (int)$row['id']; ?>#set-balance" class="btn btn-sm btn-outline-warning"><i class="fas fa-scale-balanced me-1"></i>Set Balance</a><?php endif; ?>
-                    <?php if ($canDelete) renderFinanceAccountDeleteButton($row, $canForceDelete); ?>
+                    <?php if ($canDelete || $canForceDelete) renderFinanceAccountDeleteButton($row, $canForceDelete, $canDelete); ?>
                 </td>
             </tr>
         <?php endforeach; ?>

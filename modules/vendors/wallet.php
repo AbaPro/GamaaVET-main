@@ -1,6 +1,7 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+require_once __DIR__ . '/../finance/deletion_approval.php';
 require_once '../finance/account_balance_adjustments.php';
 
 $canManageVendorWallet = hasPermission('vendors.wallet');
@@ -23,7 +24,7 @@ $vendor_id = (int)$_GET['id'];
 $page_title = 'Vendor Wallet';
 
 // Get vendor info for header
-$vendor_sql = "SELECT name, wallet_balance FROM vendors WHERE id = ?";
+$vendor_sql = "SELECT id, name, wallet_balance, finance_account_closed_at FROM vendors WHERE id = ?";
 $vendor_stmt = $conn->prepare($vendor_sql);
 $vendor_stmt->bind_param("i", $vendor_id);
 $vendor_stmt->execute();
@@ -36,10 +37,18 @@ if ($vendor_result->num_rows === 0) {
 
 $vendor = $vendor_result->fetch_assoc();
 $vendor_stmt->close();
+$isFinanceAccountClosed = !empty($vendor['finance_account_closed_at']);
+if ($isFinanceAccountClosed && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    setAlert('danger', 'This finance account is closed. Reopen it before recording transactions or balances.');
+    redirect('wallet.php?id=' . $vendor_id);
+}
+
 $vendorBackUrl = hasPermission('vendors.view')
     ? 'view.php?id=' . $vendor_id
     : '../finance/vendors.php';
 $vendorBackLabel = hasPermission('vendors.view') ? 'Back to Vendor' : 'Back to Vendor Wallets';
+$canManageVendorWallet = $canManageVendorWallet && !$isFinanceAccountClosed;
+$canSetVendorBalance = $canSetVendorBalance && !$isFinanceAccountClosed;
 $formToken = financeAccountFormToken();
 handleFinanceAccountBalanceSettlement('vendor', $vendor_id, $canSetVendorBalance, 'wallet.php?id=' . $vendor_id);
 $balanceAdjustments = financeAccountBalanceAdjustments('vendor', $vendor_id);
@@ -79,6 +88,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $conn->begin_transaction();
 
     try {
+        $closedStmt = $conn->prepare('SELECT finance_account_closed_at FROM vendors WHERE id = ? FOR UPDATE');
+        $closedStmt->bind_param('i', $vendor_id);
+        $closedStmt->execute();
+        $closedAt = $closedStmt->get_result()->fetch_assoc()['finance_account_closed_at'];
+        $closedStmt->close();
+        if ($closedAt) throw new DomainException('Reopen this finance account before recording wallet transactions.');
+
         // Insert wallet transaction
         $transaction_sql = "INSERT INTO vendor_wallet_transactions
                            (vendor_id, amount, type, notes, transaction_date, created_by)
@@ -184,6 +200,8 @@ require_once '../../includes/header.php';
     <a href="<?php echo e($vendorBackUrl); ?>" class="btn btn-secondary"><?php echo e($vendorBackLabel); ?></a>
 </div>
 
+<?php renderFinanceAccountClosure('vendor_account', $vendor); ?>
+<?php if ($isFinanceAccountClosed): ?><div class="alert alert-info mt-3">This finance account is closed. Its vendor profile and financial history are retained.</div><?php endif; ?>
 <div class="row mb-4">
     <?php if ($canManageVendorWallet): ?>
     <div class="col-md-6">
@@ -256,7 +274,7 @@ require_once '../../includes/header.php';
     <div class="card-header"><h5 class="card-title mb-0">Balance Settlement History</h5></div>
     <div class="card-body"><div class="table-responsive">
         <table class="table table-hover align-middle mb-0">
-            <thead><tr><th>Date</th><th class="text-end">Previous</th><th class="text-end">New</th><th class="text-end">Change</th><th>Reason</th><th>Settled By</th></tr></thead>
+            <thead><tr><th>Date</th><th class="text-end">Previous</th><th class="text-end">New</th><th class="text-end">Change</th><th>Reason</th><th>Settled By</th><th>Actions</th></tr></thead>
             <tbody><?php foreach ($balanceAdjustments as $adjustment): $change = (float)$adjustment['new_balance'] - (float)$adjustment['previous_balance']; ?>
                 <tr>
                     <td><?php echo date('M d, Y', strtotime($adjustment['transaction_date'])); ?></td>
@@ -264,7 +282,7 @@ require_once '../../includes/header.php';
                     <td class="text-end fw-semibold"><?php echo number_format((float)$adjustment['new_balance'], 2); ?></td>
                     <td class="text-end <?php echo $change < 0 ? 'text-danger' : 'text-success'; ?>"><?php echo ($change > 0 ? '+' : '') . number_format($change, 2); ?></td>
                     <td><?php echo e($adjustment['reason']); ?></td>
-                    <td><?php echo e($adjustment['created_by_name'] ?: 'System'); ?></td>
+                    <td><?php echo e($adjustment['created_by_name'] ?: 'System'); ?></td><td><?php renderFinanceDeletionRequest('account_adjustment', $adjustment['id']); ?></td>
                 </tr>
             <?php endforeach; ?></tbody>
         </table>
@@ -287,7 +305,7 @@ require_once '../../includes/header.php';
                         <th>Amount</th>
                         <th>Notes</th>
                         <th>Attachment</th>
-                        <th>Processed By</th>
+                        <th>Processed By</th><th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -312,11 +330,14 @@ require_once '../../includes/header.php';
                                     ?>
                                 </td>
                                 <td><?php echo $transaction['created_by_name'] ? htmlspecialchars($transaction['created_by_name']) : 'System'; ?></td>
+                                <td><?php if ($transaction['source'] === 'wallet' && $transaction['reference_type'] === 'purchase_order' && $transaction['type'] !== 'payment'): ?>
+                                    <a class="btn btn-sm btn-outline-secondary" href="../purchases/po_details.php?id=<?= (int)$transaction['reference_id'] ?>">Reverse Source Receipt</a>
+                                <?php else: renderFinanceDeletionRequest($transaction['source'] === 'expense_payment' ? 'expense_payment' : 'vendor_transaction', $transaction['source_id']); endif; ?></td>
                             </tr>
                         <?php endwhile; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="6" class="text-center">No transactions found</td>
+                            <td colspan="7" class="text-center">No transactions found</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>

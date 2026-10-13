@@ -1,48 +1,6 @@
 <?php
-require_once '../../includes/auth.php';
-require_once '../../includes/functions.php';
+require_once __DIR__ . '/../../includes/auth.php';
+require_once __DIR__ . '/../../includes/functions.php';
+require_once __DIR__ . '/deletion_approval.php';
 
-if (!hasPermission('manufacturing.delete')) {
-    setAlert('danger', 'Access denied.');
-    redirect('packaging_options.php');
-}
-
-$id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
-if ($id <= 0) {
-    setAlert('danger', 'Invalid packaging option.');
-    redirect('packaging_options.php');
-}
-
-$optionStmt = $conn->prepare("SELECT customer_id FROM packaging_options WHERE id = ?");
-$optionStmt->bind_param('i', $id);
-$optionStmt->execute();
-$optionRow = $optionStmt->get_result()->fetch_assoc();
-$optionStmt->close();
-if (!$optionRow || !canAccessCustomer((int)$optionRow['customer_id'])) {
-    setAlert('danger', 'Packaging option not found in Factory.');
-    redirect('packaging_options.php');
-}
-
-// Guard: refuse if any order references this option
-$checkStmt = $conn->prepare("SELECT COUNT(*) FROM manufacturing_orders WHERE packaging_option_id = ?");
-$checkStmt->bind_param("i", $id);
-$checkStmt->execute();
-$checkStmt->bind_result($usageCount);
-$checkStmt->fetch();
-$checkStmt->close();
-
-if ($usageCount > 0) {
-    setAlert('danger', "Cannot delete: this packaging option is used by {$usageCount} manufacturing order(s).");
-    redirect('packaging_options.php');
-}
-
-try {
-    $stmt = $pdo->prepare("DELETE FROM packaging_options WHERE id = ?");
-    $stmt->execute([$id]);
-    logActivity("Deleted packaging option ID: $id", ['customer_id' => (int)$optionRow['customer_id']], 'delete', 'packaging_option', $id);
-    setAlert('success', 'Packaging option deleted.');
-} catch (Exception $e) {
-    setAlert('danger', 'Error: ' . $e->getMessage());
-}
-
-redirect('packaging_options.php');
+handleManufacturingDeletion('packaging_option');

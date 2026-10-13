@@ -2,6 +2,7 @@
 require_once '../../../includes/auth.php';
 require_once '../../../config/database.php';
 require_once '../../../includes/functions.php';
+require_once __DIR__ . '/../deletion_approval.php';
 
 if (!hasPermission('finance.expenses.view')) {
     setAlert('danger', 'Access denied.');
@@ -13,9 +14,9 @@ require_once '../../../includes/header.php';
 
 // Fetch Recurring Expenses
 $expenseScope = getAccountScopeSql('e');
-$sql = "SELECT e.*, ec.name as category_name, v.name as vendor_name, a.name as account_name
+$sql = "SELECT e.*, COALESCE(ec.name, 'Uncategorized') as category_name, v.name as vendor_name, a.name as account_name
         FROM expenses e
-        JOIN expense_categories ec ON e.category_id = ec.id
+        LEFT JOIN expense_categories ec ON e.category_id = ec.id
         LEFT JOIN vendors v ON e.vendor_id = v.id
         LEFT JOIN accounts a ON e.account_id = a.id
         WHERE e.is_recurring = 1 AND $expenseScope
@@ -131,6 +132,7 @@ unset($exp);
                                     <?php endif; ?>
                                 </td>
                                 <td class="text-end">
+                                    <?php renderFinanceDeletionRequest('expense', $exp['id']); ?>
                                     <div class="btn-group">
                                         <a href="details.php?id=<?= $exp['id'] ?>" class="btn btn-sm btn-outline-info">
                                             <i class="fas fa-eye"></i>

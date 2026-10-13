@@ -2,6 +2,7 @@
 require_once '../../includes/auth.php';
 require_once '../../config/database.php';
 require_once '../../includes/functions.php';
+require_once __DIR__ . '/deletion_approval.php';
 
 if (!hasPermission('finance.customer_payment.process')) {
     setAlert('danger', 'Access denied.');
@@ -192,6 +193,7 @@ $customers = $pdo->query($customerSql)->fetchAll(PDO::FETCH_ASSOC);
                                     ?>
                                 </td>
                                 <td class="text-center">
+                                    <?php renderFinanceDeletionRequest('sales_invoice', $row['id'], 'Request Invoice Deletion'); ?>
                                     <?php if ($balance > 0): ?>
                                         <a href="../../modules/sales/process_payment.php?order_id=<?= $row['id']; ?>" class="btn btn-sm btn-success px-3 shadow-sm">
                                             <i class="fas fa-credit-card me-1"></i> Pay

@@ -11,12 +11,12 @@ $canTransferAccess = $canCreateTransfers || hasPermission('finance.transfers.app
 // Mirror the access checks of each details page so every card we render opens.
 $canViewSafes = $canTransferAccess || $canSettle
     || hasPermission('finance.safes.create') || hasPermission('finance.safes.edit')
-    || hasPermission('finance.safes.delete') || hasPermission('finance.safes.balance.edit');
+    || hasPermission('finance.safes.delete') || hasPermission('finance.safes.force_delete') || hasPermission('finance.safes.balance.edit');
 $canViewBanks = $canTransferAccess || $canSettle
     || hasPermission('finance.bank_accounts.create') || hasPermission('finance.bank_accounts.edit')
-    || hasPermission('finance.bank_accounts.delete') || hasPermission('finance.bank_accounts.balance.edit');
+    || hasPermission('finance.bank_accounts.delete') || hasPermission('finance.bank_accounts.force_delete') || hasPermission('finance.bank_accounts.balance.edit');
 $canViewPersonal = $canTransferAccess || $canSettle
-    || hasPermission('finance.personal_accounts.create') || hasPermission('finance.personal_accounts.delete');
+    || hasPermission('finance.personal_accounts.create') || hasPermission('finance.personal_accounts.delete') || hasPermission('finance.personal_accounts.force_delete');
 $canViewRevenue = hasPermission('sales.orders.price.view');
 $canViewCogs = canViewProductCost('final');
 $canViewMaterialCost = $loginRegion === 'factory' && canViewProductCost('material');

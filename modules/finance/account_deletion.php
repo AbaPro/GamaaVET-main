@@ -148,17 +148,20 @@ function handleFinanceAccountDeletion($type, $canDelete, $returnPage, $canForceD
     redirect($returnPage);
 }
 
-function renderFinanceAccountDeleteButton(array $account, $canForceDelete = false) {
+function renderFinanceAccountDeleteButton(array $account, $canForceDelete = false, $canDelete = true) {
+    if (!hasPermission('finance.deletions.request')) return;
     if ((float)$account['balance'] != 0.0) {
         echo '<span class="d-inline-block"><button type="button" class="btn btn-sm btn-danger" disabled>Delete</button><small class="d-block text-muted">Balance must be zero to delete.</small></span>';
         return;
     }
     ?>
+    <?php if ($canDelete): ?>
     <form method="post" class="d-inline" onsubmit="return confirm('Request approval to delete this account? Accounts linked to financial records cannot be deleted.');">
         <input type="hidden" name="deletion_token" value="<?= htmlspecialchars(financeDeletionToken(), ENT_QUOTES, 'UTF-8'); ?>">
         <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['finance_account_delete_token'], ENT_QUOTES, 'UTF-8'); ?>">
         <button type="submit" name="delete_account" value="<?= (int)$account['id']; ?>" class="btn btn-sm btn-danger">Request Deletion</button>
     </form>
+    <?php endif; ?>
     <?php if ($canForceDelete): ?>
     <form method="post" class="d-inline" onsubmit="return confirm('Request approval to force delete this account even if it is linked to transfers, PO payments, or other financial records? Those historical records will remain but will point to a deleted account. This cannot be undone. Continue?');">
         <input type="hidden" name="deletion_token" value="<?= htmlspecialchars(financeDeletionToken(), ENT_QUOTES, 'UTF-8'); ?>">

@@ -1,6 +1,7 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+require_once __DIR__ . '/deletion_approval.php';
 
 if (!hasPermission('manufacturing.view')) {
     setAlert('danger', 'Access denied.');
@@ -112,10 +113,10 @@ if ($result) {
                                         <a href="bottle_size_edit.php?id=<?= $size['id']; ?>" class="btn btn-sm btn-outline-warning">
                                             <i class="fas fa-edit me-1"></i> Edit
                                         </a>
-                                        <?php if (hasPermission('manufacturing.delete')): ?>
+                                        <?php if (canRequestManufacturingDeletion()): ?>
                                             <a href="javascript:void(0)" class="btn btn-sm btn-outline-danger"
                                                onclick="confirmDelete(<?= $size['id']; ?>, '<?= htmlspecialchars($size['name']); ?>')">
-                                                <i class="fas fa-trash me-1"></i> Delete
+                                                <i class="fas fa-trash me-1"></i> Request Deletion
                                             </a>
                                         <?php endif; ?>
                                     </div>
@@ -137,8 +138,18 @@ if ($result) {
 
 <script>
     function confirmDelete(id, name) {
-        if (confirm('Delete bottle size "' + name + '"? This will unlink it from any existing orders.')) {
-            window.location.href = 'bottle_size_delete.php?id=' + id;
+        if (confirm('Request approval to delete bottle size "' + name + '"? It will remain unchanged until another authorized user approves deletion.')) {
+            const form = document.createElement('form');
+            form.method = 'post';
+            form.action = 'bottle_size_delete.php';
+            const values = {id: id, deletion_token: <?= json_encode(manufacturingDeletionToken()) ?>};
+            for (const [name, value] of Object.entries(values)) {
+                const input = document.createElement('input');
+                input.type = 'hidden'; input.name = name; input.value = value;
+                form.appendChild(input);
+            }
+            document.body.appendChild(form);
+            form.submit();
         }
     }
 

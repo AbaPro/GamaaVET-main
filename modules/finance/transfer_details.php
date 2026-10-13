@@ -1,9 +1,10 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+require_once __DIR__ . '/deletion_approval.php';
 require_once 'transfer_helpers.php';
 
-$canView = hasPermission('finance.transfers.create') || hasPermission('finance.transfers.approve');
+$canView = hasPermission('finance.transfers.create') || hasPermission('finance.transfers.approve') || hasPermission('finance.transfers.delete');
 if (!$canView) {
     setAlert('danger', 'Access denied.');
     redirect('../../dashboard.php');
@@ -67,6 +68,7 @@ require_once '../../includes/header.php';
 
 <div class="d-flex justify-content-between align-items-start mb-4">
     <div>
+        <?php renderFinanceDeletionRequest('transfer', $transferId); ?>
         <h2 class="mb-1"><?= e($transfer['transfer_reference']); ?></h2>
         <span class="badge bg-<?= $statusColors[$transfer['status']] ?? 'secondary'; ?> fs-6"><?= e(ucfirst($transfer['status'])); ?></span>
     </div>

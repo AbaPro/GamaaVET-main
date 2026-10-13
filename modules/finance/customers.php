@@ -1,6 +1,8 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+require_once __DIR__ . '/deletion_approval.php';
+$showClosed = isset($_GET['show_closed']);
 
 $canSettleBalances = hasPermission('finance.balances.settle');
 if (!hasPermission('finance.customer_wallet.view') && !$canSettleBalances) {
@@ -28,11 +30,13 @@ $sql = "SELECT c.*,
         ) order_totals ON order_totals.customer_id = c.id
         WHERE " . getCustomerChannelScopeSql('c', 'f') . "
         ORDER BY c.name";
+if (!$showClosed) $sql = str_replace('ORDER BY c.name', 'AND (c.finance_account_closed_at IS NULL OR c.wallet_balance <> 0 OR COALESCE(order_totals.outstanding_orders, 0) > 0) ORDER BY c.name', $sql);
 $result = $conn->query($sql);
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2>Customer Accounts</h2>
+    <a href="?<?= $showClosed ? '' : 'show_closed=1' ?>" class="btn btn-outline-secondary"><?= $showClosed ? 'Hide closed accounts' : 'Show closed accounts' ?></a>
 </div>
 
 <div class="card">
@@ -75,6 +79,7 @@ $result = $conn->query($sql);
                                 <a href="../../modules/customers/wallet.php?id=<?= $row['id']; ?>" class="btn btn-sm btn-primary">
                                     <i class="fas fa-wallet"></i> View Account
                                 </a>
+                                <?php renderFinanceAccountClosure('customer_account', $row); ?>
                                 <?php if ($canSettleBalances): ?><a href="../../modules/customers/wallet.php?id=<?= $row['id']; ?>#set-balance" class="btn btn-sm btn-outline-warning"><i class="fas fa-scale-balanced"></i> Set Balance</a><?php endif; ?>
                             </td>
                         </tr>

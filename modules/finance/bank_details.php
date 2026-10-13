@@ -1,11 +1,13 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+require_once __DIR__ . '/deletion_approval.php';
 require_once __DIR__ . '/account_balance_adjustments.php';
 
 if (!hasPermission('finance.bank_accounts.create')
     && !hasPermission('finance.bank_accounts.edit')
     && !hasPermission('finance.bank_accounts.delete')
+    && !hasPermission('finance.bank_accounts.force_delete')
     && !hasPermission('finance.bank_accounts.balance.edit')
     && !hasPermission('finance.balances.settle')
     && !hasPermission('finance.transfers.create')
@@ -441,7 +443,7 @@ require_once '../../includes/header.php';
                         <th>Notes</th>
                         <th>Attachments</th>
                         <th>Recorded By</th>
-                        <th class="text-end">Running Balance</th>
+                        <th class="text-end">Running Balance</th><th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -476,10 +478,16 @@ require_once '../../includes/header.php';
                                 <td class="text-end fw-bold <?= $transaction['running_balance'] < 0 ? 'text-danger' : ''; ?>">
                                     <?= e(formatCurrency($transaction['running_balance'], $currency)); ?>
                                 </td>
+                                <td><?php
+                                    $deleteTypes = ['order_payment_' => 'order_payment', 'wallet_payment_' => 'customer_transaction', 'expense_payment_' => 'expense_payment', 'po_payment_' => 'purchase_payment', 'transfer_' => 'transfer', 'balance_adjustment_' => 'account_adjustment'];
+                                    foreach ($deleteTypes as $prefix => $deleteType) {
+                                        if (strpos($transaction['source_key'], $prefix) === 0) { renderFinanceDeletionRequest($deleteType, $transaction['sort_id']); break; }
+                                    }
+                                ?></td>
                             </tr>
                         <?php endforeach; ?>
                     <?php else: ?>
-                        <tr><td colspan="10" class="text-center text-muted py-4">No transactions match the selected filters.</td></tr>
+                        <tr><td colspan="11" class="text-center text-muted py-4">No transactions match the selected filters.</td></tr>
                     <?php endif; ?>
                 </tbody>
             </table>

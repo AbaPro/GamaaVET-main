@@ -1,46 +1,6 @@
 <?php
-require_once '../../includes/auth.php';
-require_once '../../includes/functions.php';
+require_once __DIR__ . '/../../includes/auth.php';
+require_once __DIR__ . '/../../includes/functions.php';
+require_once __DIR__ . '/deletion_approval.php';
 
-if (!hasPermission('manufacturing.delete')) {
-    setAlert('danger', 'Access denied.');
-    redirect('../../dashboard.php');
-}
-
-$id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
-
-if ($id > 0) {
-    try {
-        $formulaStmt = $conn->prepare("SELECT customer_id FROM manufacturing_formulas WHERE id = ?");
-        $formulaStmt->bind_param('i', $id);
-        $formulaStmt->execute();
-        $formulaRow = $formulaStmt->get_result()->fetch_assoc();
-        $formulaStmt->close();
-        if (!$formulaRow || !canAccessCustomer((int)$formulaRow['customer_id'])) {
-            throw new Exception('Formula not found in Factory.');
-        }
-
-        // Check if formula is used in any orders
-        $checkStmt = $conn->prepare("SELECT COUNT(*) as count FROM manufacturing_orders WHERE formula_id = ?");
-        $checkStmt->bind_param("i", $id);
-        $checkStmt->execute();
-        $count = $checkStmt->get_result()->fetch_assoc()['count'];
-        
-        if ($count > 0) {
-            setAlert('danger', 'Cannot delete formula because it is requested by ' . $count . ' manufacturing order(s).');
-        } else {
-            $stmt = $conn->prepare("DELETE FROM manufacturing_formulas WHERE id = ?");
-            $stmt->bind_param("i", $id);
-            if ($stmt->execute()) {
-                logActivity("Deleted formula ID: $id", ['customer_id' => (int)$formulaRow['customer_id']], 'delete', 'formula', $id);
-                setAlert('success', 'Formula deleted successfully.');
-            } else {
-                setAlert('danger', 'Failed to delete formula.');
-            }
-        }
-    } catch (Exception $e) {
-        setAlert('danger', 'Error: ' . $e->getMessage());
-    }
-}
-
-redirect('formulas.php');
+handleManufacturingDeletion('formula');

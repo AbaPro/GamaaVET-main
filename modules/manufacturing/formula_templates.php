@@ -1,6 +1,7 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+require_once __DIR__ . '/deletion_approval.php';
 require_once '../../includes/formula_access.php';
 require_once 'lib.php';
 
@@ -115,11 +116,12 @@ require_once '../../includes/header.php';
                                         <a href="formula_template_edit.php?id=<?= (int)$template['id']; ?>" class="btn btn-sm btn-outline-warning">
                                             <i class="fas fa-edit me-1"></i> Edit
                                         </a>
-                                        <?php if (hasPermission('manufacturing.delete')): ?>
-                                            <form method="post" action="formula_template_delete.php" class="d-inline" onsubmit="return confirm('Delete this formula template? Existing formulas will not be changed.');">
+                                        <?php if (canRequestManufacturingDeletion()): ?>
+                                            <form method="post" action="formula_template_delete.php" class="d-inline" onsubmit="return confirm('Request approval to delete this formula template? Existing formulas will not be changed.');">
+                                                <input type="hidden" name="deletion_token" value="<?= htmlspecialchars(manufacturingDeletionToken(), ENT_QUOTES, 'UTF-8'); ?>">
                                                 <input type="hidden" name="id" value="<?= (int)$template['id']; ?>">
                                                 <button type="submit" class="btn btn-sm btn-outline-danger">
-                                                    <i class="fas fa-trash me-1"></i> Delete
+                                                    <i class="fas fa-trash me-1"></i> Request Deletion
                                                 </button>
                                             </form>
                                         <?php endif; ?>

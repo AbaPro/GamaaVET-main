@@ -2,6 +2,7 @@
 require_once '../../includes/auth.php';
 require_once '../../config/database.php';
 require_once '../../includes/functions.php';
+require_once __DIR__ . '/../finance/deletion_approval.php';
 
 // Permission check
 if (!hasPermission('purchases.view')) {
@@ -106,7 +107,7 @@ if (!empty($receipts)) {
     }
 }
 
-$canDeletePayments = hasPermission('finance.purchase_payments.delete');
+$canDeletePayments = hasPermission('finance.purchase_payments.delete') && hasPermission('finance.deletions.request');
 
 // Handle status update
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_status'])) {
@@ -301,11 +302,7 @@ require_once '../../includes/header.php';
                                         </td>
                                         <?php if ($canDeletePayments): ?>
                                             <td class="text-end">
-                                                <button type="button" class="btn btn-sm btn-outline-danger js-delete-payment"
-                                                        data-id="<?= $payment['id'] ?>"
-                                                        data-amount="<?= number_format($payment['amount'], 2) ?>">
-                                                    <i class="fas fa-trash"></i>
-                                                </button>
+                                                <?php renderFinanceDeletionRequest('purchase_payment', $payment['id']); ?>
                                             </td>
                                         <?php endif; ?>
                                     </tr>
@@ -400,7 +397,7 @@ require_once '../../includes/header.php';
             btn.addEventListener('click', function() {
                 const id = this.dataset.id;
                 const amount = this.dataset.amount;
-                if (confirm(`Are you sure you want to delete this payment of ${amount}? This will restore the PO balance and reverse wallet impacts if any.`)) {
+                if (confirm(`Request approval to delete this payment of ${amount}? This will restore the PO balance and reverse wallet impacts if any.`)) {
                     const form = document.createElement('form');
                     form.method = 'POST';
                     form.action = 'delete_payment.php';
@@ -411,6 +408,9 @@ require_once '../../includes/header.php';
                     input.value = id;
                     
                     form.appendChild(input);
+                    const token = document.createElement('input');
+                    token.type = 'hidden'; token.name = 'deletion_token'; token.value = <?= json_encode(financeDeletionToken()) ?>;
+                    form.appendChild(token);
                     document.body.appendChild(form);
                     form.submit();
                 }

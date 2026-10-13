@@ -2,6 +2,7 @@
 require_once '../../../includes/auth.php';
 require_once '../../../config/database.php';
 require_once '../../../includes/functions.php';
+require_once __DIR__ . '/../deletion_approval.php';
 
 if (!hasPermission('finance.expenses.view')) {
     setAlert('danger', 'Access denied.');
@@ -11,11 +12,11 @@ if (!hasPermission('finance.expenses.view')) {
 $expense_id = $_GET['id'] ?? 0;
 
 $expenseScope = getAccountScopeSql('e');
-$sql = "SELECT e.*, ec.name as category_name, u.name as creator_name, v.name as vendor_name,
+$sql = "SELECT e.*, COALESCE(ec.name, 'Uncategorized') as category_name, COALESCE(u.name, 'Deleted user') as creator_name, v.name as vendor_name,
                po.id as po_id, po.status as po_status, a.name as account_name
         FROM expenses e
-        JOIN expense_categories ec ON e.category_id = ec.id
-        JOIN users u ON e.created_by = u.id
+        LEFT JOIN expense_categories ec ON e.category_id = ec.id
+        LEFT JOIN users u ON e.created_by = u.id
         LEFT JOIN vendors v ON e.vendor_id = v.id
         LEFT JOIN purchase_orders po ON e.po_id = po.id
         LEFT JOIN accounts a ON e.account_id = a.id
@@ -33,9 +34,9 @@ if (!$expense) {
 $safeScope = getSafeScopeSql('s');
 $bankScope = getAccountScopeSql('b');
 $safePaymentScope = getSafeReferenceScopeSql('ep.safe_id');
-$sql_payments = "SELECT ep.*, u.name as recorder_name, s.name as safe_name, b.bank_name, b.account_number
+$sql_payments = "SELECT ep.*, COALESCE(u.name, 'Deleted user') as recorder_name, s.name as safe_name, b.bank_name, b.account_number
                  FROM expense_payments ep
-                 JOIN users u ON ep.created_by = u.id
+                 LEFT JOIN users u ON ep.created_by = u.id
                  LEFT JOIN safes s ON ep.safe_id = s.id AND $safeScope
                  LEFT JOIN bank_accounts b ON ep.bank_account_id = b.id AND $bankScope
                  WHERE ep.expense_id = ? AND $safePaymentScope
@@ -69,9 +70,11 @@ require_once '../../../includes/header.php';
                 <a href="create.php?edit=<?= $expense['id'] ?>" class="btn btn-warning me-2">
                     <i class="fas fa-edit me-1"></i> Edit
                 </a>
+                <?php if (hasPermission('finance.deletions.request')): ?>
                 <button type="button" class="btn btn-danger" onclick="confirmDelete(<?= $expense['id'] ?>)">
-                    <i class="fas fa-trash me-1"></i> Delete
+                    <i class="fas fa-trash me-1"></i> Request Deletion
                 </button>
+                <?php endif; ?>
             <?php endif; ?>
         </div>
     </div>
@@ -193,7 +196,7 @@ require_once '../../../includes/header.php';
                                     <th>Reference</th>
                                     <th>Image</th>
                                     <th>Amount</th>
-                                    <th class="pe-3">Recorder</th>
+                                    <th class="pe-3">Recorder</th><th>Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -213,12 +216,12 @@ require_once '../../../includes/header.php';
                                     <td><?= htmlspecialchars($p['reference'] ?: '-') ?></td>
                                     <td><?= renderAttachmentThumbnails($paymentAttachments[$p['id']] ?? [], 'file_path', 'original_name', '../../../') ?></td>
                                     <td class="fw-bold text-success"><?= number_format($p['amount'], 2) ?></td>
-                                    <td class="pe-3 small"><?= htmlspecialchars($p['recorder_name']) ?></td>
+                                    <td class="pe-3 small"><?= htmlspecialchars($p['recorder_name']) ?></td><td><?php renderFinanceDeletionRequest('expense_payment', $p['id']); ?></td>
                                 </tr>
                                 <?php endforeach; ?>
                                 <?php if (empty($payments)): ?>
                                 <tr>
-                                    <td colspan="7" class="text-center py-4 text-muted">No payments recorded yet.</td>
+                                    <td colspan="8" class="text-center py-4 text-muted">No payments recorded yet.</td>
                                 </tr>
                                 <?php endif; ?>
                             </tbody>

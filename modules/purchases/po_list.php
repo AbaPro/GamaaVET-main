@@ -1,5 +1,6 @@
 <?php
 require_once '../../includes/auth.php';
+require_once __DIR__ . '/../finance/deletion_approval.php';
 require_once '../../includes/header.php';
 require_once '../../config/database.php';
 
@@ -73,7 +74,7 @@ $purchase_orders = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $vendors = $pdo->query("SELECT id, name FROM vendors ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 
 $canViewPrices = hasPermission('purchases.po.price.view');
-$canDeletePO = hasPermission('purchases.orders.delete');
+$canDeletePO = hasPermission('purchases.orders.delete') && hasPermission('finance.deletions.request');
 $canViewPODetails = hasPermission('purchases.view');
 $poExportHeaders = $canViewPODetails ? ['Product', 'SKU', 'Quantity Ordered', 'Quantity Received'] : [];
 if ($canViewPODetails && $canViewPrices) $poExportHeaders = array_merge($poExportHeaders, ['Unit Price', 'Line Total']);
@@ -237,7 +238,7 @@ if ($canViewPODetails && $purchase_orders) {
                                             <a href="process_payment.php?po_id=<?= $po['id'] ?>" class="btn btn-sm btn-primary">Payment</a>
                                         <?php endif; ?>
                                         <?php if ($canDeletePO): ?>
-                                            <button type="button" class="btn btn-sm btn-danger js-delete-po" data-id="<?= $po['id'] ?>">Delete</button>
+                                            <button type="button" class="btn btn-sm btn-danger js-delete-po" data-id="<?= $po['id'] ?>">Request Deletion</button>
                                         <?php endif; ?>
                                     </div>
                                 </td>
@@ -410,10 +411,13 @@ document.addEventListener('DOMContentLoaded', function () {
             const selectedIds = Array.from(document.querySelectorAll('.row-select:checked')).map(cb => cb.value);
             if (selectedIds.length === 0) return;
 
-            if (confirm(`Are you sure you want to delete ${selectedIds.length} selected POs? This action cannot be reversed.`)) {
+            if (confirm(`Request approval to delete ${selectedIds.length} selected POs? Records remain unchanged until approval.`)) {
                 const form = document.createElement('form');
                 form.method = 'POST';
                 form.action = 'bulk_delete.php';
+                const token = document.createElement('input');
+                token.type = 'hidden'; token.name = 'deletion_token'; token.value = <?= json_encode(financeDeletionToken()) ?>;
+                form.appendChild(token);
                 selectedIds.forEach(id => {
                     const input = document.createElement('input');
                     input.type = 'hidden';
@@ -431,10 +435,13 @@ document.addEventListener('DOMContentLoaded', function () {
     document.addEventListener('click', function(e) {
         if (e.target && e.target.classList.contains('js-delete-po')) {
             const id = e.target.dataset.id;
-            if (confirm(`Are you sure you want to delete PO #${id}?`)) {
+            if (confirm(`Request approval to delete PO #${id}?`)) {
                 const form = document.createElement('form');
                 form.method = 'POST';
                 form.action = 'bulk_delete.php';
+                const token = document.createElement('input');
+                token.type = 'hidden'; token.name = 'deletion_token'; token.value = <?= json_encode(financeDeletionToken()) ?>;
+                form.appendChild(token);
                 const input = document.createElement('input');
                 input.type = 'hidden';
                 input.name = 'order_ids[]';

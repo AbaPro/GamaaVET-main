@@ -188,9 +188,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 // If payment is from wallet, update customer wallet
                 if ($payment_method == 'wallet') {
                     // Recheck wallet balance to be safe
-                    $stmtWallet = $pdo->prepare("SELECT wallet_balance FROM customers WHERE id = ?");
+                    $stmtWallet = $pdo->prepare("SELECT wallet_balance, finance_account_closed_at FROM customers WHERE id = ? FOR UPDATE");
                     $stmtWallet->execute([$order['customer_id']]);
-                    $current_wallet = $stmtWallet->fetchColumn();
+                    $walletRow = $stmtWallet->fetch(PDO::FETCH_ASSOC);
+                    if (!empty($walletRow['finance_account_closed_at'])) throw new DomainException('Reopen the customer finance account before spending its wallet balance.');
+                    $current_wallet = $walletRow['wallet_balance'];
                     
                     if ($current_wallet < $amount) {
                         throw new Exception("Insufficient wallet balance.");

@@ -1,6 +1,7 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+require_once __DIR__ . '/deletion_approval.php';
 
 if (!hasPermission('manufacturing.view')) {
     setAlert('danger', 'Access denied.');
@@ -255,10 +256,10 @@ if (!empty($stepIds)) {
                                                 <i class="fas fa-edit me-1"></i> Edit
                                             </a>
                                         <?php endif; ?>
-                                        <?php if (hasPermission('manufacturing.delete')): ?>
+                                        <?php if (canRequestManufacturingDeletion()): ?>
                                             <a href="javascript:void(0)" class="btn btn-sm btn-outline-danger" 
                                                onclick="confirmDelete(<?= $order['id']; ?>, '<?= htmlspecialchars($order['order_number']); ?>')">
-                                                <i class="fas fa-trash me-1"></i> Delete
+                                                <i class="fas fa-trash me-1"></i> Request Deletion
                                             </a>
                                         <?php endif; ?>
                                     </div>
@@ -305,8 +306,18 @@ if (!empty($stepIds)) {
     });
 
     function confirmDelete(id, orderNumber) {
-        if (confirm('Are you sure you want to delete manufacturing order #' + orderNumber + '? This will also delete all steps, and documents associated with this order. This action cannot be undone.')) {
-            window.location.href = 'delete.php?id=' + id;
+        if (confirm('Request approval to delete manufacturing order #' + orderNumber + '? The order and its related data will remain until another authorized user approves deletion.')) {
+            const form = document.createElement('form');
+            form.method = 'post';
+            form.action = 'delete.php';
+            const values = {id: id, deletion_token: <?= json_encode(manufacturingDeletionToken()) ?>};
+            for (const [name, value] of Object.entries(values)) {
+                const input = document.createElement('input');
+                input.type = 'hidden'; input.name = name; input.value = value;
+                form.appendChild(input);
+            }
+            document.body.appendChild(form);
+            form.submit();
         }
     }
 </script>

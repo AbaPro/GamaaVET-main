@@ -1,35 +1,6 @@
 <?php
-require_once '../../includes/auth.php';
-require_once '../../includes/functions.php';
-require_once '../../includes/formula_access.php';
-require_once 'lib.php';
+require_once __DIR__ . '/../../includes/auth.php';
+require_once __DIR__ . '/../../includes/functions.php';
+require_once __DIR__ . '/deletion_approval.php';
 
-if (!hasPermission('manufacturing.view') || !hasPermission('manufacturing.formula.view_all') || !hasPermission('manufacturing.delete')) {
-    setAlert('danger', 'Access denied.');
-    redirect('../../dashboard.php');
-}
-if (!areFormulasUnlocked()) {
-    setAlert('info', 'Please unlock formulas first.');
-    redirect('formulas.php');
-}
-if (!manufacturing_table_exists($conn, 'manufacturing_formula_templates')) {
-    setAlert('warning', 'Formula templates are not installed yet. Apply the formula templates migration.');
-    redirect('formulas.php');
-}
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    redirect('formula_templates.php');
-}
-
-$id = isset($_POST['id']) ? (int)$_POST['id'] : 0;
-if ($id <= 0) {
-    setAlert('danger', 'Invalid formula template.');
-    redirect('formula_templates.php');
-}
-
-$stmt = $pdo->prepare('DELETE FROM manufacturing_formula_templates WHERE id = ?');
-$stmt->execute([$id]);
-if ($stmt->rowCount()) {
-    logActivity("Deleted formula template ID: $id", null, 'delete', 'formula_template', $id);
-}
-setAlert($stmt->rowCount() ? 'success' : 'warning', $stmt->rowCount() ? 'Formula template deleted. Existing formulas were not changed.' : 'Formula template not found.');
-redirect('formula_templates.php');
+handleManufacturingDeletion('template');

@@ -1,6 +1,7 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+require_once __DIR__ . '/../finance/deletion_approval.php';
 require_once '../finance/account_balance_adjustments.php';
 
 $canManageCustomerWallet = hasPermission('customers.wallet') || hasPermission('finance.customer_payment.process');
@@ -28,7 +29,7 @@ if (!canAccessCustomer($customer_id) || !isCustomerInCurrentChannel($customer_id
 $page_title = 'Customer Account';
 
 // Get customer info for header
-$customer_sql = "SELECT name, wallet_balance FROM customers WHERE id = ?";
+$customer_sql = "SELECT id, name, wallet_balance, finance_account_closed_at FROM customers WHERE id = ?";
 $customer_stmt = $conn->prepare($customer_sql);
 $customer_stmt->bind_param("i", $customer_id);
 $customer_stmt->execute();
@@ -41,6 +42,14 @@ if ($customer_result->num_rows === 0) {
 
 $customer = $customer_result->fetch_assoc();
 $customer_stmt->close();
+$isFinanceAccountClosed = !empty($customer['finance_account_closed_at']);
+if ($isFinanceAccountClosed && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    setAlert('danger', 'This finance account is closed. Reopen it before recording transactions or balances.');
+    redirect('wallet.php?id=' . $customer_id);
+}
+
+$canManageCustomerWallet = $canManageCustomerWallet && !$isFinanceAccountClosed;
+$canAdjustCustomerWalletBalance = $canAdjustCustomerWalletBalance && !$isFinanceAccountClosed;
 $walletBalanceAdjustmentStorageReady = tableExists('customer_wallet_balance_adjustments');
 $financeBalanceFormToken = financeAccountFormToken();
 
@@ -91,7 +100,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['set_wallet_balance'])
     $conn->begin_transaction();
 
     try {
-        $balanceStmt = $conn->prepare("SELECT wallet_balance FROM customers WHERE id = ? FOR UPDATE");
+        $balanceStmt = $conn->prepare("SELECT wallet_balance, finance_account_closed_at FROM customers WHERE id = ? FOR UPDATE");
         $balanceStmt->bind_param('i', $customer_id);
         $balanceStmt->execute();
         $balanceRow = $balanceStmt->get_result()->fetch_assoc();
@@ -101,6 +110,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['set_wallet_balance'])
             throw new Exception('Customer not found.');
         }
 
+        if (!empty($balanceRow['finance_account_closed_at'])) throw new DomainException('Reopen this finance account before changing its balance.');
         $previousBalance = round((float)$balanceRow['wallet_balance'], 2);
         if (abs($previousBalance - $newBalance) < 0.005) {
             $conn->rollback();
@@ -209,6 +219,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $conn->begin_transaction();
 
     try {
+        $closedStmt = $conn->prepare('SELECT finance_account_closed_at FROM customers WHERE id = ? FOR UPDATE');
+        $closedStmt->bind_param('i', $customer_id);
+        $closedStmt->execute();
+        $closedAt = $closedStmt->get_result()->fetch_assoc()['finance_account_closed_at'];
+        $closedStmt->close();
+        if ($closedAt) throw new DomainException('Reopen this finance account before recording wallet transactions.');
+
         // Insert wallet transaction
         $transaction_sql = "INSERT INTO customer_wallet_transactions
                            (customer_id, amount, type, notes, transaction_date, payment_method, safe_id, bank_account_id, reference_type, created_by)
@@ -411,6 +428,8 @@ require_once '../../includes/header.php';
 </div>
 <p class="text-muted mb-4">Positive wallet balances are customer credit; negative balances are customer debt. Cash and bank down payments are shown in Order Payment History below and reduce the outstanding order balance. Direct administrative balance changes are listed separately.</p>
 
+<?php renderFinanceAccountClosure('customer_account', $customer); ?>
+<?php if ($isFinanceAccountClosed): ?><div class="alert alert-info mt-3">This finance account is closed. Its customer profile and financial history are retained.</div><?php endif; ?>
 <div class="row mb-4">
     <?php if ($canManageCustomerWallet): ?>
     <div class="col-md-6">
@@ -541,7 +560,7 @@ require_once '../../includes/header.php';
                         <th>Destination</th>
                         <th>Notes</th>
                         <th>Processed By</th>
-                        <th>Running Balance</th>
+                        <th>Running Balance</th><th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -566,11 +585,12 @@ require_once '../../includes/header.php';
                                 <td><?php echo $transaction['notes'] ? e($transaction['notes']) : '-'; ?></td>
                                 <td><?php echo $transaction['created_by_name'] ? e($transaction['created_by_name']) : 'System'; ?></td>
                                 <td><?php echo number_format($transaction['running_balance'], 2); ?></td>
+                                <td><?php renderFinanceDeletionRequest('customer_transaction', $transaction['id']); ?></td>
                             </tr>
                         <?php endforeach; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="8" class="text-center">No transactions found</td>
+                            <td colspan="9" class="text-center">No transactions found</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>
@@ -595,7 +615,7 @@ require_once '../../includes/header.php';
                         <th>Destination</th>
                         <th>Reference</th>
                         <th>Notes</th>
-                        <th>Processed By</th>
+                        <th>Processed By</th><th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -614,11 +634,12 @@ require_once '../../includes/header.php';
                                 <td><?php echo $payment['reference'] ? e($payment['reference']) : '-'; ?></td>
                                 <td><?php echo $payment['notes'] ? e($payment['notes']) : '-'; ?></td>
                                 <td><?php echo $payment['created_by_name'] ? e($payment['created_by_name']) : 'System'; ?></td>
+                            <td><?php renderFinanceDeletionRequest('order_payment', $payment['id']); ?></td>
                             </tr>
                         <?php endforeach; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="8" class="text-center">No order payments found</td>
+                            <td colspan="9" class="text-center">No order payments found</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>
@@ -642,7 +663,7 @@ require_once '../../includes/header.php';
                         <th>New Balance</th>
                         <th>Change</th>
                         <th>Reason</th>
-                        <th>Changed By</th>
+                        <th>Changed By</th><th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -658,11 +679,12 @@ require_once '../../includes/header.php';
                                 </td>
                                 <td><?php echo e($adjustment['reason']); ?></td>
                                 <td><?php echo $adjustment['created_by_name'] ? e($adjustment['created_by_name']) : 'System'; ?></td>
+                            <td><?php renderFinanceDeletionRequest('customer_adjustment', $adjustment['id']); ?></td>
                             </tr>
                         <?php endforeach; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="6" class="text-center">No direct balance adjustments found</td>
+                            <td colspan="7" class="text-center">No direct balance adjustments found</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>

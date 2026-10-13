@@ -1,11 +1,12 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+require_once __DIR__ . '/deletion_approval.php';
 require_once 'transfer_helpers.php';
 
 $canCreateTransfers = hasPermission('finance.transfers.create');
 $canApproveTransfers = hasPermission('finance.transfers.approve');
-if (!$canCreateTransfers && !$canApproveTransfers) {
+if (!$canCreateTransfers && !$canApproveTransfers && !hasPermission('finance.transfers.delete')) {
     setAlert('danger', 'Access denied.');
     redirect('../../dashboard.php');
 }
@@ -343,6 +344,7 @@ require_once '../../includes/header.php';
                             <td><?= date('M d, Y', strtotime($row['transaction_date'])); ?></td>
                             <td>
                                 <a href="transfer_details.php?id=<?= (int)$row['id']; ?>" class="btn btn-sm btn-outline-info mb-1">Details</a>
+                                <?php renderFinanceDeletionRequest('transfer', $row['id']); ?>
                                 <?php if ($mayApprove): ?>
                                     <form action="approve_transfer.php" method="post" class="d-inline" onsubmit="return confirm('Approve this transfer and move the money now?');">
                                         <input type="hidden" name="id" value="<?= (int)$row['id']; ?>">

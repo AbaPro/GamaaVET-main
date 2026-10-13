@@ -1,6 +1,7 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+require_once __DIR__ . '/deletion_approval.php';
 
 if (!hasPermission('finance.po_payment.process')) {
     setAlert('danger', 'Access denied.');
@@ -47,6 +48,7 @@ $result = $conn->query($sql);
                         <td class="<?= $balance > 0 ? 'text-danger fw-semibold' : 'text-success'; ?>"><?= number_format($balance, 2); ?></td>
                         <td><span class="badge bg-info"><?= $row['status']; ?></span></td>
                         <td>
+                            <?php renderFinanceDeletionRequest('purchase_invoice', $row['id'], 'Request Invoice Deletion'); ?>
                             <?php if ($canViewPODetails): ?>
                                 <a href="../purchases/po_details.php?id=<?= (int)$row['id']; ?>" class="btn btn-sm btn-outline-info">
                                     <i class="fas fa-eye"></i> View PO

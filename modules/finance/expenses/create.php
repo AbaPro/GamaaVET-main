@@ -152,16 +152,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt->execute([$pay_amount, $po_id]);
                     
                     // Add PO payment record
-                    $stmt = $pdo->prepare("INSERT INTO purchase_order_payments (purchase_order_id, amount, payment_method, reference, notes, transaction_date, safe_id, bank_account_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-                    $stmt->execute([$po_id, $pay_amount, $payment_method, $reference, 'Payment via expense: ' . $name, $transactionDate, $safe_id, $bank_account_id, $_SESSION['user_id']]);
+                    $stmt = $pdo->prepare("INSERT INTO purchase_order_payments (purchase_order_id, amount, payment_method, reference, notes, transaction_date, safe_id, bank_account_id, created_by, expense_payment_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                    $stmt->execute([$po_id, $pay_amount, $payment_method, $reference, 'Payment via expense: ' . $name, $transactionDate, $safe_id, $bank_account_id, $_SESSION['user_id'], $paymentId]);
                 }
 
                 // Update Vendor Wallet if applicable
                 if ($vendor_id && $payment_method == 'wallet') {
                      // Check wallet balance
-                     $vStmt = $pdo->prepare("SELECT wallet_balance FROM vendors WHERE id = ?");
+                     $vStmt = $pdo->prepare("SELECT wallet_balance, finance_account_closed_at FROM vendors WHERE id = ? FOR UPDATE");
                      $vStmt->execute([$vendor_id]);
-                     $v_balance = $vStmt->fetchColumn();
+                     $walletRow = $vStmt->fetch(PDO::FETCH_ASSOC);
+                 if (!empty($walletRow['finance_account_closed_at'])) throw new DomainException('Reopen the vendor finance account before spending its wallet balance.');
+                 $v_balance = $walletRow['wallet_balance'];
                      if ($v_balance < $pay_amount) {
                          throw new Exception("Insufficient vendor wallet balance.");
                      }

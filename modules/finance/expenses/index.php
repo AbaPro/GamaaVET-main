@@ -2,6 +2,7 @@
 require_once '../../../includes/auth.php';
 require_once '../../../config/database.php';
 require_once '../../../includes/functions.php';
+require_once __DIR__ . '/../deletion_approval.php';
 
 if (!hasPermission('finance.expenses.view')) {
     setAlert('danger', 'Access denied.');
@@ -109,12 +110,12 @@ $where_sql = !empty($where) ? "WHERE " . implode(" AND ", $where) : "";
 
 // ── Per-currency summary cards ─────────────────────────────────────────────
 // ── Main expense listing ───────────────────────────────────────────────────
-$sql = "SELECT e.*, ec.name as category_name, u.name as creator_name, v.name as vendor_name,
+$sql = "SELECT e.*, COALESCE(ec.name, 'Uncategorized') as category_name, COALESCE(u.name, 'Deleted user') as creator_name, v.name as vendor_name,
                a.name as account_name,
                (SELECT MAX(ep.transaction_date) FROM expense_payments ep WHERE ep.expense_id = e.id) as last_payment_date
         FROM expenses e
-        JOIN expense_categories ec ON e.category_id = ec.id
-        JOIN users u ON e.created_by = u.id
+        LEFT JOIN expense_categories ec ON e.category_id = ec.id
+        LEFT JOIN users u ON e.created_by = u.id
         LEFT JOIN vendors v ON e.vendor_id = v.id
         LEFT JOIN accounts a ON e.account_id = a.id
         $where_sql
@@ -391,6 +392,7 @@ $currency_symbols = ['EGP' => 'ج.م', 'USD' => '$', 'EUR' => '€', 'SAR' => '�
                                     </span>
                                 </td>
                                 <td class="text-end">
+                                    <?php renderFinanceDeletionRequest('expense', $exp['id']); ?>
                                     <div class="btn-group">
                                         <a href="details.php?id=<?= $exp['id'] ?>" class="btn btn-sm btn-outline-info" title="View Details">
                                             <i class="fas fa-eye"></i>

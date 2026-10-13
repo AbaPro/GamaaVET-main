@@ -1,10 +1,12 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+require_once __DIR__ . '/deletion_approval.php';
 require_once __DIR__ . '/account_balance_adjustments.php';
 
 if (!hasPermission('finance.personal_accounts.create')
     && !hasPermission('finance.personal_accounts.delete')
+    && !hasPermission('finance.personal_accounts.force_delete')
     && !hasPermission('finance.balances.settle')
     && !hasPermission('finance.transfers.create')
     && !hasPermission('finance.transfers.approve')) {
@@ -175,7 +177,7 @@ require_once '../../includes/header.php';
     <div class="card-header bg-white py-3"><h5 class="mb-0"><i class="fas fa-scale-balanced me-2"></i>Balance Settlement History</h5></div>
     <div class="card-body"><div class="table-responsive">
         <table class="table table-hover align-middle mb-0">
-            <thead class="table-light"><tr><th>Date</th><th class="text-end">Previous</th><th class="text-end">New</th><th class="text-end">Change</th><th>Reason</th><th>Settled By</th></tr></thead>
+            <thead class="table-light"><tr><th>Date</th><th class="text-end">Previous</th><th class="text-end">New</th><th class="text-end">Change</th><th>Reason</th><th>Settled By</th><th>Actions</th></tr></thead>
             <tbody><?php foreach ($balanceAdjustments as $adjustment): $change = (float)$adjustment['new_balance'] - (float)$adjustment['previous_balance']; ?>
                 <tr>
                     <td><?= date('M d, Y', strtotime($adjustment['transaction_date'])); ?></td>
@@ -183,7 +185,7 @@ require_once '../../includes/header.php';
                     <td class="text-end fw-semibold"><?= number_format((float)$adjustment['new_balance'], 2); ?></td>
                     <td class="text-end <?= $change < 0 ? 'text-danger' : 'text-success'; ?>"><?= ($change > 0 ? '+' : '') . number_format($change, 2); ?></td>
                     <td><?= e($adjustment['reason']); ?></td>
-                    <td><?= e($adjustment['created_by_name'] ?: 'System'); ?></td>
+                    <td><?= e($adjustment['created_by_name'] ?: 'System'); ?></td><td><?php renderFinanceDeletionRequest('account_adjustment', $adjustment['id']); ?></td>
                 </tr>
             <?php endforeach; ?></tbody>
         </table>
@@ -201,7 +203,7 @@ require_once '../../includes/header.php';
                         <th>Date</th><th>Reference</th><th>Status</th><th>Direction</th><th>From / To</th>
                         <th class="text-end">Received</th><th class="text-end">Spent</th><th>Reason</th>
                         <th>PO / Ticket</th><th>Requested By</th><th>Approved By</th><th>Images</th>
-                        <th class="text-end">Running Balance</th>
+                        <th class="text-end">Running Balance</th><th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -228,11 +230,11 @@ require_once '../../includes/header.php';
                                 <td><?= e($transfer['requested_by_name'] ?: 'System'); ?></td>
                                 <td><?= e($transfer['approved_by_name'] ?: '-'); ?></td>
                                 <td><?= renderAttachmentThumbnails($transferImages[(int)$transfer['id']] ?? []); ?></td>
-                                <td class="text-end fw-bold"><?= $transfer['running_balance'] !== null ? number_format($transfer['running_balance'], 2) : '-'; ?></td>
+                                <td class="text-end fw-bold"><?= $transfer['running_balance'] !== null ? number_format($transfer['running_balance'], 2) : '-'; ?></td><td><?php renderFinanceDeletionRequest(isset($transfer['po_payment_id']) ? 'purchase_payment' : 'transfer', $transfer['po_payment_id'] ?? $transfer['id']); ?></td>
                             </tr>
                         <?php endforeach; ?>
                     <?php else: ?>
-                        <tr><td colspan="13" class="text-center text-muted py-4">No transaction history for this personal account.</td></tr>
+                        <tr><td colspan="14" class="text-center text-muted py-4">No transaction history for this personal account.</td></tr>
                     <?php endif; ?>
                 </tbody>
             </table>

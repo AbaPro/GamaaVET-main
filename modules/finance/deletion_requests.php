@@ -3,6 +3,11 @@ require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
 require_once __DIR__ . '/deletion_approval.php';
 $canApprove = hasPermission('finance.deletions.approve');
+if (!$canApprove && !hasPermission('finance.deletions.request')) {
+    setAlert('danger', 'Access denied.');
+    redirect('../../dashboard.php');
+    exit;
+}
 $userId = (int)$_SESSION['user_id'];
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
@@ -29,6 +34,9 @@ $routes = [
     'expense' => ['expenses/delete.php', 'expense_id', 'finance.expenses.manage'],
     'category' => ['expenses/categories.php', 'delete', 'finance.expenses.categories'],
 ];
+foreach (['customer_transaction', 'vendor_transaction', 'order_payment', 'purchase_payment', 'expense_payment', 'transfer', 'customer_adjustment', 'account_adjustment', 'customer_account', 'vendor_account', 'sales_invoice', 'purchase_invoice'] as $type) {
+    $routes[$type] = ['delete_record.php', 'record_id', financeDeletionPermission($type)];
+}
 if (empty($_SESSION['finance_account_delete_token'])) $_SESSION['finance_account_delete_token'] = bin2hex(random_bytes(32));
 $page_title = 'Finance Deletion Requests';
 require_once '../../includes/header.php';
@@ -56,6 +64,7 @@ require_once '../../includes/header.php';
                     <input type="hidden" name="deletion_token" value="<?= htmlspecialchars(financeDeletionToken()) ?>">
                     <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['finance_account_delete_token']) ?>">
                     <input type="hidden" name="deletion_request_id" value="<?= (int)$request['id'] ?>">
+                    <input type="hidden" name="entity_type" value="<?= htmlspecialchars($request['entity_type']) ?>">
                     <input type="hidden" name="<?= $request['force_delete'] ? 'force_delete_account' : $route[1] ?>" value="<?= (int)$request['entity_id'] ?>">
                     <button class="btn btn-sm btn-danger">Approve Deletion</button>
                 </form>

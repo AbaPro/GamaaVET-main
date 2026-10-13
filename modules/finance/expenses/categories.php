@@ -10,7 +10,6 @@ if (!hasPermission('finance.expenses.categories')) {
 }
 
 $page_title = 'Expense Categories';
-require_once '../../../includes/header.php';
 
 // Handle Add Category
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_category'])) {
@@ -32,6 +31,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_category'])) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete'])) {
     $id = intval($_POST['delete']);
     try {
+        $exists = $pdo->prepare('SELECT id FROM expense_categories WHERE id = ?');
+        $exists->execute([$id]);
+        if (!$exists->fetchColumn()) throw new DomainException('Category not found.');
         financeDeletionRequest('category', $id, false, 'categories.php');
         $pdo->beginTransaction();
         financeDeletionApprove($pdo, 'category', $id);
@@ -59,6 +61,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete'])) {
 
 $stmt = $pdo->query("SELECT * FROM expense_categories ORDER BY name ASC");
 $categories = $stmt->fetchAll(PDO::FETCH_ASSOC);
+require_once '../../../includes/header.php';
 ?>
 
 <div class="container-fluid px-4">
@@ -92,10 +95,12 @@ $categories = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                 <td><?= htmlspecialchars($cat['description']) ?></td>
                                 <td><?= date('M j, Y', strtotime($cat['created_at'])) ?></td>
                                 <td class="text-end">
+                                    <?php if (hasPermission('finance.deletions.request')): ?>
                                     <form method="post" class="d-inline" onsubmit="return confirm('Request approval to delete this category?');">
                                         <input type="hidden" name="deletion_token" value="<?= htmlspecialchars(financeDeletionToken(), ENT_QUOTES, 'UTF-8'); ?>">
                                         <button name="delete" value="<?= (int)$cat['id'] ?>" class="btn btn-sm btn-outline-danger">Request Deletion</button>
                                     </form>
+                                    <?php endif; ?>
                                 </td>
                             </tr>
                         <?php endforeach; ?>

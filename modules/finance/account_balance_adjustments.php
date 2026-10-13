@@ -84,9 +84,10 @@ function financeBalanceGetAccount($type, $accountId, $forUpdate = false) {
     }
 
     $currencySql = $config['currency'] ? "`{$config['currency']}`" : "'EGP'";
+    $closedSql = $type === 'vendor' ? ', finance_account_closed_at' : '';
     $scopeSql = $config['scoped'] ? ' AND ' . ($type === 'safe' ? getSafeScopeSql() : getAccountScopeSql()) : '';
     $sql = "SELECT id, `{$config['name']}` AS account_name, `{$config['balance']}` AS balance,
-                   $currencySql AS currency
+                   $currencySql AS currency$closedSql
             FROM `{$config['table']}`
             WHERE id = ?$scopeSql" . ($forUpdate ? ' FOR UPDATE' : '');
     $stmt = $conn->prepare($sql);
@@ -198,6 +199,7 @@ function handleFinanceAccountBalanceSettlement($type, $accountId, $canSetBalance
     $conn->begin_transaction();
     try {
         $account = financeBalanceGetAccount($type, $accountId, true);
+        if ($type === 'vendor' && !empty($account['finance_account_closed_at'])) throw new DomainException('Reopen this finance account before changing its balance.');
         if (!$account) {
             throw new DomainException('Account not found.');
         }

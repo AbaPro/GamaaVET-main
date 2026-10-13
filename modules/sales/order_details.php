@@ -1,5 +1,6 @@
 <?php
 require_once '../../includes/auth.php';
+require_once __DIR__ . '/../finance/deletion_approval.php';
 require_once '../../config/database.php';
 
 // Permission check
@@ -61,7 +62,7 @@ if (($_SESSION['login_region'] ?? 'factory') === 'factory') {
 
 $canViewOrderPrices = hasPermission('sales.orders.price.view');
 $canViewFinalPrices = $canViewOrderPrices;
-$canDeletePayments = hasPermission('finance.payments.delete');
+$canDeletePayments = hasPermission('finance.payments.delete') && hasPermission('finance.deletions.request');
 $canProcessPayments = hasPermission('finance.customer_payment.process');
 $canViewPaymentHistory = $canViewOrderPrices && (hasPermission('sales.orders.payments.history') || $canProcessPayments || $canDeletePayments);
 $canViewPhoneNumbers = hasPermission('contacts.phone.view');
@@ -612,11 +613,7 @@ require_once '../../includes/header.php';
                                         <td><?= htmlspecialchars($payment['created_by_name']) ?></td>
                                         <?php if ($canDeletePayments): ?>
                                             <td class="text-end">
-                                                <button type="button" class="btn btn-sm btn-outline-danger js-delete-payment" 
-                                                        data-id="<?= $payment['id'] ?>" 
-                                                        data-amount="<?= number_format($payment['amount'], 2) ?>">
-                                                    <i class="fas fa-trash"></i>
-                                                </button>
+                                                <?php renderFinanceDeletionRequest('order_payment', $payment['id']); ?>
                                             </td>
                                         <?php endif; ?>
                                     </tr>
@@ -689,7 +686,7 @@ require_once '../../includes/header.php';
         $('.js-delete-payment').click(function() {
             const id = $(this).data('id');
             const amount = $(this).data('amount');
-            if (confirm(`Are you sure you want to delete this payment of ${amount}? This will restore the order balance and reverse financial impacts (safes, banks, or wallet).`)) {
+            if (confirm(`Request approval to delete this payment of ${amount}? This will restore the order balance and reverse financial impacts (safes, banks, or wallet).`)) {
                 const form = $('<form>', {
                     'method': 'POST',
                     'action': 'delete_payment.php'
@@ -699,6 +696,7 @@ require_once '../../includes/header.php';
                     'name': 'payment_id',
                     'value': id
                 }));
+                form.append($('<input>', {type: 'hidden', name: 'deletion_token', value: <?= json_encode(financeDeletionToken()) ?>}));
                 $('body').append(form);
                 form.submit();
             }

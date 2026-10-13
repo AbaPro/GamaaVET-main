@@ -1,6 +1,8 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+require_once __DIR__ . '/deletion_approval.php';
+$showClosed = isset($_GET['show_closed']);
 
 $canSettleBalances = hasPermission('finance.balances.settle');
 if (($_SESSION['login_region'] ?? 'factory') !== 'factory'
@@ -13,12 +15,15 @@ $page_title = 'Vendor Wallets';
 $canViewPhoneNumbers = hasPermission('contacts.phone.view');
 require_once '../../includes/header.php';
 
-$sql = "SELECT * FROM vendors ORDER BY name";
+$sql = "SELECT * FROM vendors";
+if (!$showClosed) $sql .= " WHERE finance_account_closed_at IS NULL OR wallet_balance <> 0 OR EXISTS (SELECT 1 FROM purchase_orders po WHERE po.vendor_id = vendors.id AND po.total_amount > po.paid_amount)";
+$sql .= " ORDER BY name";
 $result = $conn->query($sql);
 ?>
 
 <div class="d-flex justify-content-between mb-4">
     <h2>Vendor Wallets</h2>
+    <a href="?<?= $showClosed ? '' : 'show_closed=1' ?>" class="btn btn-outline-secondary"><?= $showClosed ? 'Hide closed accounts' : 'Show closed accounts' ?></a>
 </div>
 
 <div class="card">
@@ -39,7 +44,8 @@ $result = $conn->query($sql);
                             <a href="../../modules/vendors/wallet.php?id=<?= $row['id']; ?>" class="btn btn-sm btn-primary">
                                 <i class="fas fa-wallet"></i> View Wallet
                             </a>
-                            <?php if ($canSettleBalances): ?><a href="../../modules/vendors/wallet.php?id=<?= $row['id']; ?>#set-balance" class="btn btn-sm btn-outline-warning"><i class="fas fa-scale-balanced"></i> Set Balance</a><?php endif; ?>
+                            <?php renderFinanceAccountClosure('vendor_account', $row); ?>
+                                <?php if ($canSettleBalances): ?><a href="../../modules/vendors/wallet.php?id=<?= $row['id']; ?>#set-balance" class="btn btn-sm btn-outline-warning"><i class="fas fa-scale-balanced"></i> Set Balance</a><?php endif; ?>
                         </td>
                     </tr>
                 <?php endwhile; ?>
