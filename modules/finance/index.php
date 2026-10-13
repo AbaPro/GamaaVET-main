@@ -28,50 +28,7 @@ if (!$canViewSafes && !$canViewBanks && !$canViewPersonal && !$canViewRevenue
     redirect('../../dashboard.php');
 }
 
-// ---- Reporting period -------------------------------------------------------
-$periods = [
-    'this_month' => 'This Month',
-    'last_month' => 'Last Month',
-    'this_year' => 'This Year',
-    'all' => 'All Time',
-    'custom' => 'Custom',
-];
-$period = (string)($_GET['period'] ?? 'this_month');
-if (!isset($periods[$period])) {
-    $period = 'this_month';
-}
-$today = new DateTimeImmutable('today');
-$dateFrom = null;
-$dateTo = null;
-switch ($period) {
-    case 'this_month':
-        $dateFrom = $today->modify('first day of this month')->format('Y-m-d');
-        $dateTo = $today->format('Y-m-d');
-        break;
-    case 'last_month':
-        $dateFrom = $today->modify('first day of last month')->format('Y-m-d');
-        $dateTo = $today->modify('last day of last month')->format('Y-m-d');
-        break;
-    case 'this_year':
-        $dateFrom = $today->format('Y-01-01');
-        $dateTo = $today->format('Y-m-d');
-        break;
-    case 'custom':
-        $dateFrom = normalizeTransactionDate($_GET['from'] ?? '');
-        $dateTo = normalizeTransactionDate($_GET['to'] ?? '');
-        if ($dateFrom && $dateTo && $dateFrom > $dateTo) {
-            [$dateFrom, $dateTo] = [$dateTo, $dateFrom];
-        }
-        break;
-}
-
-function financeDashboardDateSql($column, $dateFrom, $dateTo) {
-    global $conn;
-    $parts = [];
-    if ($dateFrom) $parts[] = "$column >= '" . $conn->real_escape_string($dateFrom) . "'";
-    if ($dateTo) $parts[] = "$column <= '" . $conn->real_escape_string($dateTo) . "'";
-    return $parts ? implode(' AND ', $parts) : '1=1';
-}
+require_once __DIR__ . '/dashboard_reporting.php';
 
 function financeDashboardTotalsByCurrency(array $rows) {
     $totals = [];
@@ -82,11 +39,6 @@ function financeDashboardTotalsByCurrency(array $rows) {
     ksort($totals);
     return $totals;
 }
-
-$orderScope = getCustomerChannelScopeSql('fd_customer', 'fd_factory');
-$orderJoins = 'JOIN customers fd_customer ON fd_customer.id = o.customer_id
-               LEFT JOIN factories fd_factory ON fd_factory.id = fd_customer.factory_id';
-$orderDateSql = financeDashboardDateSql('o.order_date', $dateFrom, $dateTo);
 
 // ---- Revenue: invoiced order totals per currency -----------------------------
 $revenue = [];
@@ -250,10 +202,6 @@ unset($section);
 $visibleSections = array_values(array_filter($balanceSections, static fn($section) => $section['visible']));
 
 $transferUrl = 'transfers.php?new=1';
-$periodLabel = $period === 'all'
-    ? 'All time'
-    : (($dateFrom ? date('d M Y', strtotime($dateFrom)) : 'Start') . ' – ' . ($dateTo ? date('d M Y', strtotime($dateTo)) : 'Today'));
-
 $page_title = 'Finance Dashboard';
 require_once '../../includes/header.php';
 ?>
@@ -314,9 +262,9 @@ require_once '../../includes/header.php';
 
 <div class="row mb-3">
     <?php if ($canViewRevenue): ?>
-    <div class="col-xl-4 col-md-6 mb-3"><div class="card border-0 shadow-sm h-100"><div class="card-body">
+    <div class="col-xl-4 col-md-6 mb-3"><div class="card fd-account-card border-0 shadow-sm h-100 position-relative"><div class="card-body">
         <div class="d-flex justify-content-between align-items-start">
-            <div class="small text-uppercase text-muted fw-bold">Total Revenue</div>
+            <a href="report_details.php?metric=revenue&amp;<?= e($reportQuery); ?>" class="stretched-link small text-uppercase text-muted fw-bold text-decoration-none">Total Revenue<i class="fas fa-arrow-right ms-2" aria-hidden="true"></i></a>
             <span class="badge bg-light text-dark border"><i class="fas fa-money-bill-trend-up"></i></span>
         </div>
         <?php if (!$revenue): ?>
@@ -330,9 +278,9 @@ require_once '../../includes/header.php';
     <?php endif; ?>
 
     <?php if ($canViewCogs): ?>
-    <div class="col-xl-4 col-md-6 mb-3"><div class="card border-0 shadow-sm h-100"><div class="card-body">
+    <div class="col-xl-4 col-md-6 mb-3"><div class="card fd-account-card border-0 shadow-sm h-100 position-relative"><div class="card-body">
         <div class="d-flex justify-content-between align-items-start">
-            <div class="small text-uppercase text-muted fw-bold">COGS</div>
+            <a href="report_details.php?metric=cogs&amp;<?= e($reportQuery); ?>" class="stretched-link small text-uppercase text-muted fw-bold text-decoration-none">COGS<i class="fas fa-arrow-right ms-2" aria-hidden="true"></i></a>
             <span class="badge bg-light text-dark border"><i class="fas fa-boxes-stacked"></i></span>
         </div>
         <div class="h3 mb-2"><?= e(formatCurrency($cogs['total'])); ?></div>
@@ -344,9 +292,9 @@ require_once '../../includes/header.php';
     <?php endif; ?>
 
     <?php if ($canViewMaterialCost): ?>
-    <div class="col-xl-4 col-md-6 mb-3"><div class="card border-0 shadow-sm h-100"><div class="card-body">
+    <div class="col-xl-4 col-md-6 mb-3"><div class="card fd-account-card border-0 shadow-sm h-100 position-relative"><div class="card-body">
         <div class="d-flex justify-content-between align-items-start">
-            <div class="small text-uppercase text-muted fw-bold">Material Cost</div>
+            <a href="report_details.php?metric=material&amp;<?= e($reportQuery); ?>" class="stretched-link small text-uppercase text-muted fw-bold text-decoration-none">Material Cost<i class="fas fa-arrow-right ms-2" aria-hidden="true"></i></a>
             <span class="badge bg-light text-dark border"><i class="fas fa-flask"></i></span>
         </div>
         <div class="h3 mb-2"><?= e(formatCurrency($materialCost['total'])); ?></div>
