@@ -16,7 +16,7 @@ $cases = [
  'customer-settlement', 'bank-settlement', 'personal-settlement', 'vendor-settlement', 'newer-settlement-blocked', 'older-settlement-blocked',
  'customer-close', 'customer-close-debt', 'customer-close-orders', 'vendor-close', 'vendor-close-debt', 'vendor-close-orders',
  'customer-reopen', 'reopen-denied', 'invoice-sales', 'invoice-purchase', 'invoice-paid-blocked', 'invoice-receipt-blocked', 'invoice-inventory-blocked', 'invoice-stock', 'invoice-stock-missing', 'invoice-stock-otherbrand', 'invoice-stock-duplicate',
- 'request-only', 'no-request-permission', 'no-action-permission', 'no-source-permission', 'no-approval-permission', 'self-approval', 'wrong-brand', 'wrong-request-account', 'csrf', 'already-approved',
+ 'request-only', 'no-request-permission', 'no-action-permission', 'no-source-permission', 'no-approval-permission', 'self-approval', 'admin-self-approval', 'wrong-brand', 'wrong-request-account', 'csrf', 'already-approved',
 ];
 $mode = $argv[1] ?? 'suite';
 if ($mode === 'suite') {
@@ -171,7 +171,8 @@ if ($mode === 'request-only' || $mode === 'no-request-permission' || $mode === '
 }
 if ($mode === 'no-source-permission') { $_SESSION['role_slug'] = 'user'; $_SESSION['permissions'] = ['finance.customer_transactions.delete', 'finance.deletions.approve']; $blocked = true; }
 if ($mode === 'no-approval-permission') { $_SESSION['role_slug'] = 'user'; $_SESSION['permissions'] = ['finance.customer_transactions.delete']; $blocked = true; }
-if ($mode === 'self-approval') { $_SESSION['user_id'] = 1; $blocked = true; }
+if ($mode === 'self-approval') { $_SESSION['user_id'] = 1; $_SESSION['role_slug'] = 'user'; $_SESSION['permissions'] = ['finance.customer_transactions.delete', 'finance.deletions.approve']; $blocked = true; }
+if ($mode === 'admin-self-approval') $pdo->exec('UPDATE finance_deletion_requests SET requested_by = 2 WHERE id = 1');
 if ($mode === 'wrong-brand') { $pdo->exec('UPDATE customer_wallet_transactions SET customer_id = 2'); $blocked = true; }
 if ($mode === 'wrong-request-account') { $pdo->exec('UPDATE finance_deletion_requests SET account_id = 2'); $blocked = true; }
 if ($mode === 'csrf') { $_POST['deletion_token'] = 'invalid'; $blocked = true; }

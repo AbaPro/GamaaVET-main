@@ -74,7 +74,7 @@ function handleManufacturingDeletion($type) {
             $stmt = $pdo->prepare('INSERT INTO manufacturing_deletion_requests (account_id, entity_type, entity_id, requested_by) VALUES (?, ?, ?, ?)');
             $stmt->execute([getCurrentAccountId(), $type, $id, (int)$_SESSION['user_id']]);
             logActivity('Requested manufacturing deletion', ['type' => $type, 'id' => $id], 'create', 'manufacturing_deletion_request', (int)$pdo->lastInsertId());
-            setAlert('success', 'Deletion requested. Another authorized user must approve it.');
+            setAlert('success', 'Deletion requested. An authorized user must approve it. Admins can approve their own requests.');
             redirect($returnPage);
             return;
         }
@@ -86,7 +86,7 @@ function handleManufacturingDeletion($type) {
         if (!$request || $request['status'] !== 'pending' || $request['entity_type'] !== $type || (int)$request['entity_id'] !== $id) {
             throw new DomainException('This deletion request is invalid or has already been reviewed.');
         }
-        if ((int)$request['requested_by'] === (int)$_SESSION['user_id']) throw new DomainException('You cannot approve your own deletion request.');
+        if ((int)$request['requested_by'] === (int)$_SESSION['user_id'] && !isAdminUser()) throw new DomainException('You cannot approve your own deletion request.');
         $record = manufacturingDeletionRecord($type, $id, true);
         if ($type === 'formula' || $type === 'packaging_option') {
             $column = $type === 'formula' ? 'formula_id' : 'packaging_option_id';

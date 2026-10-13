@@ -13,6 +13,7 @@ function scalar($sql) { global $pdo; return $pdo->query($sql)->fetchColumn(); }
 function fixture() {
     global $pdo;
     foreach (['manufacturing_deletion_requests', 'finance_deletion_requests', 'manufacturing_orders', 'manufacturing_formulas', 'manufacturing_formula_templates', 'bottle_sizes', 'packaging_options', 'manufacturing_step_documents', 'manufacturing_order_steps', 'safes', 'bank_accounts', 'personal_accounts', 'finance_transfers', 'purchase_order_payments'] as $table) $pdo->exec("DELETE FROM `$table`");
+    $pdo->exec("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id WHERE rp.role_id = 1 AND p.`key` IN ('finance.deletions.approve', 'manufacturing.deletions.approve')");
     $pdo->exec('ALTER TABLE manufacturing_deletion_requests AUTO_INCREMENT = 1');
     $pdo->exec('ALTER TABLE finance_deletion_requests AUTO_INCREMENT = 1');
     $pdo->exec("INSERT INTO manufacturing_orders VALUES (1, 'MO-1', 1, NULL, NULL), (2, 'MO-2', 2, NULL, NULL)");
@@ -63,7 +64,7 @@ if ($mode === 'suite') {
     check((int)scalar("SELECT COUNT(*) FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id WHERE rp.role_id = 1 AND p.`key` LIKE '%.deletions.request'") === 2, 'Existing delete roles retain request access.');
     check((int)scalar("SELECT COUNT(*) FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id WHERE rp.role_id = 1 AND p.`key` LIKE '%.deletions.approve'") === 0, 'Requesters must not receive approval access.');
     check((int)scalar("SELECT COUNT(*) FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id WHERE rp.role_id = 2 AND p.`key` LIKE '%.deletions.approve'") === 2, 'Admins receive both approvals.');
-    $cases = ['m-request', 'm-no-request', 'm-no-delete', 'm-no-view', 'm-csrf', 'm-get', 'm-customer', 'm-self', 'm-no-approve', 'm-account', 'm-mismatch', 'm-reviewed', 'm-in-use', 'm-template-locked', 'm-approve-order', 'm-approve-formula', 'm-approve-template', 'm-approve-bottle_size', 'm-approve-packaging_option', 'f-request', 'f-no-request', 'f-no-delete', 'f-csrf', 'f-self', 'f-no-approve', 'f-account', 'f-mismatch', 'f-reviewed', 'f-force-mismatch', 'f-balance', 'f-history', 'f-approve', 'f-force-request', 'f-force-approve', 'm-reject', 'm-reject-self', 'm-reject-denied', 'f-reject', 'f-reject-self', 'f-reject-denied', 'm-list-denied', 'f-list-denied'];
+    $cases = ['m-request', 'm-no-request', 'm-no-delete', 'm-no-view', 'm-csrf', 'm-get', 'm-customer', 'm-self', 'm-admin-self', 'm-no-approve', 'm-account', 'm-mismatch', 'm-reviewed', 'm-in-use', 'm-template-locked', 'm-approve-order', 'm-approve-formula', 'm-approve-template', 'm-approve-bottle_size', 'm-approve-packaging_option', 'f-request', 'f-no-request', 'f-no-delete', 'f-csrf', 'f-self', 'f-admin-self', 'f-no-approve', 'f-account', 'f-mismatch', 'f-reviewed', 'f-force-mismatch', 'f-balance', 'f-history', 'f-approve', 'f-force-request', 'f-force-approve', 'm-reject', 'm-reject-self', 'm-reject-user-self', 'm-reject-denied', 'f-reject', 'f-reject-self', 'f-reject-user-self', 'f-reject-denied', 'm-list-denied', 'f-list-denied'];
     foreach ($cases as $case) {
         passthru(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__FILE__) . ' ' . escapeshellarg($case), $status);
         check($status === 0, 'Failed scenario: ' . $case);
@@ -94,7 +95,15 @@ if ($isApproval || str_contains($mode, '-reject')) {
     $_POST['deletion_request_id'] = 1;
     $expectedCount = 1; $expectedStatus = 'pending';
 }
-if (str_ends_with($mode, '-self')) $_SESSION['user_id'] = 1;
+if ($mode === 'm-self' || $mode === 'f-self') {
+    $_SESSION['user_id'] = 1;
+    $_SESSION['role_slug'] = 'user';
+    $_SESSION['permissions'][] = $isFinance ? 'finance.deletions.approve' : 'manufacturing.deletions.approve';
+}
+if (str_contains($mode, '-admin-self')) {
+    $pdo->exec("UPDATE `$table` SET requested_by = 2 WHERE id = 1");
+    $expectedStatus = 'approved'; $expectedRecord = 0; $expectedAlert = 'success';
+}
 if (str_ends_with($mode, '-no-approve')) { $_SESSION['role_slug'] = 'user'; $_SESSION['permissions'][] = 'manufacturing.delete'; }
 if (str_ends_with($mode, '-account')) $pdo->exec("UPDATE `$table` SET account_id = 2 WHERE id = 1");
 if (str_ends_with($mode, '-mismatch')) $_POST['id'] = 2;
@@ -134,6 +143,12 @@ if (str_contains($mode, '-list-denied')) {
 if (str_ends_with($mode, '-reject-self')) {
     $_SESSION['user_id'] = 2;
     $pdo->exec("UPDATE `$table` SET requested_by = 2 WHERE id = 1");
+    $expectedStatus = 'rejected'; $expectedAlert = 'success';
+}
+if (str_ends_with($mode, '-reject-user-self')) {
+    $_SESSION['user_id'] = 1; $_SESSION['role_slug'] = 'user';
+    $permission = $isFinance ? 'finance.deletions.approve' : 'manufacturing.deletions.approve';
+    $pdo->prepare('INSERT IGNORE INTO role_permissions (role_id, permission_id) SELECT 1, id FROM permissions WHERE `key` = ?')->execute([$permission]);
 }
 $recordTable = $isFinance ? 'safes' : manufacturingDeletionConfig($type)['table'];
 register_shutdown_function(function () use ($mode, $table, $recordTable, $expectedCount, $expectedStatus, $expectedRecord, $expectedAlert) {

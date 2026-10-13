@@ -48,7 +48,7 @@ function renderFinanceDeletionRequest($type, $id, $label = 'Request Deletion') {
     $permission = financeDeletionPermission($type);
     if (!$permission || !hasPermission($permission) || !hasPermission('finance.deletions.request')) return;
     ?>
-    <form method="post" action="<?= htmlspecialchars(BASE_URL . 'modules/finance/delete_record.php') ?>" class="d-inline" onsubmit="return confirm('Submit this deletion for approval? Balances will be reversed only after another authorized user approves.');">
+    <form method="post" action="<?= htmlspecialchars(BASE_URL . 'modules/finance/delete_record.php') ?>" class="d-inline" onsubmit="return confirm('Submit this deletion for approval? Balances will be reversed only after an authorized user approves.');">
         <input type="hidden" name="entity_type" value="<?= htmlspecialchars($type) ?>">
         <input type="hidden" name="record_id" value="<?= (int)$id ?>">
         <input type="hidden" name="deletion_token" value="<?= htmlspecialchars(financeDeletionToken()) ?>">
@@ -96,7 +96,7 @@ function financeDeletionRequest($type, $id, $force, $returnPage) {
     financeDeletionCheckPermission($type, $force);
     if (isset($_POST['deletion_request_id'])) return;
     financeCreateDeletionRequest($type, $id, $force);
-    setAlert('success', 'Deletion requested. Another user with Finance deletion approval permission must approve it.');
+    setAlert('success', 'Deletion requested. An authorized user must approve it. Admins can approve their own requests.');
     redirect($returnPage);
     exit;
 }
@@ -110,7 +110,7 @@ function financeDeletionApprove($db, $type, $id, $force = false) {
     if (!$row || $row['status'] !== 'pending' || $row['entity_type'] !== $type || (int)$row['entity_id'] !== (int)$id || (bool)$row['force_delete'] !== (bool)$force) {
         throw new DomainException('This deletion request is invalid or has already been reviewed.');
     }
-    if ((int)$row['requested_by'] === (int)$_SESSION['user_id']) throw new DomainException('You cannot approve your own deletion request.');
+    if ((int)$row['requested_by'] === (int)$_SESSION['user_id'] && !isAdminUser()) throw new DomainException('You cannot approve your own deletion request.');
     financeDeletionQuery($db, "UPDATE finance_deletion_requests SET status = 'approved', reviewed_by = ?, reviewed_at = NOW() WHERE id = ?", [(int)$_SESSION['user_id'], (int)$row['id']]);
     // This update rolls back if any subsequent deletion or balance check fails.
 }

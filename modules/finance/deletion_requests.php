@@ -13,8 +13,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         financeDeletionValidateToken();
         if (!$canApprove) throw new DomainException('Access denied.');
-        $stmt = $pdo->prepare("UPDATE finance_deletion_requests SET status = 'rejected', reviewed_by = ?, reviewed_at = NOW() WHERE id = ? AND account_id = ? AND status = 'pending' AND requested_by <> ?");
-        $stmt->execute([$userId, (int)($_POST['reject'] ?? 0), getCurrentAccountId(), $userId]);
+        $stmt = $pdo->prepare("UPDATE finance_deletion_requests SET status = 'rejected', reviewed_by = ?, reviewed_at = NOW() WHERE id = ? AND account_id = ? AND status = 'pending' AND (requested_by <> ? OR ? = 1)");
+        $stmt->execute([$userId, (int)($_POST['reject'] ?? 0), getCurrentAccountId(), $userId, (int)isAdminUser()]);
         if ($stmt->rowCount() !== 1) throw new DomainException('Request unavailable. You cannot review your own request.');
         logActivity('Rejected finance deletion', null, 'update', 'finance_deletion_request', (int)$_POST['reject']);
         setAlert('success', 'Deletion rejected.');
@@ -43,7 +43,7 @@ require_once '../../includes/header.php';
 ?>
 <div class="container-fluid px-4 mt-4">
     <h1>Finance Deletion Requests</h1>
-    <p>Records and balances remain unchanged until another authorized user approves deletion. Approvers also need the permission and account access for the requested action.</p>
+    <p>Records and balances remain unchanged until an authorized user approves deletion. Admins can approve their own requests. Approvers also need the permission and account access for the requested action.</p>
     <?php include '../../includes/messages.php'; ?>
     <div class="table-responsive"><table class="table table-hover">
         <thead><tr><th>Request</th><th>Record</th><th>Requested by</th><th>Created</th><th>Status</th><th>Reviewed by</th><th>Actions</th></tr></thead>
@@ -51,7 +51,7 @@ require_once '../../includes/header.php';
             $route = $routes[$request['entity_type']] ?? null;
             $permission = $route ? $route[2] : '';
             if ($route && in_array($request['entity_type'], ['safe', 'bank', 'personal'], true)) $permission .= $request['force_delete'] ? '.force_delete' : '.delete';
-            $canReview = $canApprove && $request['status'] === 'pending' && (int)$request['requested_by'] !== $userId;
+            $canReview = $canApprove && $request['status'] === 'pending' && ((int)$request['requested_by'] !== $userId || isAdminUser());
         ?>
         <tr>
             <td><?= (int)$request['id'] ?></td>

@@ -13,8 +13,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         manufacturingDeletionValidateToken();
         if (!$canApprove) throw new DomainException('Manufacturing deletion approval permission is required.');
-        $stmt = $pdo->prepare("UPDATE manufacturing_deletion_requests SET status = 'rejected', reviewed_by = ?, reviewed_at = NOW() WHERE id = ? AND account_id = ? AND status = 'pending' AND requested_by <> ?");
-        $stmt->execute([$userId, (int)($_POST['reject'] ?? 0), getCurrentAccountId(), $userId]);
+        $stmt = $pdo->prepare("UPDATE manufacturing_deletion_requests SET status = 'rejected', reviewed_by = ?, reviewed_at = NOW() WHERE id = ? AND account_id = ? AND status = 'pending' AND (requested_by <> ? OR ? = 1)");
+        $stmt->execute([$userId, (int)($_POST['reject'] ?? 0), getCurrentAccountId(), $userId, (int)isAdminUser()]);
         if ($stmt->rowCount() !== 1) throw new DomainException('Request unavailable. You cannot review your own request.');
         logActivity('Rejected manufacturing deletion', null, 'update', 'manufacturing_deletion_request', (int)$_POST['reject']);
         setAlert('success', 'Deletion rejected.');
@@ -32,13 +32,13 @@ require_once '../../includes/header.php';
 ?>
 <div class="container-fluid px-4 mt-4">
     <h1>Manufacturing Deletion Requests</h1>
-    <p>Records remain unchanged until another authorized user approves deletion. Approvers also need manufacturing deletion permission and access to the record. Formula templates require unlocked formulas.</p>
+    <p>Records remain unchanged until an authorized user approves deletion. Admins can approve their own requests. Approvers also need manufacturing deletion permission and access to the record. Formula templates require unlocked formulas.</p>
     <?php include '../../includes/messages.php'; ?>
     <div class="table-responsive"><table class="table table-hover">
         <thead><tr><th>Request</th><th>Record</th><th>Requested by</th><th>Created</th><th>Status</th><th>Reviewed by</th><th>Actions</th></tr></thead>
         <tbody><?php foreach ($requests as $request):
             $config = manufacturingDeletionConfig($request['entity_type']);
-            $canReview = $canApprove && $request['status'] === 'pending' && (int)$request['requested_by'] !== $userId;
+            $canReview = $canApprove && $request['status'] === 'pending' && ((int)$request['requested_by'] !== $userId || isAdminUser());
         ?>
         <tr>
             <td><?= (int)$request['id'] ?></td>
