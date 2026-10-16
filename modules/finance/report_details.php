@@ -3,7 +3,7 @@ require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
 
 $reports = [
-    'revenue' => ['title' => 'Total Revenue', 'allowed' => hasPermission('sales.orders.price.view')],
+    'revenue' => ['title' => 'Revenue Collected', 'allowed' => hasPermission('sales.orders.price.view')],
     'cogs' => ['title' => 'COGS', 'allowed' => canViewProductCost('final')],
     'material' => ['title' => 'Material Cost', 'allowed' => ($_SESSION['login_region'] ?? 'factory') === 'factory' && canViewProductCost('material')],
 ];
@@ -22,17 +22,14 @@ $units = 0;
 $purchaseOrders = [];
 if ($metric === 'revenue') {
     $result = $conn->query("
-        SELECT o.id, o.internal_id, o.order_date, o.status, fd_customer.name AS customer_name,
-               COALESCE(o.currency, 'EGP') AS currency, o.total_amount, o.paid_amount
-        FROM orders o $orderJoins
-        WHERE $orderScope AND $orderDateSql
-        ORDER BY o.order_date DESC, o.id DESC
+        SELECT o.id, o.internal_id, op.transaction_date AS order_date, op.payment_method, op.reference,
+               fd_customer.name AS customer_name, COALESCE(o.currency, 'EGP') AS currency, op.amount
+        FROM $revenuePaymentSql
+        ORDER BY op.transaction_date DESC, op.id DESC
     ");
     $rows = $result->fetch_all(MYSQLI_ASSOC);
     foreach ($rows as $row) {
-        $currency = $row['currency'];
-        $totals[$currency]['total'] = ($totals[$currency]['total'] ?? 0) + (float)$row['total_amount'];
-        $totals[$currency]['paid'] = ($totals[$currency]['paid'] ?? 0) + (float)$row['paid_amount'];
+        $totals[$row['currency']]['total'] = ($totals[$row['currency']]['total'] ?? 0) + (float)$row['amount'];
     }
     ksort($totals);
 } elseif ($metric === 'cogs') {
@@ -101,12 +98,9 @@ require_once '../../includes/header.php';
     <?php if (!$totals): ?><div class="h3 mb-0"><?= e(formatCurrency(0)); ?></div><?php endif; ?>
     <?php foreach ($totals as $currency => $summary): ?>
         <div class="h3 mb-1"><?= e(formatCurrency($summary['total'], $currency)); ?></div>
-        <?php if ($metric === 'revenue'): ?>
-            <div class="text-muted mb-2"><?= e(formatCurrency($summary['paid'], $currency)); ?> collected · <?= e(formatCurrency($summary['total'] - $summary['paid'], $currency)); ?> outstanding</div>
-        <?php endif; ?>
     <?php endforeach; ?>
     <div class="small text-muted mt-2">
-        <?php if ($metric === 'revenue'): ?>Order totals and amounts collected for orders dated within the selected period.
+        <?php if ($metric === 'revenue'): ?>Customer payments recorded against orders, by payment date, within the selected period. Unpaid balances are not revenue until collected; see Accounts Receivable.
         <?php elseif ($metric === 'cogs'): ?><?= number_format($units); ?> units sold, net of all recorded returns. Net quantity × current calculated product cost; costs can change when product costing changes.
         <?php else: ?>Received material quantities × purchase unit price, from <?= number_format(count($purchaseOrders)); ?> purchase orders dated within the selected period. Cancelled orders are excluded.
         <?php endif; ?>
@@ -120,9 +114,9 @@ require_once '../../includes/header.php';
     <div class="table-responsive">
         <table class="table table-striped table-hover align-middle">
             <thead><tr>
-                <th><?= $metric === 'material' ? 'Purchase Order' : 'Order'; ?></th><th>Date</th><th><?= $metric === 'material' ? 'Vendor' : 'Customer'; ?></th>
+                <th><?= $metric === 'material' ? 'Purchase Order' : 'Order'; ?></th><th><?= $metric === 'revenue' ? 'Payment Date' : 'Date'; ?></th><th><?= $metric === 'material' ? 'Vendor' : 'Customer'; ?></th>
                 <?php if ($metric === 'revenue'): ?>
-                    <th>Status</th><th>Currency</th><th class="text-end">Total</th><th class="text-end">Collected</th><th class="text-end">Outstanding</th>
+                    <th>Method</th><th>Reference</th><th>Currency</th><th class="text-end">Amount</th>
                 <?php elseif ($metric === 'cogs'): ?>
                     <th>Product</th><th class="text-end">Sold</th><th class="text-end">Returned</th><th class="text-end">Net Quantity</th><th class="text-end">Current Unit Cost</th><th class="text-end">Cost</th>
                 <?php else: ?>
@@ -141,10 +135,8 @@ require_once '../../includes/header.php';
                     <td class="text-nowrap"><?= e($row['order_date']); ?></td>
                     <td><?= e(($metric === 'material' ? $row['vendor_name'] : $row['customer_name']) ?? ''); ?></td>
                     <?php if ($metric === 'revenue'): ?>
-                        <td><?= e($row['status']); ?></td><td><?= e($row['currency']); ?></td>
-                        <td class="text-end text-nowrap"><?= e(formatCurrency($row['total_amount'], $row['currency'])); ?></td>
-                        <td class="text-end text-nowrap"><?= e(formatCurrency($row['paid_amount'], $row['currency'])); ?></td>
-                        <td class="text-end text-nowrap"><?= e(formatCurrency((float)$row['total_amount'] - (float)$row['paid_amount'], $row['currency'])); ?></td>
+                        <td><?= e(ucfirst($row['payment_method'])); ?></td><td><?= e($row['reference'] ?? ''); ?></td><td><?= e($row['currency']); ?></td>
+                        <td class="text-end text-nowrap"><?= e(formatCurrency($row['amount'], $row['currency'])); ?></td>
                     <?php elseif ($metric === 'cogs'): ?>
                         <td><?= e($row['product_name'] ?? 'Product #' . $row['product_id']); ?></td>
                         <td class="text-end"><?= number_format((float)$row['quantity']); ?></td>

@@ -22,7 +22,7 @@ if (!$bankId) {
     redirect('banks.php');
 }
 
-$bankScope = getAccountScopeSql('b');
+$bankScope = getBankScopeSql('b');
 $bankStmt = $conn->prepare("SELECT b.*, a.name AS account_name
                             FROM bank_accounts b
                             LEFT JOIN accounts a ON a.id = b.account_id

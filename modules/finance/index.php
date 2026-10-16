@@ -21,9 +21,14 @@ $canViewRevenue = hasPermission('sales.orders.price.view');
 $canViewCogs = canViewProductCost('final');
 $canViewMaterialCost = $loginRegion === 'factory' && canViewProductCost('material');
 $canCreateExpenses = hasPermission('finance.expenses.manage');
+// Same access rules as the Customer Accounts / Vendor Wallets pages the cards link to.
+$canViewReceivables = hasPermission('finance.customer_wallet.view') || hasPermission('finance.balances.settle');
+$canViewPayables = $loginRegion === 'factory'
+    && (hasPermission('finance.vendor_wallet.view') || hasPermission('finance.balances.settle'));
 
 if (!$canViewSafes && !$canViewBanks && !$canViewPersonal && !$canViewRevenue
-    && !$canViewCogs && !$canViewMaterialCost && !$canCreateExpenses) {
+    && !$canViewCogs && !$canViewMaterialCost && !$canCreateExpenses
+    && !$canViewReceivables && !$canViewPayables) {
     setAlert('danger', 'Access denied.');
     redirect('../../dashboard.php');
 }
@@ -40,15 +45,13 @@ function financeDashboardTotalsByCurrency(array $rows) {
     return $totals;
 }
 
-// ---- Revenue: invoiced order totals per currency -----------------------------
+// ---- Revenue: cash collected from order payments per currency --------------
 $revenue = [];
 if ($canViewRevenue) {
     $result = $conn->query("
-        SELECT COALESCE(o.currency, 'EGP') AS currency, COUNT(*) AS orders,
-               SUM(o.total_amount) AS total, SUM(o.paid_amount) AS paid
-        FROM orders o
-        $orderJoins
-        WHERE $orderScope AND $orderDateSql
+        SELECT COALESCE(o.currency, 'EGP') AS currency, COUNT(*) AS payments,
+               COUNT(DISTINCT o.id) AS orders, SUM(op.amount) AS total
+        FROM $revenuePaymentSql
         GROUP BY COALESCE(o.currency, 'EGP')
         ORDER BY currency
     ");
@@ -107,6 +110,10 @@ if ($canViewMaterialCost) {
     $materialCost = ['total' => (float)($row['total'] ?? 0), 'orders' => (int)($row['orders'] ?? 0)];
 }
 
+// ---- Outstanding balances (current, not period-filtered) ---------------------
+$receivables = $canViewReceivables ? getCustomerReceivablesSummary() : null;
+$payables = $canViewPayables ? getVendorPayablesSummary() : null;
+
 // ---- Balances ----------------------------------------------------------------
 $safes = [];
 if ($canViewSafes) {
@@ -122,7 +129,7 @@ if ($canViewSafes) {
 
 $banks = [];
 if ($canViewBanks) {
-    $bankScope = getAccountScopeSql('b');
+    $bankScope = getBankScopeSql('b');
     $banks = $conn->query("
         SELECT b.id, b.bank_name, b.account_number, b.balance, b.currency
         FROM bank_accounts b
@@ -236,6 +243,34 @@ require_once '../../includes/header.php';
     </div>
 </div>
 
+<?php if ($receivables !== null || $payables !== null): ?>
+<div class="row mb-1">
+    <?php if ($receivables !== null): ?>
+    <div class="col-md-6 mb-3"><div class="card fd-account-card border-0 shadow-sm h-100 position-relative"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-start">
+            <a href="customers.php" class="stretched-link small text-uppercase text-muted fw-bold text-decoration-none">Accounts Receivable<i class="fas fa-arrow-right ms-2" aria-hidden="true"></i></a>
+            <span class="badge bg-light text-dark border"><i class="fas fa-hand-holding-dollar"></i></span>
+        </div>
+        <div class="h3 mb-1 text-primary"><?= e(formatCurrency($receivables['total'])); ?></div>
+        <div class="small text-muted">Owed to us by <?= number_format($receivables['customer_count']); ?> customer<?= $receivables['customer_count'] === 1 ? '' : 's'; ?> · current balance</div>
+        <div class="small text-muted">Unpaid orders <?= e(formatCurrency($receivables['order_balances'])); ?> · wallet debt <?= e(formatCurrency($receivables['wallet_debt'])); ?></div>
+    </div></div></div>
+    <?php endif; ?>
+
+    <?php if ($payables !== null): ?>
+    <div class="col-md-6 mb-3"><div class="card fd-account-card border-0 shadow-sm h-100 position-relative"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-start">
+            <a href="vendors.php" class="stretched-link small text-uppercase text-muted fw-bold text-decoration-none">Owed to Vendors<i class="fas fa-arrow-right ms-2" aria-hidden="true"></i></a>
+            <span class="badge bg-light text-dark border"><i class="fas fa-truck-field"></i></span>
+        </div>
+        <div class="h3 mb-1 text-danger"><?= e(formatCurrency($payables['total'])); ?></div>
+        <div class="small text-muted">Total amount on us for <?= number_format($payables['vendor_count']); ?> vendor<?= $payables['vendor_count'] === 1 ? '' : 's'; ?> · current balance</div>
+        <div class="small text-muted">Unpaid purchase orders <?= e(formatCurrency($payables['order_balances'])); ?> · wallet debt <?= e(formatCurrency($payables['wallet_debt'])); ?></div>
+    </div></div></div>
+    <?php endif; ?>
+</div>
+<?php endif; ?>
+
 <?php if ($canViewRevenue || $canViewCogs || $canViewMaterialCost): ?>
 <div class="card border-0 shadow-sm mb-4"><div class="card-body py-3">
     <form method="get" class="row g-2 align-items-end">
@@ -264,15 +299,15 @@ require_once '../../includes/header.php';
     <?php if ($canViewRevenue): ?>
     <div class="col-xl-4 col-md-6 mb-3"><div class="card fd-account-card border-0 shadow-sm h-100 position-relative"><div class="card-body">
         <div class="d-flex justify-content-between align-items-start">
-            <a href="report_details.php?metric=revenue&amp;<?= e($reportQuery); ?>" class="stretched-link small text-uppercase text-muted fw-bold text-decoration-none">Total Revenue<i class="fas fa-arrow-right ms-2" aria-hidden="true"></i></a>
+            <a href="report_details.php?metric=revenue&amp;<?= e($reportQuery); ?>" class="stretched-link small text-uppercase text-muted fw-bold text-decoration-none">Revenue Collected<i class="fas fa-arrow-right ms-2" aria-hidden="true"></i></a>
             <span class="badge bg-light text-dark border"><i class="fas fa-money-bill-trend-up"></i></span>
         </div>
         <?php if (!$revenue): ?>
             <div class="h3 mb-2 text-success"><?= e(formatCurrency(0)); ?></div>
-            <div class="small text-muted">No orders in this period</div>
+            <div class="small text-muted">No payments collected in this period</div>
         <?php else: foreach ($revenue as $row): ?>
             <div class="h3 mb-1 text-success"><?= e(formatCurrency((float)$row['total'], $row['currency'])); ?></div>
-            <div class="small text-muted mb-2"><?= number_format((int)$row['orders']); ?> order<?= (int)$row['orders'] === 1 ? '' : 's'; ?> · <?= e(formatCurrency((float)$row['paid'], $row['currency'])); ?> collected</div>
+            <div class="small text-muted mb-2"><?= number_format((int)$row['payments']); ?> payment<?= (int)$row['payments'] === 1 ? '' : 's'; ?> on <?= number_format((int)$row['orders']); ?> order<?= (int)$row['orders'] === 1 ? '' : 's'; ?></div>
         <?php endforeach; endif; ?>
     </div></div></div>
     <?php endif; ?>

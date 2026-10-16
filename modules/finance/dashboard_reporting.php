@@ -50,6 +50,16 @@ $orderJoins = 'JOIN customers fd_customer ON fd_customer.id = o.customer_id
                LEFT JOIN factories fd_factory ON fd_factory.id = fd_customer.factory_id';
 $orderDateSql = financeDashboardDateSql('o.order_date', $dateFrom, $dateTo);
 
+// Revenue is cash actually collected: order payments dated within the period,
+// limited to the safes/bank accounts this user may see.
+$revenuePaymentSql = "order_payments op
+    JOIN orders o ON o.id = op.order_id
+    $orderJoins
+    WHERE $orderScope
+      AND " . financeDashboardDateSql('op.transaction_date', $dateFrom, $dateTo) . "
+      AND " . getSafeReferenceScopeSql('op.safe_id') . "
+      AND " . getBankReferenceScopeSql('op.bank_account_id');
+
 
 $reportQuery = http_build_query(['period' => $period, 'from' => $dateFrom, 'to' => $dateTo]);
 $periodLabel = $period === 'all'

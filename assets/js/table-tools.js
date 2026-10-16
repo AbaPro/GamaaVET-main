@@ -358,10 +358,10 @@
             });
         });
 
-        const now = new Date();
-        const dateStamp = now.getFullYear()
-            + '-' + String(now.getMonth() + 1).padStart(2, '0')
-            + '-' + String(now.getDate()).padStart(2, '0');
+        // en-CA formats as YYYY-MM-DD; always stamp exports with the Cairo date.
+        const dateStamp = new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'Africa/Cairo', year: 'numeric', month: '2-digit', day: '2-digit'
+        }).format(new Date());
         const selectionSuffix = selectedOnly ? '_selected' : '_filtered';
         const filename = safeFilename(getTableLabel(table)) + selectionSuffix + '_' + dateStamp + '.csv';
         const blob = new Blob(['\ufeff' + csvRows.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
@@ -448,9 +448,16 @@
         if ($.fn.dataTable.isDataTable(table)) {
             api = $(table).DataTable();
         } else {
+            const lengthMenu = [10, 25, 50, 100];
+            const customPageLength = parseInt(table.dataset.tablePageLength || '', 10);
+            const pageLength = customPageLength > 0 ? customPageLength : 25;
+            if (!lengthMenu.includes(pageLength)) {
+                lengthMenu.push(pageLength);
+                lengthMenu.sort(function (a, b) { return a - b; });
+            }
             api = $(table).DataTable({
-                pageLength: 25,
-                lengthMenu: [10, 25, 50, 100],
+                pageLength: pageLength,
+                lengthMenu: lengthMenu,
                 stateSave: table.dataset.tableStateSave === 'true',
                 stateSaveCallback: function (settings, data) {
                     window.localStorage.setItem(stateStorageKey, JSON.stringify(data));

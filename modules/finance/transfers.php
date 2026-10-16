@@ -226,7 +226,7 @@ while ($row = $safeResult->fetch_assoc()) {
 }
 
 $bankAccounts = [];
-$bankResult = $conn->query("SELECT id, bank_name, account_number, balance, currency FROM bank_accounts WHERE $accountScope ORDER BY bank_name");
+$bankResult = $conn->query("SELECT id, bank_name, account_number, balance, currency FROM bank_accounts WHERE " . getBankScopeSql() . " ORDER BY bank_name");
 while ($row = $bankResult->fetch_assoc()) {
     $bankAccounts[] = [
         'id' => (int)$row['id'],

@@ -324,6 +324,7 @@ $allTransactions = [];
 // 1. Order payments (inflows)
 $opWhere = dateFilterClause('op.transaction_date', $cbDateFrom, $cbDateTo);
 $opWhere[] = getSafeReferenceScopeSql('op.safe_id');
+$opWhere[] = getBankReferenceScopeSql('op.bank_account_id');
 $opWhere[] = getCustomerChannelScopeSql('c', 'customer_factory');
 $opSql = "SELECT o.currency, op.amount, op.payment_method, op.reference, op.notes, op.transaction_date,
                  c.name as customer_name
@@ -361,6 +362,8 @@ $popWhere = dateFilterClause('pop.transaction_date', $cbDateFrom, $cbDateTo);
 $popWhere[] = getSafeReferenceScopeSql('pop.safe_id');
 $poSourceSafeScope = getSafeReferenceScopeSql('pop.payment_source_id');
 $popWhere[] = "(pop.payment_source_type IS NULL OR pop.payment_source_type <> 'safe' OR $poSourceSafeScope)";
+$poSourceBankScope = getBankReferenceScopeSql('pop.payment_source_id');
+$popWhere[] = "(pop.payment_source_type IS NULL OR pop.payment_source_type <> 'bank' OR $poSourceBankScope)";
 $popSql = "SELECT pop.amount, pop.payment_method, pop.reference, pop.notes, pop.transaction_date,
                   v.name as vendor_name
            FROM purchase_order_payments pop
@@ -395,6 +398,7 @@ if ($popResult) {
 $epWhere = dateFilterClause('ep.transaction_date', $cbDateFrom, $cbDateTo);
 $exportSafeScope = getSafeScopeSql('s');
 $epWhere[] = "(ep.safe_id IS NULL OR EXISTS (SELECT 1 FROM safes s WHERE s.id = ep.safe_id AND $exportSafeScope))";
+$epWhere[] = getBankReferenceScopeSql('ep.bank_account_id');
 $epSql = "SELECT ep.amount, ep.payment_method, ep.reference, ep.notes, ep.transaction_date,
                  e.name as expense_name, e.category_id, e.currency,
                  s.name as safe_name, ba.bank_name

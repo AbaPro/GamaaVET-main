@@ -75,6 +75,57 @@ function renderUserSafeAccessForm($user = []) {
     <?php
 }
 
+function userBankAccessFromForm($data) {
+    global $conn;
+    if (!isset($data['bank_access_mode'])) return null;
+    // Shares the anti-forgery token rendered by renderUserSafeAccessForm().
+    $token = $data['safe_access_token'] ?? '';
+    if (!is_string($token) || !hash_equals($_SESSION['user_safe_access_token'] ?? '', $token) || $token === '') {
+        throw new DomainException('Invalid bank access request. Refresh the page.');
+    }
+    if ($data['bank_access_mode'] === 'all') return null;
+    if ($data['bank_access_mode'] !== 'selected' || (isset($data['bank_ids']) && !is_array($data['bank_ids']))) {
+        throw new DomainException('Invalid bank account selection.');
+    }
+    $ids = [];
+    foreach ($data['bank_ids'] ?? [] as $value) {
+        $id = filter_var($value, FILTER_VALIDATE_INT);
+        if (!$id || $id < 1) throw new DomainException('Invalid bank account selection.');
+        $ids[$id] = $id;
+    }
+    if ($ids) {
+        $result = $conn->query('SELECT id FROM bank_accounts WHERE id IN (' . implode(',', $ids) . ')');
+        if ($result->num_rows !== count($ids)) throw new DomainException('A selected bank account no longer exists.');
+    }
+    return json_encode(array_values($ids));
+}
+
+function renderUserBankAccessForm($user = []) {
+    global $conn;
+    if (empty($_SESSION['user_safe_access_token'])) $_SESSION['user_safe_access_token'] = bin2hex(random_bytes(32));
+    $restricted = isset($user['bank_access_ids']);
+    $selected = $restricted ? (json_decode($user['bank_access_ids'], true) ?: []) : [];
+    $banks = $conn->query("SELECT b.id, b.bank_name, b.account_number, b.currency, COALESCE(a.name, 'GammaVet') AS brand FROM bank_accounts b LEFT JOIN accounts a ON a.id = b.account_id ORDER BY brand, b.bank_name, b.account_number")->fetch_all(MYSQLI_ASSOC);
+    ?>
+    <div class="mt-3 user-bank-access">
+        <label class="form-label" for="bank_access_mode">Bank Account Access</label>
+        <select class="form-select" id="bank_access_mode" name="bank_access_mode" onchange="this.closest('.user-bank-access').querySelector('.bank-selection').hidden = this.value === 'all'">
+            <option value="all" <?= !$restricted ? 'selected' : '' ?>>All bank accounts in permitted brands</option>
+            <option value="selected" <?= $restricted ? 'selected' : '' ?>>Only selected bank accounts</option>
+        </select>
+        <div class="bank-selection mt-2" <?= !$restricted ? 'hidden' : '' ?>>
+            <label class="form-label" for="bank_ids">Allowed Bank Accounts</label>
+            <select class="form-select" id="bank_ids" name="bank_ids[]" multiple size="6">
+                <?php foreach ($banks as $bank): ?>
+                    <option value="<?= (int)$bank['id'] ?>" <?= in_array((int)$bank['id'], $selected, true) ? 'selected' : '' ?>><?= e($bank['brand'] . ' — ' . $bank['bank_name'] . ' ' . $bank['account_number'] . ' (' . $bank['currency'] . ')') ?></option>
+                <?php endforeach; ?>
+            </select>
+            <small class="text-muted">Select the bank accounts this user may see and use. Select none to deny access to all bank accounts.</small>
+        </div>
+    </div>
+    <?php
+}
+
 function createUser($data) {
     global $conn;
     
@@ -102,10 +153,13 @@ function createUser($data) {
     if ($role_slug === null) { $role_slug = 'salesman'; }
 
     $region = !empty($data['region']) ? $data['region'] : NULL;
-    try { $safeAccess = userSafeAccessFromForm($data); } catch (DomainException $e) { return false; }
+    try {
+        $safeAccess = userSafeAccessFromForm($data);
+        $bankAccess = userBankAccessFromForm($data);
+    } catch (DomainException $e) { return false; }
 
-    $stmt = $conn->prepare("INSERT INTO users (username, password, name, email, role, role_id, is_active, region, safe_access_ids) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-    $stmt->bind_param("sssssiiss",
+    $stmt = $conn->prepare("INSERT INTO users (username, password, name, email, role, role_id, is_active, region, safe_access_ids, bank_access_ids) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    $stmt->bind_param("sssssiisss",
         $data['username'],
         $hashed_password,
         $data['name'],
@@ -114,7 +168,8 @@ function createUser($data) {
         $role_id,
         $is_active,
         $region,
-        $safeAccess
+        $safeAccess,
+        $bankAccess
     );
 
     if (!$stmt->execute()) {
@@ -145,9 +200,13 @@ function updateUser($id, $data) {
     }
 
     $region = !empty($data['region']) ? $data['region'] : NULL;
-    try { $safeAccess = userSafeAccessFromForm($data); } catch (DomainException $e) { return false; }
+    try {
+        $safeAccess = userSafeAccessFromForm($data);
+        $bankAccess = userBankAccessFromForm($data);
+    } catch (DomainException $e) { return false; }
 
     if (!isset($data['safe_access_mode'])) $safeAccess = getUserById($id)['safe_access_ids'] ?? null;
+    if (!isset($data['bank_access_mode'])) $bankAccess = getUserById($id)['bank_access_ids'] ?? null;
 
     // Check if password is being updated
     if (!empty($data['password'])) {
@@ -156,8 +215,8 @@ function updateUser($id, $data) {
         }
         $hashed_password = password_hash($data['password'], PASSWORD_DEFAULT);
         
-        $stmt = $conn->prepare("UPDATE users SET username = ?, password = ?, name = ?, email = ?, role = ?, role_id = ?, is_active = ?, region = ?, safe_access_ids = ? WHERE id = ?");
-        $stmt->bind_param("sssssiissi",
+        $stmt = $conn->prepare("UPDATE users SET username = ?, password = ?, name = ?, email = ?, role = ?, role_id = ?, is_active = ?, region = ?, safe_access_ids = ?, bank_access_ids = ? WHERE id = ?");
+        $stmt->bind_param("sssssiisssi",
             $data['username'],
             $hashed_password,
             $data['name'],
@@ -167,11 +226,12 @@ function updateUser($id, $data) {
             $is_active,
             $region,
             $safeAccess,
+            $bankAccess,
             $id
         );
     } else {
-        $stmt = $conn->prepare("UPDATE users SET username = ?, name = ?, email = ?, role = ?, role_id = ?, is_active = ?, region = ?, safe_access_ids = ? WHERE id = ?");
-        $stmt->bind_param("ssssiissi",
+        $stmt = $conn->prepare("UPDATE users SET username = ?, name = ?, email = ?, role = ?, role_id = ?, is_active = ?, region = ?, safe_access_ids = ?, bank_access_ids = ? WHERE id = ?");
+        $stmt->bind_param("ssssiisssi",
             $data['username'],
             $data['name'],
             $data['email'],
@@ -180,6 +240,7 @@ function updateUser($id, $data) {
             $is_active,
             $region,
             $safeAccess,
+            $bankAccess,
             $id
         );
     }
@@ -187,7 +248,7 @@ function updateUser($id, $data) {
     if (!$stmt->execute()) {
         return false;
     }
-    $changes = ['username' => $data['username'], 'role' => $role_slug, 'active' => (bool)$is_active, 'safe_access_ids' => $safeAccess];
+    $changes = ['username' => $data['username'], 'role' => $role_slug, 'active' => (bool)$is_active, 'safe_access_ids' => $safeAccess, 'bank_access_ids' => $bankAccess];
     if (!empty($data['password'])) {
         $changes['password'] = 'changed';
     }

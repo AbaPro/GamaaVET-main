@@ -204,7 +204,7 @@ $stmt->close();
             </div>
         </div>
         <div class="card-body">
-            <table class="table js-datatable table-striped table-hover">
+            <table class="table js-datatable table-striped table-hover" data-table-page-length="10" data-empty-message="No recent orders.">
                 <thead>
                     <tr>
 	                        <th>Order ID</th>
@@ -227,8 +227,8 @@ $stmt->close();
     JOIN customers c ON o.customer_id = c.id
     $salesScopeJoins
     WHERE 1=1 $salesScopeCondition
-    ORDER BY o.order_date DESC 
-    LIMIT 5
+    ORDER BY o.order_date DESC, o.id DESC
+    LIMIT 500
 ";
 
                     $stmt = $conn->prepare($query);
@@ -258,7 +258,7 @@ $stmt->close();
 	                                <td><?= number_format($order['total_amount'] - $order['paid_amount'], 2) ?></td>
                                     <?php endif; ?>
                                 <td>
-                                    <span class="badge <?= $status_class[$order['status']] ?>">
+                                    <span class="badge <?= $status_class[$order['status']] ?? 'bg-secondary' ?>">
                                         <?= ucwords(str_replace('-', ' ', $order['status'])) ?>
                                     </span>
                                 </td>

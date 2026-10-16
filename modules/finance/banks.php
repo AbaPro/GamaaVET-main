@@ -4,7 +4,7 @@ require_once '../../includes/functions.php';
 require_once __DIR__ . '/account_deletion.php';
 require_once __DIR__ . '/account_balance_adjustments.php';
 
-$canCreate = hasPermission('finance.bank_accounts.create');
+$canCreate = hasPermission('finance.bank_accounts.create') && getUserBankAccessIds() === null;
 $canEdit = hasPermission('finance.bank_accounts.edit');
 $canDelete = hasPermission('finance.bank_accounts.delete');
 $canForceDelete = hasPermission('finance.bank_accounts.force_delete');
@@ -92,7 +92,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_bank_account']))
     } elseif (!isset($currencies[$currency])) {
         setAlert('danger', 'Please select an available currency.');
     } else {
-        $scope = getAccountScopeSql();
+        $scope = getBankScopeSql();
         $existingStmt = $conn->prepare("SELECT balance, currency FROM bank_accounts WHERE id = ? AND $scope LIMIT 1");
         $existingStmt->bind_param('i', $bankId);
         $existingStmt->execute();
@@ -121,7 +121,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_bank_account']))
     redirect('banks.php');
 }
 
-$bankScope = getAccountScopeSql('b');
+$bankScope = getBankScopeSql('b');
 $bankRows = $conn->query("
     SELECT b.*, a.name AS account_name
     FROM bank_accounts b

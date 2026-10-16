@@ -85,7 +85,7 @@ function financeBalanceGetAccount($type, $accountId, $forUpdate = false) {
 
     $currencySql = $config['currency'] ? "`{$config['currency']}`" : "'EGP'";
     $closedSql = $type === 'vendor' ? ', finance_account_closed_at' : '';
-    $scopeSql = $config['scoped'] ? ' AND ' . ($type === 'safe' ? getSafeScopeSql() : getAccountScopeSql()) : '';
+    $scopeSql = $config['scoped'] ? ' AND ' . ($type === 'safe' ? getSafeScopeSql() : ($type === 'bank' ? getBankScopeSql() : getAccountScopeSql())) : '';
     $sql = "SELECT id, `{$config['name']}` AS account_name, `{$config['balance']}` AS balance,
                    $currencySql AS currency$closedSql
             FROM `{$config['table']}`

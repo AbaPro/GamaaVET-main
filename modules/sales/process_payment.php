@@ -38,7 +38,7 @@ $stmtSafes = $pdo->query("SELECT id, CONCAT(name, ' — ', currency) AS name, cu
 $allSafes = $stmtSafes->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
 // Fetch available Banks, scoped to the current brand
-$stmtBanks = $pdo->query("SELECT id, CONCAT(bank_name, ' — ', currency) AS name, currency FROM bank_accounts WHERE " . getAccountScopeSql() . " ORDER BY bank_name");
+$stmtBanks = $pdo->query("SELECT id, CONCAT(bank_name, ' — ', currency) AS name, currency FROM bank_accounts WHERE " . getBankScopeSql() . " ORDER BY bank_name");
 $allBanks = $stmtBanks->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $safeCurrencies = array_column($allSafes, 'currency', 'id');
 $bankCurrencies = array_column($allBanks, 'currency', 'id');

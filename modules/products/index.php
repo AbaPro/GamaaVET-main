@@ -828,11 +828,10 @@ $currentReturnUrl = 'index.php' . (!empty($returnQuery) ? '?' . http_build_query
         for (let i = 0; i < 6; i++) {
             randomPart += chars.charAt(Math.floor(Math.random() * chars.length));
         }
-        const now = new Date();
-        const yy = String(now.getFullYear()).slice(-2);
-        const mm = String(now.getMonth() + 1).padStart(2, '0');
-        const dd = String(now.getDate()).padStart(2, '0');
-        return `SKU-${yy}${mm}${dd}-${randomPart}`;
+        const [yyyy, mm, dd] = new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'Africa/Cairo', year: 'numeric', month: '2-digit', day: '2-digit'
+        }).format(new Date()).split('-');
+        return `SKU-${yyyy.slice(-2)}${mm}${dd}-${randomPart}`;
     };
 
     const generateBarcodePreview = () => {

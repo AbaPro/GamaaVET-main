@@ -42,7 +42,19 @@ require_once '../../includes/header.php';
         ?>
         <tr>
             <td><?= (int)$request['id'] ?></td>
-            <td><?= htmlspecialchars($request['entity_type']) ?> #<?= (int)$request['entity_id'] ?></td>
+            <td><?= htmlspecialchars($request['entity_type']) ?> #<?= (int)$request['entity_id'] ?>
+                <?php
+                $recordPages = ['order' => 'order.php', 'formula' => 'formula_edit.php', 'template' => 'formula_template_edit.php', 'bottle_size' => 'bottle_size_edit.php', 'packaging_option' => 'packaging_option_edit.php'];
+                $recordExists = false;
+                if ($config && isset($recordPages[$request['entity_type']])) {
+                    $existsStmt = $pdo->prepare("SELECT 1 FROM `{$config['table']}` WHERE id = ?");
+                    $existsStmt->execute([(int)$request['entity_id']]);
+                    $recordExists = (bool)$existsStmt->fetchColumn();
+                }
+                ?>
+                <?php if ($recordExists): ?>
+                    <a href="<?= htmlspecialchars($recordPages[$request['entity_type']] . '?id=' . (int)$request['entity_id']) ?>" class="btn btn-sm btn-outline-primary ms-1">View</a>
+                <?php endif; ?></td>
             <td><?= htmlspecialchars($request['requester'] ?? '') ?></td><td><?= htmlspecialchars($request['created_at']) ?></td>
             <td><?= htmlspecialchars($request['status']) ?></td><td><?= htmlspecialchars($request['reviewer'] ?? '') ?></td>
             <td><?php if ($canReview): ?>

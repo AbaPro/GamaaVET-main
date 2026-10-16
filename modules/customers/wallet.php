@@ -165,7 +165,7 @@ if ($safes_result) {
 }
 
 $banks_data = [];
-$banks_result = $conn->query("SELECT id, CONCAT(bank_name, ' — ', currency) AS name FROM bank_accounts WHERE " . getAccountScopeSql() . " ORDER BY bank_name");
+$banks_result = $conn->query("SELECT id, CONCAT(bank_name, ' — ', currency) AS name FROM bank_accounts WHERE " . getBankScopeSql() . " ORDER BY bank_name");
 if ($banks_result) {
     while ($bank = $banks_result->fetch_assoc()) {
         $banks_data[] = $bank;
@@ -276,8 +276,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Get wallet transactions with payment method info. Account names are joined
 // only when the destination belongs to the active brand.
 $safeScope = getSafeScopeSql('s');
-$bankScope = getAccountScopeSql('ba');
-$safePaymentScope = getSafeReferenceScopeSql('wt.safe_id');
+$bankScope = getBankScopeSql('ba');
+$safePaymentScope = getSafeReferenceScopeSql('wt.safe_id') . ' AND ' . getBankReferenceScopeSql('wt.bank_account_id');
 $transactions_sql = "SELECT wt.*, u.name as created_by_name,
                             CASE
                                 WHEN wt.payment_method = 'cash' THEN s.name
@@ -301,7 +301,7 @@ $transactions_stmt->close();
 
 // Order payments are part of the customer's financial activity even when they
 // are paid directly into a cash safe or bank account instead of prepaid credit.
-$orderSafeScope = getSafeReferenceScopeSql('op.safe_id');
+$orderSafeScope = getSafeReferenceScopeSql('op.safe_id') . ' AND ' . getBankReferenceScopeSql('op.bank_account_id');
 $orderPaymentsStmt = $conn->prepare("
     SELECT op.*, o.internal_id AS order_number, u.name AS created_by_name,
            CASE

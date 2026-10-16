@@ -70,8 +70,8 @@ $canViewPhoneNumbers = hasPermission('contacts.phone.view');
 // Fetch payments without exposing another brand's safe or bank name if legacy
 // data contains a cross-brand reference.
 $safeScope = getSafeScopeSql('s');
-$bankScope = getAccountScopeSql('b');
-$safePaymentScope = getSafeReferenceScopeSql('op.safe_id');
+$bankScope = getBankScopeSql('b');
+$safePaymentScope = getSafeReferenceScopeSql('op.safe_id') . ' AND ' . getBankReferenceScopeSql('op.bank_account_id');
 $stmt = $pdo->prepare("
     SELECT op.*, u.name AS created_by_name,
            s.name AS safe_name, b.bank_name AS bank_name

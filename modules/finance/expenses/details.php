@@ -32,8 +32,8 @@ if (!$expense) {
 
 // Fetch Payments
 $safeScope = getSafeScopeSql('s');
-$bankScope = getAccountScopeSql('b');
-$safePaymentScope = getSafeReferenceScopeSql('ep.safe_id');
+$bankScope = getBankScopeSql('b');
+$safePaymentScope = getSafeReferenceScopeSql('ep.safe_id') . ' AND ' . getBankReferenceScopeSql('ep.bank_account_id');
 $sql_payments = "SELECT ep.*, COALESCE(u.name, 'Deleted user') as recorder_name, s.name as safe_name, b.bank_name, b.account_number
                  FROM expense_payments ep
                  LEFT JOIN users u ON ep.created_by = u.id

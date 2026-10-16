@@ -1406,6 +1406,44 @@ function getCustomerReceivablesSummary() {
     ];
 }
 
+/**
+ * Vendor payables (what we owe vendors), mirroring getCustomerReceivablesSummary():
+ *  - unpaid balances on non-cancelled purchase orders; and
+ *  - negative vendor wallet balances (positive wallets are credit we hold).
+ * The larger value per vendor is used so the same debt isn't counted twice.
+ * Vendors and purchase orders are Factory-only and have no currency (EGP).
+ */
+function getVendorPayablesSummary() {
+    global $conn;
+
+    $sql = "
+        SELECT
+            COALESCE(SUM(GREATEST(vendor_orders_due, wallet_debt)), 0) AS total,
+            COALESCE(SUM(GREATEST(vendor_orders_due, wallet_debt) > 0), 0) AS vendor_count,
+            COALESCE(SUM(vendor_orders_due), 0) AS order_balances,
+            COALESCE(SUM(wallet_debt), 0) AS wallet_debt
+        FROM (
+            SELECT
+                payable_vendor.id,
+                COALESCE(SUM(GREATEST(COALESCE(payable_po.total_amount, 0) - COALESCE(payable_po.paid_amount, 0), 0)), 0) AS vendor_orders_due,
+                GREATEST(-COALESCE(payable_vendor.wallet_balance, 0), 0) AS wallet_debt
+            FROM vendors payable_vendor
+            LEFT JOIN purchase_orders payable_po
+                ON payable_po.vendor_id = payable_vendor.id AND payable_po.status <> 'cancelled'
+            GROUP BY payable_vendor.id, payable_vendor.wallet_balance
+        ) vendor_payables
+    ";
+    $result = $conn->query($sql);
+    $summary = $result ? $result->fetch_assoc() : [];
+
+    return [
+        'total' => (float)($summary['total'] ?? 0),
+        'vendor_count' => (int)($summary['vendor_count'] ?? 0),
+        'order_balances' => (float)($summary['order_balances'] ?? 0),
+        'wallet_debt' => (float)($summary['wallet_debt'] ?? 0),
+    ];
+}
+
 function getInventoryChannelScopeSql($inventoryAlias = 'i') {
     global $conn;
 
@@ -1525,6 +1563,51 @@ function getSafeReferenceScopeSql($idColumn) {
     return "($idColumn IS NULL OR $idColumn = 0 OR EXISTS (SELECT 1 FROM safes permitted_safe WHERE permitted_safe.id = $idColumn AND $scope))";
 }
 
+/** Per-user bank account access, same semantics as getUserSafeAccessIds():
+ * NULL = all bank accounts, [] = none. Role permissions and brand scope still apply.
+ */
+function getUserBankAccessIds() {
+    global $conn;
+    static $cache = [];
+    $userId = (int)($_SESSION['user_id'] ?? 0);
+    if (!$userId) return [];
+    if (array_key_exists($userId, $cache)) return $cache[$userId];
+    $result = $conn->query("SHOW COLUMNS FROM users LIKE 'bank_access_ids'");
+    if (!$result || $result->num_rows === 0) return $cache[$userId] = null; // migration not applied yet
+    $stmt = $conn->prepare('SELECT bank_access_ids FROM users WHERE id = ?');
+    $stmt->bind_param('i', $userId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if (!$row) return $cache[$userId] = [];
+    if ($row['bank_access_ids'] === null) return $cache[$userId] = null;
+    $ids = json_decode($row['bank_access_ids'], true);
+    return $cache[$userId] = is_array($ids) ? array_values(array_filter(array_map('intval', $ids), static fn($id) => $id > 0)) : [];
+}
+
+function getBankAccessSql($alias = '') {
+    $ids = getUserBankAccessIds();
+    $prefix = $alias ? "$alias." : '';
+    if ($ids === null) return '1=1';
+    return $ids ? "{$prefix}id IN (" . implode(',', $ids) . ')' : '1=0';
+}
+
+function getBankScopeSql($alias = '') {
+    return '(' . getAccountScopeSql($alias) . ' AND ' . getBankAccessSql($alias) . ')';
+}
+
+/** True when the user is limited to specific safes or bank accounts. */
+function userHasRestrictedFinanceAccess() {
+    return getUserSafeAccessIds() !== null || getUserBankAccessIds() !== null;
+}
+
+/** Filter a transaction's optional bank reference. Non-bank transactions remain visible. */
+function getBankReferenceScopeSql($idColumn) {
+    if (getUserBankAccessIds() === null) return '1=1';
+    $scope = getBankScopeSql('permitted_bank');
+    return "($idColumn IS NULL OR $idColumn = 0 OR EXISTS (SELECT 1 FROM bank_accounts permitted_bank WHERE permitted_bank.id = $idColumn AND $scope))";
+}
+
 /**
  * True when a finance account belongs to the currently selected brand.
  * Legacy NULL account_id rows belong to the Factory channel only.
@@ -1540,7 +1623,7 @@ function isFinanceAccountInCurrentAccount($type, $accountId) {
     $accountId = (int)$accountId;
     if (!isset($tables[$type]) || $accountId <= 0) return false;
 
-    $scope = $type === 'safe' ? getSafeScopeSql() : getAccountScopeSql();
+    $scope = $type === 'safe' ? getSafeScopeSql() : ($type === 'bank' ? getBankScopeSql() : getAccountScopeSql());
     $stmt = $conn->prepare("SELECT id FROM `{$tables[$type]}` WHERE id = ? AND $scope LIMIT 1");
     $stmt->bind_param('i', $accountId);
     $stmt->execute();
@@ -2032,6 +2115,38 @@ function canAccessPortalOrder($portalOrderId) {
     return $allowed;
 }
 
+/**
+ * Returns the permission key needed to delete a portal order request, or null
+ * when it can't be deleted at all. Requests still in review need
+ * sales.portal_orders.delete; approved requests, and converted requests whose
+ * sales order has since been deleted, need sales.portal_orders.force_delete.
+ * A converted request whose order still exists is never deletable.
+ *
+ * $portalOrder must include status, converted_order_id and linked_order_id
+ * (the id of the converted order if it still exists, else null).
+ */
+function getPortalOrderDeletePermission(array $portalOrder): ?string {
+    $status = (string)($portalOrder['status'] ?? '');
+    $convertedOrderId = (int)($portalOrder['converted_order_id'] ?? 0);
+    $linkedOrderExists = !empty($portalOrder['linked_order_id']);
+
+    if (in_array($status, ['pending_review', 'priced', 'rejected'], true)) {
+        return 'sales.portal_orders.delete';
+    }
+    if ($status === 'approved' && !$linkedOrderExists) {
+        return 'sales.portal_orders.force_delete';
+    }
+    if ($status === 'converted' && $convertedOrderId > 0 && !$linkedOrderExists) {
+        return 'sales.portal_orders.force_delete';
+    }
+    return null;
+}
+
+function canDeletePortalOrder(array $portalOrder): bool {
+    $permission = getPortalOrderDeletePermission($portalOrder);
+    return $permission !== null && hasPermission($permission);
+}
+
 function canAccessQuotation($quotationId) {
     global $conn;
 
@@ -2127,7 +2242,7 @@ function isNotificationVisibleInCurrentChannel(array $notification) {
     global $conn;
 
     if (($_SESSION['login_region'] ?? 'factory') === 'factory'
-        && (!in_array($notification['entity_type'] ?? '', ['safe', 'finance_transfer'], true) || getUserSafeAccessIds() === null)) {
+        && (!in_array($notification['entity_type'] ?? '', ['safe', 'bank_account', 'finance_transfer'], true) || !userHasRestrictedFinanceAccess())) {
         return true;
     }
 
@@ -2138,6 +2253,7 @@ function isNotificationVisibleInCurrentChannel(array $notification) {
     }
 
     if ($entityType === 'safe') return isSafeInCurrentAccount($entityId);
+    if ($entityType === 'bank_account') return isBankAccountInCurrentAccount($entityId);
 
     if ($entityType === 'order') {
         return canAccessOrder($entityId);
@@ -2189,7 +2305,7 @@ function getUnreadNotificationsCount() {
     $userId = $_SESSION['user_id'];
     $roleSlug = $_SESSION['role_slug'] ?? null;
     
-    if (($_SESSION['login_region'] ?? 'factory') !== 'factory' || getUserSafeAccessIds() !== null) {
+    if (($_SESSION['login_region'] ?? 'factory') !== 'factory' || userHasRestrictedFinanceAccess()) {
         if ($roleSlug === 'admin') {
             $stmt = $conn->prepare('SELECT type, module, entity_type, entity_id FROM notifications WHERE is_read = 0');
         } else {

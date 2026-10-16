@@ -44,7 +44,7 @@ function financeScopedBalanceRow($type, $id, $lock = false) {
     }
     $config = financeTransferAccountConfig($type);
     if (!$config) throw new DomainException('Invalid financial account.');
-    $scope = $type === 'safe' ? getSafeScopeSql() : getAccountScopeSql();
+    $scope = $type === 'safe' ? getSafeScopeSql() : ($type === 'bank' ? getBankScopeSql() : getAccountScopeSql());
     $stmt = $pdo->prepare("SELECT * FROM `{$config['table']}` WHERE id = ? AND $scope" . ($lock ? ' FOR UPDATE' : ''));
     $stmt->execute([$id]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);

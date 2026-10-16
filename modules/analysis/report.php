@@ -720,13 +720,18 @@ $definitions = [
             ['key' => 'total_amount', 'label' => 'Recorded amount', 'format' => 'currency', 'currency_key' => 'currency'],
         ],
         'run' => function (mysqli $conn, array $filters) use ($customerScope): array {
-            $salesWhere = [$customerScope, getSafeReferenceScopeSql('op.safe_id')];
+            $salesWhere = [$customerScope, getSafeReferenceScopeSql('op.safe_id'), getBankReferenceScopeSql('op.bank_account_id')];
             $salesTypes = '';
             $salesParams = [];
             analysisAddDateFilters($salesWhere, $salesTypes, $salesParams, 'op.transaction_date', $filters);
 
             $poSafeScope = getSafeReferenceScopeSql('pop.payment_source_id');
-            $purchaseWhere = [getSafeReferenceScopeSql('pop.safe_id'), "(pop.payment_source_type IS NULL OR pop.payment_source_type <> 'safe' OR $poSafeScope)"];
+            $poBankScope = getBankReferenceScopeSql('pop.payment_source_id');
+            $purchaseWhere = [
+                getSafeReferenceScopeSql('pop.safe_id'),
+                "(pop.payment_source_type IS NULL OR pop.payment_source_type <> 'safe' OR $poSafeScope)",
+                "(pop.payment_source_type IS NULL OR pop.payment_source_type <> 'bank' OR $poBankScope)",
+            ];
             $purchaseTypes = '';
             $purchaseParams = [];
             analysisAddDateFilters($purchaseWhere, $purchaseTypes, $purchaseParams, 'pop.transaction_date', $filters);
@@ -777,10 +782,11 @@ $definitions = [
                 ? '1=1'
                 : getAccountScopeSql();
             $safeScope = '(' . $scope . ' AND ' . getSafeAccessSql() . ')';
+            $bankScope = '(' . $scope . ' AND ' . getBankAccessSql() . ')';
             $rows = [];
             foreach ([
                 "SELECT 'Safe' AS source_type, name AS account_name, balance FROM safes WHERE $safeScope",
-                "SELECT 'Bank' AS source_type, bank_name AS account_name, balance FROM bank_accounts WHERE $scope",
+                "SELECT 'Bank' AS source_type, bank_name AS account_name, balance FROM bank_accounts WHERE $bankScope",
                 "SELECT 'Personal' AS source_type, name AS account_name, balance FROM personal_accounts WHERE is_active = 1",
             ] as $sql) {
                 $result = $conn->query($sql);

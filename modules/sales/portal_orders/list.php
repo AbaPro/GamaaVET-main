@@ -1,6 +1,5 @@
 <?php
 require_once '../../../includes/auth.php';
-require_once '../../../includes/header.php';
 require_once '../../../config/database.php';
 
 if (!hasPermission('sales.portal_orders.manage')) {
@@ -8,9 +7,6 @@ if (!hasPermission('sales.portal_orders.manage')) {
     header("Location: ../../../dashboard.php");
     exit();
 }
-
-$canDelete = hasPermission('sales.portal_orders.delete');
-$canForceDelete = hasPermission('sales.portal_orders.force_delete');
 
 if (empty($_SESSION['portal_order_delete_token'])) {
     $_SESSION['portal_order_delete_token'] = bin2hex(random_bytes(32));
@@ -25,17 +21,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
     } elseif (!canAccessPortalOrder($deleteId)) {
         $_SESSION['error'] = 'Portal order request not found.';
     } else {
-        $statusStmt = $pdo->prepare("SELECT status FROM portal_orders WHERE id = ?");
+        $statusStmt = $pdo->prepare("
+            SELECT po.status, po.converted_order_id, o.id AS linked_order_id
+            FROM portal_orders po
+            LEFT JOIN orders o ON o.id = po.converted_order_id
+            WHERE po.id = ?
+        ");
         $statusStmt->execute([$deleteId]);
-        $currentStatus = $statusStmt->fetchColumn();
+        $target = $statusStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+        $currentStatus = $target['status'] ?? null;
 
-        $isForceDelete = $currentStatus === 'approved';
-        $requiredPermission = $isForceDelete ? 'sales.portal_orders.force_delete' : 'sales.portal_orders.delete';
+        $requiredPermission = getPortalOrderDeletePermission($target);
+        $isForceDelete = $requiredPermission === 'sales.portal_orders.force_delete';
 
-        if (!hasPermission($requiredPermission)) {
-            $_SESSION['error'] = "You don't have permission to delete this portal order request.";
-        } elseif (!in_array($currentStatus, ['pending_review', 'priced', 'rejected', 'approved'], true)) {
+        if ($requiredPermission === null) {
             $_SESSION['error'] = 'This request can no longer be deleted.';
+        } elseif (!hasPermission($requiredPermission)) {
+            $_SESSION['error'] = "You don't have permission to delete this portal order request.";
         } else {
             try {
                 $pdo->beginTransaction();
@@ -65,9 +67,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
 $status = $_GET['status'] ?? '';
 
 $query = "SELECT po.id, po.status, po.total_amount, po.created_at, po.reviewed_at,
-                 po.converted_order_id, c.name AS customer_name
+                 po.converted_order_id, o.id AS linked_order_id, c.name AS customer_name
           FROM portal_orders po
           JOIN customers c ON c.id = po.customer_id
+          LEFT JOIN orders o ON o.id = po.converted_order_id
           LEFT JOIN factories f ON f.id = c.factory_id
           WHERE " . getCustomerChannelScopeSql('c', 'f');
 $params = [];
@@ -97,6 +100,9 @@ $statusLabelMap = [
     'rejected' => 'Rejected',
     'converted' => 'Converted',
 ];
+
+// Rendered after the POST handler so its redirects can still send headers.
+require_once '../../../includes/header.php';
 ?>
 
 <div class="container mt-4">
@@ -153,8 +159,10 @@ $statusLabelMap = [
                                 </td>
                                 <td><?= number_format($portalOrder['total_amount'], 2) ?></td>
                                 <td>
-                                    <?php if ($portalOrder['converted_order_id']): ?>
-                                        <a href="../order_details.php?id=<?= (int)$portalOrder['converted_order_id'] ?>" class="btn btn-sm btn-info">View Order</a>
+                                    <?php if ($portalOrder['linked_order_id']): ?>
+                                        <a href="../order_details.php?id=<?= (int)$portalOrder['linked_order_id'] ?>" class="btn btn-sm btn-info">View Order</a>
+                                    <?php elseif ($portalOrder['converted_order_id']): ?>
+                                        <span class="text-muted">Order deleted</span>
                                     <?php else: ?>
                                         <span class="text-muted">N/A</span>
                                     <?php endif; ?>
@@ -162,19 +170,14 @@ $statusLabelMap = [
                                 <td>
                                     <div class="d-flex gap-1">
                                         <a href="review.php?id=<?= (int)$portalOrder['id'] ?>" class="btn btn-sm btn-primary">Review</a>
-                                        <?php if ($canDelete && in_array($portalOrder['status'], ['pending_review', 'priced', 'rejected'], true)): ?>
-                                            <form method="post" onsubmit="return confirm('Permanently delete this portal order request? This cannot be undone.');">
+                                        <?php $deletePermission = getPortalOrderDeletePermission($portalOrder); ?>
+                                        <?php if ($deletePermission !== null && hasPermission($deletePermission)): ?>
+                                            <?php $isForceDeleteRow = $deletePermission === 'sales.portal_orders.force_delete'; ?>
+                                            <form method="post" onsubmit="return confirm(<?= htmlspecialchars(json_encode($isForceDeleteRow ? 'This request has already been ' . ($portalOrder['status'] === 'converted' ? 'converted (its order was deleted)' : 'approved') . '. Force delete it anyway? This cannot be undone.' : 'Permanently delete this portal order request? This cannot be undone.'), ENT_QUOTES, 'UTF-8') ?>);">
                                                 <input type="hidden" name="action" value="delete">
                                                 <input type="hidden" name="id" value="<?= (int)$portalOrder['id'] ?>">
                                                 <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['portal_order_delete_token'], ENT_QUOTES, 'UTF-8') ?>">
-                                                <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
-                                            </form>
-                                        <?php elseif ($canForceDelete && $portalOrder['status'] === 'approved' && !$portalOrder['converted_order_id']): ?>
-                                            <form method="post" onsubmit="return confirm('This request has already been approved. Force delete it anyway? This cannot be undone.');">
-                                                <input type="hidden" name="action" value="delete">
-                                                <input type="hidden" name="id" value="<?= (int)$portalOrder['id'] ?>">
-                                                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['portal_order_delete_token'], ENT_QUOTES, 'UTF-8') ?>">
-                                                <button type="submit" class="btn btn-sm btn-danger">Force Delete</button>
+                                                <button type="submit" class="btn btn-sm <?= $isForceDeleteRow ? 'btn-danger' : 'btn-outline-danger' ?>"><?= $isForceDeleteRow ? 'Force Delete' : 'Delete' ?></button>
                                             </form>
                                         <?php endif; ?>
                                     </div>

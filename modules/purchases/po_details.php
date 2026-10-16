@@ -61,6 +61,7 @@ $canViewPhoneNumbers = hasPermission('contacts.phone.view');
 $safeScope = getSafeScopeSql('ps');
 $sourceSafeScope = getSafeReferenceScopeSql('pop.payment_source_id');
 $legacySafeScope = getSafeReferenceScopeSql('pop.safe_id');
+$sourceBankScope = getBankReferenceScopeSql('pop.payment_source_id');
 $stmt = $pdo->prepare("
     SELECT pop.*, u.name AS created_by_name, COALESCE(ps.name, pb.bank_name, pp.name) AS payment_source_name
     FROM purchase_order_payments pop
@@ -70,6 +71,7 @@ $stmt = $pdo->prepare("
     LEFT JOIN personal_accounts pp ON pop.payment_source_type = 'personal' AND pp.id = pop.payment_source_id
     WHERE pop.purchase_order_id = ? AND $legacySafeScope
       AND (pop.payment_source_type IS NULL OR pop.payment_source_type <> 'safe' OR $sourceSafeScope)
+      AND (pop.payment_source_type IS NULL OR pop.payment_source_type <> 'bank' OR $sourceBankScope)
     ORDER BY pop.transaction_date DESC, pop.created_at DESC
 ");
 $stmt->execute([$po_id]);

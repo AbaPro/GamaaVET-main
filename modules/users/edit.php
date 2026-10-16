@@ -93,6 +93,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'safe_access_mode' => $_POST['safe_access_mode'] ?? 'invalid',
         'safe_access_token' => $_POST['safe_access_token'] ?? '',
         'safe_ids' => $_POST['safe_ids'] ?? [],
+        'bank_access_mode' => $_POST['bank_access_mode'] ?? 'invalid',
+        'bank_ids' => $_POST['bank_ids'] ?? [],
         'is_active' => $is_active
     ];
     
@@ -204,6 +206,7 @@ include __DIR__ . '/../../includes/header.php';
                             </div>
                         </div>
                         <?php renderUserSafeAccessForm($user); ?>
+                        <?php renderUserBankAccessForm($user); ?>
                         <div class="row mt-4">
                             <div class="col-12">
                                 <button type="submit" class="btn btn-primary">Update User</button>

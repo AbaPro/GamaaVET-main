@@ -55,7 +55,10 @@ require_once '../../includes/header.php';
         ?>
         <tr>
             <td><?= (int)$request['id'] ?></td>
-            <td><?= htmlspecialchars($request['entity_type']) ?> #<?= (int)$request['entity_id'] ?><?= $request['force_delete'] ? ' (force delete)' : '' ?></td>
+            <td><?= htmlspecialchars($request['entity_type']) ?> #<?= (int)$request['entity_id'] ?><?= $request['force_delete'] ? ' (force delete)' : '' ?>
+                <?php if ($recordUrl = financeDeletionRecordUrl($request['entity_type'], $request['entity_id'])): ?>
+                    <a href="<?= htmlspecialchars($recordUrl) ?>" class="btn btn-sm btn-outline-primary ms-1">View</a>
+                <?php endif; ?></td>
             <td><?= htmlspecialchars($request['requester'] ?? '') ?></td><td><?= htmlspecialchars($request['created_at']) ?></td>
             <td><?= htmlspecialchars($request['status']) ?></td><td><?= htmlspecialchars($request['reviewer'] ?? '') ?></td>
             <td><?php if ($canReview): ?>

@@ -41,10 +41,17 @@ if ($conn->connect_error) {
 // Set charset
 $conn->set_charset("utf8mb4");
 
+// Keep MySQL NOW()/CURDATE()/CURRENT_TIMESTAMP in Cairo time as well. A numeric
+// offset is used because hosted MySQL often lacks the named time zone tables;
+// date('P') already accounts for Egyptian daylight saving time.
+$dbTimeZoneOffset = date('P');
+$conn->query("SET time_zone = '" . $conn->real_escape_string($dbTimeZoneOffset) . "'");
+
 // make a PDO connection
 try {
     $pdo = new PDO("mysql:host=" . DB_HOST . ";dbname=" . DB_NAME . ";charset=utf8mb4", DB_USER, DB_PASS);
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $pdo->exec("SET time_zone = " . $pdo->quote($dbTimeZoneOffset));
 } catch (PDOException $e) {
     die("Connection failed: " . $e->getMessage());
 }

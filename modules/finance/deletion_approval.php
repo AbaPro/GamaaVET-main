@@ -44,6 +44,61 @@ function financeDeletionPermission($type, $force = false) {
     ][$type] ?? null;
 }
 
+/**
+ * Page (relative to modules/finance/) showing the record a deletion request is
+ * about. Child records open their parent (a payment opens its order). Returns
+ * null once the record no longer exists, e.g. after an approved deletion.
+ */
+function financeDeletionRecordUrl($type, $id) {
+    global $pdo;
+    $id = (int)$id;
+    $direct = [
+        'safe' => 'safe_details.php', 'bank' => 'bank_details.php', 'personal' => 'personal_details.php',
+        'expense' => 'expenses/details.php', 'transfer' => 'transfer_details.php',
+        'customer_account' => '../customers/wallet.php', 'vendor_account' => '../vendors/wallet.php',
+        'sales_invoice' => '../sales/order_details.php', 'purchase_invoice' => '../purchases/po_details.php',
+    ];
+    $tables = [
+        'safe' => 'safes', 'bank' => 'bank_accounts', 'personal' => 'personal_accounts', 'expense' => 'expenses',
+        'transfer' => 'finance_transfers', 'customer_account' => 'customers', 'vendor_account' => 'vendors',
+        'sales_invoice' => 'orders', 'purchase_invoice' => 'purchase_orders',
+    ];
+    // [table, parent column, parent page]
+    $children = [
+        'customer_transaction' => ['customer_wallet_transactions', 'customer_id', '../customers/wallet.php'],
+        'customer_adjustment' => ['customer_wallet_balance_adjustments', 'customer_id', '../customers/wallet.php'],
+        'vendor_transaction' => ['vendor_wallet_transactions', 'vendor_id', '../vendors/wallet.php'],
+        'order_payment' => ['order_payments', 'order_id', '../sales/order_details.php'],
+        'purchase_payment' => ['purchase_order_payments', 'purchase_order_id', '../purchases/po_details.php'],
+        'expense_payment' => ['expense_payments', 'expense_id', 'expenses/details.php'],
+    ];
+    try {
+        if ($type === 'category') return 'expenses/categories.php';
+        if (isset($direct[$type])) {
+            $stmt = $pdo->prepare("SELECT id FROM `{$tables[$type]}` WHERE id = ?");
+            $stmt->execute([$id]);
+            return $stmt->fetchColumn() ? $direct[$type] . '?id=' . $id : null;
+        }
+        if (isset($children[$type])) {
+            [$table, $column, $page] = $children[$type];
+            $stmt = $pdo->prepare("SELECT `$column` FROM `$table` WHERE id = ?");
+            $stmt->execute([$id]);
+            $parentId = (int)$stmt->fetchColumn();
+            return $parentId > 0 ? $page . '?id=' . $parentId : null;
+        }
+        if ($type === 'account_adjustment') {
+            $stmt = $pdo->prepare('SELECT account_type, account_id FROM finance_account_balance_adjustments WHERE id = ?');
+            $stmt->execute([$id]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            $pages = ['safe' => 'safe_details.php', 'bank' => 'bank_details.php', 'personal' => 'personal_details.php'];
+            return $row && isset($pages[$row['account_type']]) ? $pages[$row['account_type']] . '?id=' . (int)$row['account_id'] : null;
+        }
+    } catch (PDOException $e) {
+        return null;
+    }
+    return null;
+}
+
 function renderFinanceDeletionRequest($type, $id, $label = 'Request Deletion') {
     $permission = financeDeletionPermission($type);
     if (!$permission || !hasPermission($permission) || !hasPermission('finance.deletions.request')) return;
