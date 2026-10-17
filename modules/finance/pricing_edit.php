@@ -215,26 +215,9 @@ function pricingQty($value) {
         <input type="hidden" name="save_pricing" value="1">
 
         <div class="card mb-3">
-            <div class="card-body row g-3 align-items-center">
-                <div class="col-md-5">
-                    <div class="text-muted small">Customer Name</div>
-                    <div class="fs-5 fw-semibold"><?= e($order['customer_name']); ?></div>
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label small text-muted mb-0" for="margin_percent">Margin %</label>
-                    <div class="input-group">
-                        <input type="number" step="0.01" min="0" class="form-control pricing-margin fw-bold" id="margin_percent" name="margin_percent" value="<?= e(pricingQty($marginPercent)); ?>" <?= $readOnly ? 'readonly' : ''; ?>>
-                        <span class="input-group-text" id="margin_multiplier"><?= pricingQty(100 + $marginPercent); ?>%</span>
-                    </div>
-                </div>
-                <div class="col-md-2 text-md-end">
-                    <div class="text-muted small">Order Total Cost</div>
-                    <div class="fs-5 fw-bold" id="order_total_cost"><?= pricingFmt($totals['total_cost']); ?></div>
-                </div>
-                <div class="col-md-2 text-md-end">
-                    <div class="text-muted small">Selling Price with Profit</div>
-                    <div class="fs-5 fw-bold text-success" id="order_total_selling"><?= pricingFmt($totals['selling_price']); ?></div>
-                </div>
+            <div class="card-body">
+                <div class="text-muted small">Customer Name</div>
+                <div class="fs-5 fw-semibold"><?= e($order['customer_name']); ?></div>
             </div>
             <div class="card-footer small text-muted">
                 <span class="pricing-input px-2 border">Yellow</span> = editable (last price; change it if you will buy at a new price) ·
@@ -359,10 +342,12 @@ function pricingQty($value) {
                 </div>
                 <div class="card-footer">
                     <div class="row text-center g-2">
-                        <div class="col-6 col-md-3"><div class="small text-muted">Total Cost with Packaging</div><div class="fw-bold js-line-total"><?= pricingFmt($line['total_cost']); ?></div></div>
-                        <div class="col-6 col-md-3"><div class="small text-muted">Selling price with Profit</div><div class="fw-bold js-line-selling"><?= pricingFmt($line['selling_price']); ?></div></div>
-                        <div class="col-6 col-md-3"><div class="small text-muted">Unit Selling Price</div><div class="fw-bold fs-5 text-success js-line-unit"><?= pricingFmt($line['unit_selling_price'], 4); ?></div></div>
-                        <div class="col-6 col-md-3"><div class="small text-muted">Unit Cost</div><div class="fw-bold js-line-unit-cost"><?= pricingFmt($line['quantity'] > 0 ? $line['total_cost'] / $line['quantity'] : 0, 4); ?></div></div>
+                        <div class="col-6 col-md-2"><div class="small text-muted">Total Cost with Packaging</div><div class="fw-bold js-line-total"><?= pricingFmt($line['total_cost']); ?></div></div>
+                        <div class="col-6 col-md-2"><div class="small text-muted">Selling price with Profit</div><div class="fw-bold js-line-selling"><?= pricingFmt($line['selling_price']); ?></div></div>
+                        <div class="col-6 col-md-2"><div class="small text-muted">Unit Selling Price</div><div class="fw-bold fs-5 text-success js-line-unit"><?= pricingFmt($line['unit_selling_price'], 4); ?></div></div>
+                        <div class="col-6 col-md-2"><div class="small text-muted">Unit Cost</div><div class="fw-bold js-line-unit-cost"><?= pricingFmt($line['unit_cost'], 4); ?></div></div>
+                        <div class="col-6 col-md-2"><div class="small text-muted">Total Profit</div><div class="fw-bold text-success js-line-profit"><?= pricingFmt($line['profit']); ?></div></div>
+                        <div class="col-6 col-md-2"><div class="small text-muted">Profit per Unit</div><div class="fw-bold text-success js-line-unit-profit"><?= pricingFmt($line['unit_profit'], 4); ?></div></div>
                     </div>
                 </div>
                 <script type="application/json" class="js-pack-options"><?= json_encode(array_map(function ($option) {
@@ -372,11 +357,31 @@ function pricingQty($value) {
         <?php endforeach; ?>
 
         <div class="card mb-3">
+            <div class="card-header"><h5 class="mb-0">Order Totals</h5></div>
+            <div class="card-body row g-3 align-items-center">
+                <div class="col-md-4">
+                    <label class="form-label small text-muted mb-0" for="margin_percent">Profit Margin %</label>
+                    <div class="input-group">
+                        <input type="number" step="0.01" min="0" class="form-control pricing-margin fw-bold" id="margin_percent" name="margin_percent" value="<?= e(pricingQty($marginPercent)); ?>" <?= $readOnly ? 'readonly' : ''; ?>>
+                        <span class="input-group-text" id="margin_multiplier"><?= pricingQty(100 + $marginPercent); ?>%</span>
+                    </div>
+                </div>
+                <div class="col-md-8">
+                    <div class="row text-center g-2">
+                        <div class="col-4"><div class="text-muted small">Order Total Cost</div><div class="fs-5 fw-bold" id="order_total_cost"><?= pricingFmt($totals['total_cost']); ?></div></div>
+                        <div class="col-4"><div class="text-muted small">Selling Price with Profit</div><div class="fs-5 fw-bold" id="order_total_selling"><?= pricingFmt($totals['selling_price']); ?></div></div>
+                        <div class="col-4"><div class="text-muted small">Total Profit</div><div class="fs-5 fw-bold text-success" id="order_total_profit"><?= pricingFmt($totals['profit']); ?></div></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-3">
             <div class="card-header"><h5 class="mb-0">Summary</h5></div>
             <div class="table-responsive">
                 <table class="table table-sm table-bordered mb-0 pricing-sheet">
                     <thead class="table-light">
-                        <tr><th>Product</th><th class="text-end">Quantity</th><th class="text-end">Total Raw material cost</th><th class="text-end">Packaging cost</th><th class="text-end">Total Cost with Packaging</th><th class="text-end">Selling price with Profit</th><th class="text-end">Unit Selling Price</th></tr>
+                        <tr><th>Product</th><th class="text-end">Quantity</th><th class="text-end">Total Raw material cost</th><th class="text-end">Packaging cost</th><th class="text-end">Total Cost with Packaging</th><th class="text-end">Selling price with Profit</th><th class="text-end">Unit Selling Price</th><th class="text-end">Total Profit</th><th class="text-end">Profit per Unit</th></tr>
                     </thead>
                     <tbody>
                         <?php foreach ($lines as $i => $line): ?>
@@ -388,11 +393,13 @@ function pricingQty($value) {
                                 <td class="text-end pricing-calc js-s-total"><?= pricingFmt($line['total_cost']); ?></td>
                                 <td class="text-end pricing-calc js-s-selling"><?= pricingFmt($line['selling_price']); ?></td>
                                 <td class="text-end pricing-calc fw-bold js-s-unit"><?= pricingFmt($line['unit_selling_price'], 4); ?></td>
+                                <td class="text-end pricing-calc js-s-profit"><?= pricingFmt($line['profit']); ?></td>
+                                <td class="text-end pricing-calc js-s-unit-profit"><?= pricingFmt($line['unit_profit'], 4); ?></td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>
                     <tfoot>
-                        <tr class="fw-bold"><td colspan="4" class="text-end">Order Total Cost</td><td class="text-end pricing-calc" id="summary_total_cost"><?= pricingFmt($totals['total_cost']); ?></td><td class="text-end pricing-calc" id="summary_total_selling"><?= pricingFmt($totals['selling_price']); ?></td><td></td></tr>
+                        <tr class="fw-bold"><td colspan="4" class="text-end">Order Total Cost</td><td class="text-end pricing-calc" id="summary_total_cost"><?= pricingFmt($totals['total_cost']); ?></td><td class="text-end pricing-calc" id="summary_total_selling"><?= pricingFmt($totals['selling_price']); ?></td><td></td><td class="text-end pricing-calc" id="summary_total_profit"><?= pricingFmt($totals['profit']); ?></td><td></td></tr>
                     </tfoot>
                 </table>
             </div>
@@ -459,6 +466,10 @@ function pricingQty($value) {
                 card.querySelector('.js-line-selling').textContent = fmt(selling);
                 card.querySelector('.js-line-unit').textContent = fmt(quantity > 0 ? selling / quantity : 0, 4);
                 card.querySelector('.js-line-unit-cost').textContent = fmt(quantity > 0 ? total / quantity : 0, 4);
+                const profit = selling - total;
+                const unitProfit = quantity > 0 ? profit / quantity : 0;
+                card.querySelector('.js-line-profit').textContent = fmt(profit);
+                card.querySelector('.js-line-unit-profit').textContent = fmt(unitProfit, 4);
 
                 const s = form.querySelector('[data-summary="' + i + '"]');
                 s.querySelector('.js-s-qty').textContent = qty(quantity);
@@ -467,6 +478,8 @@ function pricingQty($value) {
                 s.querySelector('.js-s-total').textContent = fmt(total);
                 s.querySelector('.js-s-selling').textContent = fmt(selling);
                 s.querySelector('.js-s-unit').textContent = fmt(quantity > 0 ? selling / quantity : 0, 4);
+                s.querySelector('.js-s-profit').textContent = fmt(profit);
+                s.querySelector('.js-s-unit-profit').textContent = fmt(unitProfit, 4);
 
                 orderCost += total;
                 orderSelling += selling;
@@ -476,6 +489,8 @@ function pricingQty($value) {
             document.getElementById('order_total_selling').textContent = fmt(orderSelling);
             document.getElementById('summary_total_cost').textContent = fmt(orderCost);
             document.getElementById('summary_total_selling').textContent = fmt(orderSelling);
+            document.getElementById('order_total_profit').textContent = fmt(orderSelling - orderCost);
+            document.getElementById('summary_total_profit').textContent = fmt(orderSelling - orderCost);
         }
 
         // Switching packaging kit replaces the packaging rows with that kit's items and last prices.

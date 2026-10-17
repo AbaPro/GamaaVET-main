@@ -102,7 +102,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price, is_free_sample)
             VALUES (?, ?, ?, ?, ?, ?)
         ");
-        $stockLogs = [];
         $priceLogs = [];
         
         foreach ($items as $item) {
@@ -124,27 +123,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 ];
             }
             
-            // Update inventory (if final product)
-            $product_type = $pdo->query("SELECT type FROM products WHERE id = " . $item['product_id'])->fetchColumn();
-            if ($product_type == 'final') {
-                $beforeStmt = $pdo->prepare("SELECT quantity FROM inventory_products WHERE inventory_id = ? AND product_id = ? LIMIT 1");
-                $beforeStmt->execute([1, $item['product_id']]);
-                $quantityBefore = (float)($beforeStmt->fetchColumn() ?: 0);
-                $pdo->exec("
-                    UPDATE inventory_products 
-                    SET quantity = quantity - " . $item['quantity'] . " 
-                    WHERE product_id = " . $item['product_id'] . " 
-                    AND inventory_id = 1" // Assuming main inventory is ID 1
-                );
-                $stockLogs[] = [
-                    'product_id' => (int)$item['product_id'],
-                    'change_quantity' => -(float)$item['quantity'],
-                    'quantity_before' => $quantityBefore,
-                    'quantity_after' => $quantityBefore - (float)$item['quantity'],
-                    'source_id' => $orderItemId,
-                    'sell_price' => (float)$item['unit_price'],
-                ];
-            }
         }
         
         // Update quotation with order ID
@@ -152,20 +130,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $stmt->execute([$order_id, $quotation_id]);
         
         $pdo->commit();
-        foreach ($stockLogs as $stockLog) {
-            logInventoryStockChange(
-                1,
-                $stockLog['product_id'],
-                $stockLog['change_quantity'],
-                $stockLog['quantity_before'],
-                $stockLog['quantity_after'],
-                'quotation_conversion',
-                $stockLog['source_id'],
-                null,
-                $stockLog['sell_price'],
-                'Quotation #' . $quotation_id . ' converted to order ' . $internal_id
-            );
-        }
         foreach ($priceLogs as $priceLog) {
             logProductPrice($priceLog['product_id'], 'sell', $priceLog['price'], $priceLog['quantity'], 'quotation_conversion', $priceLog['source_id'], 'Quotation #' . $quotation_id . ' converted to order ' . $internal_id);
         }

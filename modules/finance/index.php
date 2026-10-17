@@ -264,8 +264,7 @@ require_once '../../includes/header.php';
             <span class="badge bg-light text-dark border"><i class="fas fa-truck-field"></i></span>
         </div>
         <div class="h3 mb-1 text-danger"><?= e(formatCurrency($payables['total'])); ?></div>
-        <div class="small text-muted">Total amount on us for <?= number_format($payables['vendor_count']); ?> vendor<?= $payables['vendor_count'] === 1 ? '' : 's'; ?> · current balance</div>
-        <div class="small text-muted">Unpaid purchase orders <?= e(formatCurrency($payables['order_balances'])); ?> · wallet debt <?= e(formatCurrency($payables['wallet_debt'])); ?></div>
+        <div class="small text-muted">Total amount on us for <?= number_format($payables['vendor_count']); ?> vendor<?= $payables['vendor_count'] === 1 ? '' : 's'; ?> · from vendor wallets</div>
     </div></div></div>
     <?php endif; ?>
 </div>

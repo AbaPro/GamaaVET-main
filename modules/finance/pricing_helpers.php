@@ -452,6 +452,9 @@ function pricingCalculateLine(array $line, $marginPercent) {
     $line['total_cost'] = $totalCost;
     $line['selling_price'] = $sellingPrice;
     $line['unit_selling_price'] = $quantity > 0 ? $sellingPrice / $quantity : 0.0;
+    $line['unit_cost'] = $quantity > 0 ? $totalCost / $quantity : 0.0;
+    $line['profit'] = $sellingPrice - $totalCost;
+    $line['unit_profit'] = $quantity > 0 ? $line['profit'] / $quantity : 0.0;
     return $line;
 }
 
@@ -463,6 +466,7 @@ function pricingCalculate(array $lines, $marginPercent) {
         $totals['selling_price'] += $line['selling_price'];
     }
     unset($line);
+    $totals['profit'] = $totals['selling_price'] - $totals['total_cost'];
     return [$lines, $totals];
 }
 

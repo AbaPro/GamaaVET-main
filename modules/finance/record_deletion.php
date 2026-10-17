@@ -306,16 +306,12 @@ function financeRestoreSalesInvoiceStock($orderId) {
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $item) {
         $movements = [];
         if (tableExists('inventory_stock_logs')) {
-            $logs = $pdo->prepare("SELECT inventory_id, product_id, SUM(change_quantity) AS change_quantity FROM inventory_stock_logs WHERE source_type IN ('sales_order', 'portal_order_conversion', 'quotation_conversion') AND source_id = ? GROUP BY inventory_id, product_id");
+            $logs = $pdo->prepare("SELECT inventory_id, product_id, SUM(change_quantity) AS change_quantity, MIN(quantity_before) AS quantity_before FROM inventory_stock_logs WHERE source_type IN ('sales_order', 'portal_order_conversion', 'quotation_conversion') AND source_id = ? GROUP BY inventory_id, product_id");
             $logs->execute([$item['id']]);
             $movements = $logs->fetchAll(PDO::FETCH_ASSOC);
         }
         if ($movements && abs(array_sum(array_column($movements, 'change_quantity')) + (float)$item['quantity']) >= 0.005) {
             throw new DomainException('Invoice stock history does not match the item quantity. Reconcile stock before deletion.');
-        }
-        if (!$movements) {
-            $product = financeRecordRow('products', (int)$item['product_id']);
-            if ($product['type'] === 'final') throw new DomainException('Inventory movement history is missing for this invoice. Reconcile stock before deletion.');
         }
         foreach ($movements as $movement) {
             if ((int)$movement['product_id'] !== (int)$item['product_id'] || (float)$movement['change_quantity'] >= 0) throw new DomainException('Invoice inventory movements are inconsistent.');
@@ -326,7 +322,12 @@ function financeRestoreSalesInvoiceStock($orderId) {
             $stockStmt = $pdo->prepare('SELECT quantity FROM inventory_products WHERE inventory_id = ? AND product_id = ? FOR UPDATE');
             $stockStmt->execute([$movement['inventory_id'], $movement['product_id']]);
             $before = $stockStmt->fetchColumn();
-            if ($before === false) throw new DomainException('Invoice inventory no longer exists. Reconcile stock before deletion.');
+            if ($before === false) {
+                // Older sales orders logged against inventory 1 even when the product was never stocked there,
+                // so a zero starting quantity with no stock row means nothing was actually deducted.
+                if (abs((float)$movement['quantity_before']) < 0.005) continue;
+                throw new DomainException('Invoice inventory no longer exists. Reconcile stock before deletion.');
+            }
             $quantity = -(float)$movement['change_quantity'];
             $pdo->prepare('UPDATE inventory_products SET quantity = quantity + ? WHERE inventory_id = ? AND product_id = ?')->execute([$quantity, $movement['inventory_id'], $movement['product_id']]);
             $pdo->prepare("INSERT INTO inventory_stock_logs (inventory_id, product_id, change_quantity, quantity_before, quantity_after, source_type, source_id, notes, created_by) VALUES (?, ?, ?, ?, ?, 'sales_invoice_deletion', ?, ?, ?)")->execute([$movement['inventory_id'], $movement['product_id'], $quantity, $before, (float)$before + $quantity, $orderId, 'Stock restored after approved invoice deletion.', $_SESSION['user_id']]);

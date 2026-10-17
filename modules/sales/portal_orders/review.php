@@ -282,7 +282,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'conve
             VALUES (?, ?, ?, ?, ?, 0)
         ");
 
-        $stockLogs = [];
         $priceLogs = [];
 
         foreach ($items as $item) {
@@ -294,25 +293,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'conve
                 $item['total_price'],
             ]);
             $orderItemId = (int)$pdo->lastInsertId();
-
-            $beforeStmt = $pdo->prepare("SELECT quantity FROM inventory_products WHERE inventory_id = 1 AND product_id = ? LIMIT 1");
-            $beforeStmt->execute([$item['product_id']]);
-            $quantityBefore = $beforeStmt->fetchColumn();
-
-            if ($quantityBefore !== false) {
-                $quantityBefore = (float)$quantityBefore;
-                $deductStmt = $pdo->prepare("UPDATE inventory_products SET quantity = quantity - ? WHERE inventory_id = 1 AND product_id = ?");
-                $deductStmt->execute([$item['quantity'], $item['product_id']]);
-
-                $stockLogs[] = [
-                    'product_id' => (int)$item['product_id'],
-                    'change_quantity' => -(float)$item['quantity'],
-                    'quantity_before' => $quantityBefore,
-                    'quantity_after' => $quantityBefore - (float)$item['quantity'],
-                    'source_id' => $orderItemId,
-                    'sell_price' => (float)$item['unit_price'],
-                ];
-            }
 
             $priceLogs[] = [
                 'product_id' => (int)$item['product_id'],
@@ -329,20 +309,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'conve
 
         $pdo->commit();
 
-        foreach ($stockLogs as $stockLog) {
-            logInventoryStockChange(
-                1,
-                $stockLog['product_id'],
-                $stockLog['change_quantity'],
-                $stockLog['quantity_before'],
-                $stockLog['quantity_after'],
-                'portal_order_conversion',
-                $stockLog['source_id'],
-                null,
-                $stockLog['sell_price'],
-                'Portal order request #' . $portalOrderId . ' converted to order ' . $internalId
-            );
-        }
         foreach ($priceLogs as $priceLog) {
             logProductPrice(
                 $priceLog['product_id'],

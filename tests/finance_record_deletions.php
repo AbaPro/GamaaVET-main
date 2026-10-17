@@ -15,7 +15,7 @@ $cases = [
  'transfer-approved', 'transfer-pending', 'transfer-rejected', 'transfer-reversed', 'transfer-insufficient', 'transfer-external',
  'customer-settlement', 'bank-settlement', 'personal-settlement', 'vendor-settlement', 'newer-settlement-blocked', 'older-settlement-blocked',
  'customer-close', 'customer-close-debt', 'customer-close-orders', 'vendor-close', 'vendor-close-debt', 'vendor-close-orders',
- 'customer-reopen', 'reopen-denied', 'invoice-sales', 'invoice-purchase', 'invoice-paid-blocked', 'invoice-receipt-blocked', 'invoice-inventory-blocked', 'invoice-stock', 'invoice-stock-missing', 'invoice-stock-otherbrand', 'invoice-stock-duplicate',
+ 'customer-reopen', 'reopen-denied', 'invoice-sales', 'invoice-purchase', 'invoice-paid-blocked', 'invoice-receipt-blocked', 'invoice-inventory-blocked', 'invoice-stock', 'invoice-stock-missing', 'invoice-stock-otherbrand', 'invoice-stock-duplicate', 'invoice-stock-never-stocked', 'invoice-stock-unstocked-nolog', 'invoice-stock-row-deleted',
  'request-only', 'no-request-permission', 'no-action-permission', 'no-source-permission', 'no-approval-permission', 'self-approval', 'admin-self-approval', 'wrong-brand', 'wrong-request-account', 'csrf', 'already-approved',
 ];
 $mode = $argv[1] ?? 'suite';
@@ -147,14 +147,18 @@ if (str_starts_with($mode, 'invoice-')) {
     if (str_starts_with($mode, 'invoice-stock')) {
         $pdo->exec("INSERT INTO products VALUES (1, 'final')");
         $pdo->exec("INSERT INTO inventories VALUES (1, 'Main', NULL)");
-        $pdo->exec('INSERT INTO inventory_products VALUES (1, 1, 1, 8)');
+        $unstocked = in_array($mode, ['invoice-stock-never-stocked', 'invoice-stock-unstocked-nolog', 'invoice-stock-row-deleted'], true);
+        $noLog = in_array($mode, ['invoice-stock-missing', 'invoice-stock-unstocked-nolog'], true);
+        if (!$unstocked) $pdo->exec('INSERT INTO inventory_products VALUES (1, 1, 1, 8)');
         $pdo->exec('INSERT INTO order_items VALUES (1, 1, 1, 2)');
-        if ($mode !== 'invoice-stock-missing') $pdo->exec("INSERT INTO inventory_stock_logs (id, inventory_id, product_id, change_quantity, quantity_before, quantity_after, source_type, source_id) VALUES (1, 1, 1, -2, 10, 8, 'sales_order', 1)");
+        if ($mode === 'invoice-stock-never-stocked') $pdo->exec("INSERT INTO inventory_stock_logs (id, inventory_id, product_id, change_quantity, quantity_before, quantity_after, source_type, source_id) VALUES (1, 1, 1, -2, 0, -2, 'sales_order', 1)");
+        elseif (!in_array($mode, ['invoice-stock-missing', 'invoice-stock-unstocked-nolog'], true)) $pdo->exec("INSERT INTO inventory_stock_logs (id, inventory_id, product_id, change_quantity, quantity_before, quantity_after, source_type, source_id) VALUES (1, 1, 1, -2, 10, 8, 'sales_order', 1)");
         if ($mode === 'invoice-stock-duplicate') $pdo->exec("INSERT INTO inventory_stock_logs (inventory_id, product_id, change_quantity, quantity_before, quantity_after, source_type, source_id) VALUES (1, 1, -2, 10, 8, 'sales_order', 1)");
         if ($mode === 'invoice-stock-otherbrand') $pdo->exec("UPDATE inventories SET direct_sale = 'primer'");
-        if ($mode !== 'invoice-stock') $blocked = true;
-        $checks['SELECT quantity FROM inventory_products WHERE id = 1'] = 10;
-        $checks["SELECT COUNT(*) FROM inventory_stock_logs WHERE source_type = 'sales_invoice_deletion'"] = 1;
+        if (!in_array($mode, ['invoice-stock', 'invoice-stock-missing', 'invoice-stock-never-stocked', 'invoice-stock-unstocked-nolog'], true)) $blocked = true;
+        if ($unstocked) $checks['SELECT COUNT(*) FROM inventory_products'] = 0;
+        else $checks['SELECT quantity FROM inventory_products WHERE id = 1'] = $noLog ? 8 : 10;
+        $checks["SELECT COUNT(*) FROM inventory_stock_logs WHERE source_type = 'sales_invoice_deletion'"] = ($unstocked || $noLog) ? 0 : 1;
     }
     if ($mode === 'invoice-inventory-blocked') { $pdo->exec('INSERT INTO purchase_order_items VALUES (1, 1, 1)'); $blocked = true; }
 }

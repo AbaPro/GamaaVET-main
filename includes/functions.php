@@ -1407,40 +1407,27 @@ function getCustomerReceivablesSummary() {
 }
 
 /**
- * Vendor payables (what we owe vendors), mirroring getCustomerReceivablesSummary():
- *  - unpaid balances on non-cancelled purchase orders; and
- *  - negative vendor wallet balances (positive wallets are credit we hold).
- * The larger value per vendor is used so the same debt isn't counted twice.
- * Vendors and purchase orders are Factory-only and have no currency (EGP).
+ * Vendor payables (what we owe vendors), based only on vendor wallets:
+ * negative wallet balances are debt (positive wallets are credit we hold).
+ * Purchase orders are not counted.
  */
 function getVendorPayablesSummary() {
     global $conn;
 
     $sql = "
         SELECT
-            COALESCE(SUM(GREATEST(vendor_orders_due, wallet_debt)), 0) AS total,
-            COALESCE(SUM(GREATEST(vendor_orders_due, wallet_debt) > 0), 0) AS vendor_count,
-            COALESCE(SUM(vendor_orders_due), 0) AS order_balances,
-            COALESCE(SUM(wallet_debt), 0) AS wallet_debt
-        FROM (
-            SELECT
-                payable_vendor.id,
-                COALESCE(SUM(GREATEST(COALESCE(payable_po.total_amount, 0) - COALESCE(payable_po.paid_amount, 0), 0)), 0) AS vendor_orders_due,
-                GREATEST(-COALESCE(payable_vendor.wallet_balance, 0), 0) AS wallet_debt
-            FROM vendors payable_vendor
-            LEFT JOIN purchase_orders payable_po
-                ON payable_po.vendor_id = payable_vendor.id AND payable_po.status <> 'cancelled'
-            GROUP BY payable_vendor.id, payable_vendor.wallet_balance
-        ) vendor_payables
+            COALESCE(SUM(GREATEST(-COALESCE(wallet_balance, 0), 0)), 0) AS wallet_debt,
+            COALESCE(SUM(wallet_balance < 0), 0) AS vendor_count
+        FROM vendors
     ";
     $result = $conn->query($sql);
     $summary = $result ? $result->fetch_assoc() : [];
+    $debt = (float)($summary['wallet_debt'] ?? 0);
 
     return [
-        'total' => (float)($summary['total'] ?? 0),
+        'total' => $debt,
         'vendor_count' => (int)($summary['vendor_count'] ?? 0),
-        'order_balances' => (float)($summary['order_balances'] ?? 0),
-        'wallet_debt' => (float)($summary['wallet_debt'] ?? 0),
+        'wallet_debt' => $debt,
     ];
 }
 
