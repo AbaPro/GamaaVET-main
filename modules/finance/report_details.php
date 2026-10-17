@@ -94,6 +94,8 @@ require_once '../../includes/header.php';
     <a href="index.php?<?= e($reportQuery); ?>" class="btn btn-outline-secondary"><i class="fas fa-arrow-left me-1"></i>Finance Dashboard</a>
 </div>
 
+<?php require __DIR__ . '/period_filter.php'; ?>
+
 <div class="card border-0 shadow-sm mb-4"><div class="card-body">
     <?php if (!$totals): ?><div class="h3 mb-0"><?= e(formatCurrency(0)); ?></div><?php endif; ?>
     <?php foreach ($totals as $currency => $summary): ?>

@@ -1,18 +1,20 @@
 <?php
 // Shared reporting period and sales scope for dashboard cards and drill-downs.
 // ---- Reporting period -------------------------------------------------------
+// The current calendar year is the default, so totals roll over each new year.
+$today = new DateTimeImmutable('today');
 $periods = [
+    'this_year' => 'This Year (' . $today->format('Y') . ')',
+    'last_year' => 'Last Year (' . ($today->format('Y') - 1) . ')',
     'this_month' => 'This Month',
     'last_month' => 'Last Month',
-    'this_year' => 'This Year',
     'all' => 'All Time',
     'custom' => 'Custom',
 ];
-$period = (string)($_GET['period'] ?? 'this_month');
+$period = (string)($_GET['period'] ?? 'this_year');
 if (!isset($periods[$period])) {
-    $period = 'this_month';
+    $period = 'this_year';
 }
-$today = new DateTimeImmutable('today');
 $dateFrom = null;
 $dateTo = null;
 switch ($period) {
@@ -27,6 +29,10 @@ switch ($period) {
     case 'this_year':
         $dateFrom = $today->format('Y-01-01');
         $dateTo = $today->format('Y-m-d');
+        break;
+    case 'last_year':
+        $dateFrom = ($today->format('Y') - 1) . '-01-01';
+        $dateTo = ($today->format('Y') - 1) . '-12-31';
         break;
     case 'custom':
         $dateFrom = normalizeTransactionDate($_GET['from'] ?? '');
@@ -65,3 +71,8 @@ $reportQuery = http_build_query(['period' => $period, 'from' => $dateFrom, 'to' 
 $periodLabel = $period === 'all'
     ? 'All time'
     : (($dateFrom ? date('d M Y', strtotime($dateFrom)) : 'Start') . ' – ' . ($dateTo ? date('d M Y', strtotime($dateTo)) : 'Today'));
+// Short tag for cards: the year for yearly periods, otherwise the range.
+$periodTag = in_array($period, ['this_year', 'last_year'], true) ? substr($dateFrom, 0, 4) : $periodLabel;
+if (in_array($period, ['this_year', 'last_year'], true)) {
+    $periodLabel = $periodTag . ' · ' . $periodLabel;
+}

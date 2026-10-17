@@ -99,6 +99,25 @@ function financeDeletionRecordUrl($type, $id) {
     return null;
 }
 
+/**
+ * Human-facing reference for a request's record: sales invoices show the order
+ * number (ORD-...) used on Order Details instead of the internal row id.
+ */
+function financeDeletionRecordLabel($type, $id) {
+    global $pdo;
+    $id = (int)$id;
+    if ($type === 'sales_invoice') {
+        try {
+            $stmt = $pdo->prepare('SELECT internal_id FROM orders WHERE id = ?');
+            $stmt->execute([$id]);
+            $number = $stmt->fetchColumn();
+            if ($number) return '#' . $number;
+        } catch (PDOException $e) {
+        }
+    }
+    return '#' . $id;
+}
+
 function renderFinanceDeletionRequest($type, $id, $label = 'Request Deletion') {
     $permission = financeDeletionPermission($type);
     if (!$permission || !hasPermission($permission) || !hasPermission('finance.deletions.request')) return;

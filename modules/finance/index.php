@@ -272,28 +272,7 @@ require_once '../../includes/header.php';
 <?php endif; ?>
 
 <?php if ($canViewRevenue || $canViewCogs || $canViewMaterialCost): ?>
-<div class="card border-0 shadow-sm mb-4"><div class="card-body py-3">
-    <form method="get" class="row g-2 align-items-end">
-        <div class="col-md-3">
-            <label for="fdPeriod" class="form-label mb-1">Period</label>
-            <select class="form-select" id="fdPeriod" name="period">
-                <?php foreach ($periods as $key => $label): ?>
-                    <option value="<?= e($key); ?>" <?= $period === $key ? 'selected' : ''; ?>><?= e($label); ?></option>
-                <?php endforeach; ?>
-            </select>
-        </div>
-        <div class="col-md-2 fd-custom-range <?= $period === 'custom' ? '' : 'd-none'; ?>">
-            <label for="fdFrom" class="form-label mb-1">From</label>
-            <input type="date" class="form-control" id="fdFrom" name="from" value="<?= e($period === 'custom' ? ($dateFrom ?? '') : ''); ?>">
-        </div>
-        <div class="col-md-2 fd-custom-range <?= $period === 'custom' ? '' : 'd-none'; ?>">
-            <label for="fdTo" class="form-label mb-1">To</label>
-            <input type="date" class="form-control" id="fdTo" name="to" value="<?= e($period === 'custom' ? ($dateTo ?? '') : ''); ?>">
-        </div>
-        <div class="col-auto"><button type="submit" class="btn btn-primary"><i class="fas fa-filter me-1"></i>Apply</button></div>
-        <div class="col text-end text-muted small align-self-center"><i class="far fa-calendar me-1"></i><?= e($periodLabel); ?></div>
-    </form>
-</div></div>
+<?php require __DIR__ . '/period_filter.php'; ?>
 
 <div class="row mb-3">
     <?php if ($canViewRevenue): ?>
@@ -332,7 +311,7 @@ require_once '../../includes/header.php';
             <a href="report_details.php?metric=material&amp;<?= e($reportQuery); ?>" class="stretched-link small text-uppercase text-muted fw-bold text-decoration-none">Material Cost<i class="fas fa-arrow-right ms-2" aria-hidden="true"></i></a>
             <span class="badge bg-light text-dark border"><i class="fas fa-flask"></i></span>
         </div>
-        <div class="h3 mb-2"><?= e(formatCurrency($materialCost['total'])); ?></div>
+        <div class="h3 mb-2"><?= e(formatCurrency($materialCost['total'])); ?> <span class="badge bg-light text-muted border fs-6 align-middle"><?= e($periodTag); ?></span></div>
         <div class="small text-muted">Raw materials received · <?= number_format($materialCost['orders']); ?> purchase order<?= $materialCost['orders'] === 1 ? '' : 's'; ?></div>
     </div></div></div>
     <?php endif; ?>
@@ -420,15 +399,6 @@ require_once '../../includes/header.php';
 
 <script>
 document.addEventListener('DOMContentLoaded', function () {
-    const period = document.getElementById('fdPeriod');
-    if (period) {
-        period.addEventListener('change', function () {
-            document.querySelectorAll('.fd-custom-range').forEach(function (el) {
-                el.classList.toggle('d-none', period.value !== 'custom');
-            });
-        });
-    }
-
     // List is the default; the viewer's last choice is remembered when storage is available.
     const storageKey = 'financeDashboardView';
     function applyView(view) {
