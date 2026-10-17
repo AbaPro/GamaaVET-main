@@ -58,33 +58,41 @@ $canViewPOPrices = hasPermission('purchases.po.price.view');
 $canViewPhoneNumbers = hasPermission('contacts.phone.view');
 
 // Fetch payments
-$safeScope = getSafeScopeSql('ps');
-$sourceSafeScope = getSafeReferenceScopeSql('pop.payment_source_id');
-$legacySafeScope = getSafeReferenceScopeSql('pop.safe_id');
-$sourceBankScope = getBankReferenceScopeSql('pop.payment_source_id');
-$stmt = $pdo->prepare("
-    SELECT pop.*, u.name AS created_by_name, COALESCE(ps.name, pb.bank_name, pp.name) AS payment_source_name
-    FROM purchase_order_payments pop
-    JOIN users u ON pop.created_by = u.id
-    LEFT JOIN safes ps ON pop.payment_source_type = 'safe' AND ps.id = pop.payment_source_id AND $safeScope
-    LEFT JOIN bank_accounts pb ON pop.payment_source_type = 'bank' AND pb.id = pop.payment_source_id
-    LEFT JOIN personal_accounts pp ON pop.payment_source_type = 'personal' AND pp.id = pop.payment_source_id
-    WHERE pop.purchase_order_id = ? AND $legacySafeScope
-      AND (pop.payment_source_type IS NULL OR pop.payment_source_type <> 'safe' OR $sourceSafeScope)
-      AND (pop.payment_source_type IS NULL OR pop.payment_source_type <> 'bank' OR $sourceBankScope)
-    ORDER BY pop.transaction_date DESC, pop.created_at DESC
-");
-$stmt->execute([$po_id]);
-$payments = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
+$canDeletePayments = hasPermission('finance.purchase_payments.delete') && hasPermission('finance.deletions.request');
+$canViewPaymentHistory = $canViewPOPrices && (hasPermission('finance.po_payment.process') || $canDeletePayments);
+$payments = [];
 $paymentAttachmentsByPayment = [];
-if (!empty($payments)) {
-    $paymentIds = array_column($payments, 'id');
-    $placeholders = implode(',', array_fill(0, count($paymentIds), '?'));
-    $stmt = $pdo->prepare("SELECT purchase_order_payment_id, file_path, original_name FROM purchase_order_payment_attachments WHERE purchase_order_payment_id IN ($placeholders) ORDER BY created_at ASC");
-    $stmt->execute($paymentIds);
-    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-        $paymentAttachmentsByPayment[$row['purchase_order_payment_id']][] = $row;
+if ($canViewPaymentHistory) {
+    $safeScope = getSafeScopeSql('ps');
+    $sourceSafeScope = getSafeReferenceScopeSql('pop.payment_source_id');
+    // Standard PO payments use payment_source_id; some older installations
+    // also have a safe_id reference. Only filter that column when it exists.
+    $legacySafeScope = tableHasColumn('purchase_order_payments', 'safe_id')
+        ? getSafeReferenceScopeSql('pop.safe_id') : '1=1';
+    $sourceBankScope = getBankReferenceScopeSql('pop.payment_source_id');
+    $stmt = $pdo->prepare("
+        SELECT pop.*, u.name AS created_by_name, COALESCE(ps.name, pb.bank_name, pp.name) AS payment_source_name
+        FROM purchase_order_payments pop
+        JOIN users u ON pop.created_by = u.id
+        LEFT JOIN safes ps ON pop.payment_source_type = 'safe' AND ps.id = pop.payment_source_id AND $safeScope
+        LEFT JOIN bank_accounts pb ON pop.payment_source_type = 'bank' AND pb.id = pop.payment_source_id
+        LEFT JOIN personal_accounts pp ON pop.payment_source_type = 'personal' AND pp.id = pop.payment_source_id
+        WHERE pop.purchase_order_id = ? AND $legacySafeScope
+          AND (pop.payment_source_type IS NULL OR pop.payment_source_type <> 'safe' OR $sourceSafeScope)
+          AND (pop.payment_source_type IS NULL OR pop.payment_source_type <> 'bank' OR $sourceBankScope)
+        ORDER BY pop.transaction_date DESC, pop.created_at DESC
+    ");
+    $stmt->execute([$po_id]);
+    $payments = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if (!empty($payments)) {
+        $paymentIds = array_column($payments, 'id');
+        $placeholders = implode(',', array_fill(0, count($paymentIds), '?'));
+        $stmt = $pdo->prepare("SELECT purchase_order_payment_id, file_path, original_name FROM purchase_order_payment_attachments WHERE purchase_order_payment_id IN ($placeholders) ORDER BY created_at ASC");
+        $stmt->execute($paymentIds);
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $paymentAttachmentsByPayment[$row['purchase_order_payment_id']][] = $row;
+        }
     }
 }
 
@@ -108,8 +116,6 @@ if (!empty($receipts)) {
         $receiptImagesByReceipt[$row['purchase_order_receipt_id']][] = $row;
     }
 }
-
-$canDeletePayments = hasPermission('finance.purchase_payments.delete') && hasPermission('finance.deletions.request');
 
 // Handle status update
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_status'])) {
@@ -271,7 +277,7 @@ require_once '../../includes/header.php';
             </div>
             
             <div class="row">
-	                <?php if ($canViewPOPrices && (hasPermission('finance.po_payment.process') || $canDeletePayments)): ?>
+	                <?php if ($canViewPaymentHistory): ?>
                 <div class="col-md-6">
                     <h5>Payment History</h5>
                     <?php if (empty($payments)) : ?>
