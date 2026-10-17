@@ -277,6 +277,9 @@ require_once '../../includes/header.php';
                 <a href="order_list.php" class="btn btn-sm btn-secondary">Back to List</a>
                 <a href="generate_invoice.php?id=<?= $order_id ?>" class="btn btn-sm btn-primary ms-2" target="_blank">Print Invoice</a>
                 <a href="generate_invoice.php?id=<?= $order_id ?>&view=statement" class="btn btn-sm btn-outline-primary ms-2" target="_blank">بيان</a>
+                <?php if (hasPermission('finance.pricing.view') || hasPermission('finance.pricing.manage')): ?>
+                    <a href="../finance/pricing.php?order_id=<?= $order_id ?>" class="btn btn-sm btn-outline-success ms-2"><i class="fas fa-calculator"></i> Pricing</a>
+                <?php endif; ?>
             </div>
         </div>
         <div class="card-body">

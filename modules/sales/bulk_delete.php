@@ -15,6 +15,6 @@ try {
             $count++;
         } catch (Throwable $error) { $errors[] = $error instanceof DomainException ? $error->getMessage() : 'Unable to request invoice deletion.'; }
     }
-    setAlert($count ? 'success' : 'danger', $count . ' invoice deletion request(s) submitted. ' . implode(' ', array_unique($errors)));
+    setAlert($count ? 'success' : 'danger', $count . ' order deletion request(s) submitted. ' . ($count ? 'An authorized user must approve them in Finance Deletion Requests before the orders are removed. ' : '') . implode(' ', array_unique($errors)));
 } catch (Throwable $error) { setAlert('danger', $error instanceof DomainException ? $error->getMessage() : 'Unable to request deletion.'); }
 redirect('order_list.php');

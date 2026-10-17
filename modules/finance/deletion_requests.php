@@ -44,7 +44,7 @@ require_once '../../includes/header.php';
 <div class="container-fluid px-4 mt-4">
     <h1>Finance Deletion Requests</h1>
     <p>Records and balances remain unchanged until an authorized user approves deletion. Admins can approve their own requests. Approvers also need the permission and account access for the requested action.</p>
-    <?php include '../../includes/messages.php'; ?>
+    <?php include '../../includes/messages.php'; displayMessages(); ?>
     <div class="table-responsive"><table class="table table-hover">
         <thead><tr><th>Request</th><th>Record</th><th>Requested by</th><th>Created</th><th>Status</th><th>Reviewed by</th><th>Actions</th></tr></thead>
         <tbody><?php foreach ($requests as $request):

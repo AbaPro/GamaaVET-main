@@ -22,8 +22,8 @@ $stmt = $pdo->prepare("
            vc.phone AS contact_phone, u.name AS created_by_name
     FROM purchase_orders po
     JOIN vendors v ON po.vendor_id = v.id
-    JOIN vendor_contacts vc ON po.contact_id = vc.id
-    JOIN users u ON po.created_by = u.id
+    LEFT JOIN vendor_contacts vc ON po.contact_id = vc.id
+    LEFT JOIN users u ON po.created_by = u.id
     WHERE po.id = ?
 ");
 $stmt->execute([$po_id]);
@@ -185,16 +185,16 @@ require_once '../../includes/header.php';
                     <h5>Vendor Information</h5>
                     <p><strong>Vendor:</strong> <?= htmlspecialchars($po['vendor_name']) ?></p>
                     <?php if (hasPermission('contacts.view')): ?>
-                        <p><strong>Contact Person:</strong> <?= htmlspecialchars($po['contact_name']) ?></p>
+                        <p><strong>Contact Person:</strong> <?= htmlspecialchars($po['contact_name'] ?? 'No contact') ?></p>
                     <?php endif; ?>
                     <?php if ($canViewPhoneNumbers): ?>
-                        <p><strong>Contact Phone:</strong> <?= htmlspecialchars($po['contact_phone']) ?></p>
+                        <p><strong>Contact Phone:</strong> <?= htmlspecialchars($po['contact_phone'] ?? 'N/A') ?></p>
                     <?php endif; ?>
                 </div>
                 <div class="col-md-6">
                     <h5>Order Information</h5>
                     <p><strong>Order Date:</strong> <?= date('M d, Y', strtotime($po['order_date'])) ?></p>
-                    <p><strong>Created By:</strong> <?= htmlspecialchars($po['created_by_name']) ?></p>
+                    <p><strong>Created By:</strong> <?= htmlspecialchars($po['created_by_name'] ?? 'Unknown user') ?></p>
                     <p><strong>Warehouse Destination:</strong> <?= htmlspecialchars($po['warehouse_location'] ?? 'Not specified') ?></p>
                     <p>
                         <strong>Status:</strong> 

@@ -113,7 +113,13 @@ $canDeleteOrders = hasPermission('sales.orders.delete') && hasPermission('financ
 <div class="container mt-4">
     <h2>Order Management</h2>
     
-    <?php include '../../includes/messages.php'; ?>
+    <?php include '../../includes/messages.php'; displayMessages(); ?>
+
+    <?php if ($canDeleteOrders): ?>
+        <p class="text-muted">Deletion requires approval. Orders remain listed until the request is approved.
+            <a href="../finance/deletion_requests.php">View deletion requests</a>
+        </p>
+    <?php endif; ?>
     
     <div class="card mb-4">
         <div class="card-header">
@@ -183,7 +189,7 @@ $canDeleteOrders = hasPermission('sales.orders.delete') && hasPermission('financ
                         <?php if ($canDeleteOrders): ?>
                         <div id="bulkActions" class="d-none">
                             <button type="button" class="btn btn-danger" id="btnBulkDelete">
-                                <i class="fas fa-trash me-1"></i> Bulk Delete (<span id="selectedCount">0</span>)
+                                <i class="fas fa-trash me-1"></i> Request Deletion (<span id="selectedCount">0</span>)
                             </button>
                         </div>
                         <?php endif; ?>
@@ -417,6 +423,10 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     });
 
+});
+
+// Deletion and selection must work even when the optional preview cannot load.
+document.addEventListener('DOMContentLoaded', function () {
     // Bulk selection logic
     const selectAll = document.getElementById('selectAll');
     const bulkActions = document.getElementById('bulkActions');
@@ -490,9 +500,11 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // Individual delete logic
     document.addEventListener('click', function(e) {
-        if (e.target && e.target.classList.contains('js-delete-order')) {
-            const id = e.target.dataset.id;
-            const number = e.target.dataset.number;
+        const button = e.target.closest('.js-delete-order');
+        if (button) {
+            e.preventDefault();
+            const id = button.dataset.id;
+            const number = button.dataset.number;
             if (confirm(`Request approval to delete order ${number}?`)) {
                 const form = document.createElement('form');
                 form.method = 'POST';
