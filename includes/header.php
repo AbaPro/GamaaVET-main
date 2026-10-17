@@ -145,8 +145,7 @@
             ['key' => 'tickets', 'label' => 'Tickets', 'icon' => 'fa-ticket-alt', 'url' => 'modules/tickets/', 'show' => $canTickets && $isFactory],
             ['key' => 'finance', 'label' => 'Finance', 'icon' => 'fa-coins', 'show' => $canFinance && $login_region !== 'curva', 'items' => [
                 ['label' => 'Finance Dashboard', 'icon' => 'fa-gauge-high', 'url' => 'modules/finance/index.php', 'show' => true],
-                // Temporarily hidden from navigation.
-                ['label' => 'Order Pricing', 'icon' => 'fa-calculator', 'url' => 'modules/finance/pricing.php', 'show' => false],
+                ['label' => 'Order Pricing', 'icon' => 'fa-calculator', 'url' => 'modules/finance/pricing.php', 'show' => hasPermission('finance.pricing.view') || hasPermission('finance.pricing.manage')],
                 ['label' => 'Deletion Requests', 'icon' => 'fa-check-circle', 'url' => 'modules/finance/deletion_requests.php', 'show' => hasPermission('finance.deletions.request') || hasPermission('finance.deletions.approve')],
                 ['label' => 'Customer Accounts', 'icon' => 'fa-wallet', 'url' => 'modules/finance/customers.php', 'show' => hasPermission('finance.customer_wallet.view') || hasPermission('finance.balances.settle')],
                 ['label' => 'Bills & Payments', 'icon' => 'fa-file-invoice-dollar', 'url' => 'modules/finance/bills.php', 'show' => hasPermission('finance.customer_payment.process')],
