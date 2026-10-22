@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/functions.php';
+require_once __DIR__ . '/../modules/manufacturing/sourcing.php';
 
 $customerId = isset($_GET['customer_id']) ? (int)$_GET['customer_id'] : 0;
 $productId = isset($_GET['product_id']) ? (int)$_GET['product_id'] : 0;
@@ -40,7 +41,7 @@ if ($hasPackagingProductColumn && $productId > 0) {
     $types .= 'i';
 }
 
-$sql .= " ORDER BY name ASC";
+$sql .= $hasPackagingProductColumn ? " ORDER BY product_id IS NULL, name ASC, id" : " ORDER BY name ASC, id";
 
 $stmt = $conn->prepare($sql);
 
@@ -59,6 +60,7 @@ while ($row = $result->fetch_assoc()) {
     if ($hasPackagingProductColumn) {
         $option['product_id'] = $row['product_id'];
     }
+    $option['items'] = manufacturing_packaging_items((int)$row['id']);
     $options[] = $option;
 }
 $stmt->close();

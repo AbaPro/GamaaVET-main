@@ -125,6 +125,9 @@ if (!empty($stepIds)) {
         <p class="text-muted mb-0">Track every staged order from getting materials through preparation and delivery, with automatic Excel/PDF handoffs at each transition.</p>
     </div>
     <div class="d-flex gap-2 flex-wrap">
+        <?php if (hasPermission('manufacturing.view_step_sourcing')): ?>
+        <a href="sourcing_list.php" class="btn btn-outline-primary"><i class="fas fa-boxes-stacked me-1"></i> Sourcing &amp; Procurement</a>
+        <?php endif; ?>
         <a href="formulas.php" class="btn btn-outline-primary">
             <i class="fas fa-flask me-2"></i> Manage Formulas
         </a>

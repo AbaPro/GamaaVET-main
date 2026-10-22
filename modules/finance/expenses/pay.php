@@ -57,28 +57,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         try {
             $pdo->beginTransaction();
 
-            // Update Safe/Bank Balance first with a non-negative guard.
+            // Update Safe/Bank Balance first. Safes and banks may go negative.
             if ($payment_method == 'cash' && $safe_id) {
-                $stmt = $pdo->prepare("UPDATE safes SET balance = balance - ? WHERE id = ? AND balance >= ?");
-                $stmt->execute([$pay_amount, $safe_id, $pay_amount]);
+                $stmt = $pdo->prepare("UPDATE safes SET balance = balance - ? WHERE id = ?");
+                $stmt->execute([$pay_amount, $safe_id]);
                 if ($stmt->rowCount() === 0) {
-                    $safeStmt = $pdo->prepare("SELECT name, balance FROM safes WHERE id = ?");
-                    $safeStmt->execute([$safe_id]);
-                    $safe = $safeStmt->fetch(PDO::FETCH_ASSOC);
-                    $available = $safe ? number_format((float)$safe['balance'], 2) : '0.00';
-                    $safeName = $safe ? $safe['name'] : 'selected safe';
-                    throw new Exception("Insufficient safe balance in {$safeName}. Available: {$available} EGP.");
+                    throw new Exception("Selected safe was not found.");
                 }
             } elseif ($payment_method == 'transfer' && $bank_account_id) {
-                $stmt = $pdo->prepare("UPDATE bank_accounts SET balance = balance - ? WHERE id = ? AND balance >= ?");
-                $stmt->execute([$pay_amount, $bank_account_id, $pay_amount]);
+                $stmt = $pdo->prepare("UPDATE bank_accounts SET balance = balance - ? WHERE id = ?");
+                $stmt->execute([$pay_amount, $bank_account_id]);
                 if ($stmt->rowCount() === 0) {
-                    $bankStmt = $pdo->prepare("SELECT bank_name, account_number, balance FROM bank_accounts WHERE id = ?");
-                    $bankStmt->execute([$bank_account_id]);
-                    $bank = $bankStmt->fetch(PDO::FETCH_ASSOC);
-                    $available = $bank ? number_format((float)$bank['balance'], 2) : '0.00';
-                    $bankName = $bank ? $bank['bank_name'] . ' #' . $bank['account_number'] : 'selected bank account';
-                    throw new Exception("Insufficient bank balance in {$bankName}. Available: {$available} EGP.");
+                    throw new Exception("Selected bank account was not found.");
                 }
             }
 

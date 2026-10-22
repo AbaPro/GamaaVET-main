@@ -8,11 +8,13 @@ require_once __DIR__ . '/../modules/finance/record_deletion.php';
 function expect($condition, $message) { if (!$condition) throw new RuntimeException($message); }
 function value($sql) { global $pdo; return $pdo->query($sql)->fetchColumn(); }
 $cases = [
- 'customer-deposit', 'customer-refund', 'customer-withdrawal', 'customer-payment', 'customer-linked-payment',
+ 'customer-deposit', 'customer-cash-deposit', 'customer-refund', 'customer-withdrawal', 'customer-payment', 'customer-linked-payment',
  'vendor-deposit', 'vendor-refund', 'vendor-linked-payment', 'vendor-receipt-blocked',
  'expense-cash', 'expense-bank', 'expense-wallet', 'expense-mirror', 'expense-mirror-legacy', 'purchase-mirror', 'expense-whole',
  'purchase-cash', 'purchase-wallet', 'order-cash', 'order-bank', 'order-wallet', 'order-transfer-mirror',
- 'transfer-approved', 'transfer-pending', 'transfer-rejected', 'transfer-reversed', 'transfer-insufficient', 'transfer-external',
+ 'order-cash-negative', 'order-bank-negative', 'order-cash-insufficient', 'order-bank-insufficient', 'order-cash-zero', 'order-bank-zero',
+ 'order-negative-mirror', 'order-negative-settlement-blocked', 'order-negative-totals-blocked', 'order-negative-permission-blocked',
+ 'transfer-approved', 'transfer-pending', 'transfer-rejected', 'transfer-reversed', 'transfer-insufficient', 'transfer-personal-insufficient', 'transfer-external',
  'customer-settlement', 'bank-settlement', 'personal-settlement', 'vendor-settlement', 'newer-settlement-blocked', 'older-settlement-blocked',
  'customer-close', 'customer-close-debt', 'customer-close-orders', 'vendor-close', 'vendor-close-debt', 'vendor-close-orders',
  'customer-reopen', 'reopen-denied', 'invoice-sales', 'invoice-purchase', 'invoice-paid-blocked', 'invoice-receipt-blocked', 'invoice-inventory-blocked', 'invoice-stock', 'invoice-stock-missing', 'invoice-stock-otherbrand', 'invoice-stock-duplicate', 'invoice-stock-never-stocked', 'invoice-stock-unstocked-nolog', 'invoice-stock-row-deleted',
@@ -80,6 +82,7 @@ $type = 'customer_transaction'; $checks = []; $blocked = false;
 $checks['SELECT wallet_balance FROM customers WHERE id = 1'] = 75;
 if (str_starts_with($mode, 'vendor-')) { $type = 'vendor_transaction'; $checks = ['SELECT wallet_balance FROM vendors WHERE id = 1' => 75]; }
 if ($mode === 'customer-refund') $pdo->exec("UPDATE customer_wallet_transactions SET type = 'refund'");
+if ($mode === 'customer-cash-deposit') { $pdo->exec('UPDATE customer_wallet_transactions SET safe_id = 1'); $checks['SELECT balance FROM safes WHERE id = 1'] = 75; }
 if ($mode === 'customer-withdrawal' || $mode === 'customer-payment') {
     $pdo->exec("UPDATE customer_wallet_transactions SET type = '" . ($mode === 'customer-payment' ? 'payment' : 'withdrawal') . "'");
     $checks = ['SELECT wallet_balance FROM customers WHERE id = 1' => 125];
@@ -89,12 +92,25 @@ if ($mode === 'vendor-refund') { $pdo->exec("UPDATE vendor_wallet_transactions S
 if ($mode === 'vendor-receipt-blocked') { $pdo->exec("UPDATE vendor_wallet_transactions SET type = 'withdrawal', reference_type = 'purchase_order', reference_id = 1"); $blocked = true; }
 if (str_starts_with($mode, 'order-') || $mode === 'customer-linked-payment' || $mode === 'no-source-permission') {
     $type = $mode === 'customer-linked-payment' || $mode === 'no-source-permission' ? 'customer_transaction' : 'order_payment';
-    $method = $mode === 'order-bank' ? 'transfer' : ($mode === 'order-wallet' || $type === 'customer_transaction' ? 'wallet' : 'cash');
+    $method = str_starts_with($mode, 'order-bank') ? 'transfer' : ($mode === 'order-wallet' || $type === 'customer_transaction' ? 'wallet' : 'cash');
     $pdo->exec("UPDATE order_payments SET payment_method = '$method', safe_id = " . ($method === 'cash' ? '1' : 'NULL') . ', bank_account_id = ' . ($method === 'transfer' ? '1' : 'NULL'));
     $checks = ['SELECT paid_amount FROM orders WHERE id = 1' => 0];
     if ($method === 'wallet') { $pdo->exec("UPDATE customer_wallet_transactions SET type = 'payment', reference_type = 'order', reference_id = 1, payment_method = 'wallet'"); $checks['SELECT wallet_balance FROM customers WHERE id = 1'] = 125; $checks['SELECT COUNT(*) FROM customer_wallet_transactions'] = 0; }
     else $checks['SELECT balance FROM ' . ($method === 'cash' ? 'safes' : 'bank_accounts') . ' WHERE id = 1'] = 75;
-    if ($mode === 'order-transfer-mirror') { $pdo->exec("UPDATE finance_transfers SET from_type = 'personal', from_id = 0, to_type = 'safe', notes = 'Order Payment Reference: REF'"); $checks["SELECT COUNT(*) FROM finance_transfers WHERE status = 'reversed'"] = 1; }
+    if (str_contains($mode, 'negative') || str_ends_with($mode, '-insufficient') || str_ends_with($mode, '-zero')) {
+        $accountTable = $method === 'transfer' ? 'bank_accounts' : 'safes';
+        $initialBalance = str_contains($mode, 'negative') ? -100 : (str_ends_with($mode, '-zero') ? 0 : 10);
+        $pdo->exec("UPDATE `$accountTable` SET balance = $initialBalance WHERE id = 1");
+        $checks["SELECT balance FROM $accountTable WHERE id = 1"] = $initialBalance - 25;
+    }
+    if ($mode === 'order-transfer-mirror' || $mode === 'order-negative-mirror' || $mode === 'order-negative-totals-blocked') {
+        $pdo->exec("UPDATE finance_transfers SET from_type = 'personal', from_id = 0, to_type = 'safe', notes = 'Order Payment Reference: REF'");
+        $checks["SELECT COUNT(*) FROM finance_transfers WHERE status = 'reversed'"] = 1;
+        $checks["SELECT COUNT(*) FROM finance_transfer_history WHERE action = 'reversed'"] = 1;
+    }
+    if ($mode === 'order-negative-settlement-blocked') { $pdo->exec("INSERT INTO finance_account_balance_adjustments VALUES (1, 'safe', 1, -120, -100, '2026-01-02')"); $blocked = true; }
+    if ($mode === 'order-negative-totals-blocked') { $pdo->exec('UPDATE orders SET paid_amount = 0'); $blocked = true; }
+    if ($mode === 'order-negative-permission-blocked') { $_SESSION['role_slug'] = 'user'; $_SESSION['permissions'] = ['finance.deletions.approve']; $blocked = true; }
 }
 if (str_starts_with($mode, 'purchase-') || $mode === 'vendor-linked-payment') {
     $type = $mode === 'vendor-linked-payment' ? 'vendor_transaction' : 'purchase_payment';
@@ -113,7 +129,9 @@ if (str_starts_with($mode, 'expense-') || $mode === 'purchase-mirror') {
 if (str_starts_with($mode, 'transfer-')) {
     $type = 'transfer'; $checks = ['SELECT balance FROM safes WHERE id = 1' => 100, 'SELECT balance FROM bank_accounts WHERE id = 1' => 100];
     if ($mode === 'transfer-approved') $checks = ['SELECT balance FROM safes WHERE id = 1' => 125, 'SELECT balance FROM bank_accounts WHERE id = 1' => 75];
-    elseif ($mode === 'transfer-insufficient') { $pdo->exec('UPDATE bank_accounts SET balance = 0'); $blocked = true; }
+    // Safes and bank accounts may go negative; personal accounts may not.
+    elseif ($mode === 'transfer-insufficient') { $pdo->exec('UPDATE bank_accounts SET balance = 0'); $checks = ['SELECT balance FROM safes WHERE id = 1' => 125, 'SELECT balance FROM bank_accounts WHERE id = 1' => -25]; }
+    elseif ($mode === 'transfer-personal-insufficient') { $pdo->exec("UPDATE finance_transfers SET to_type = 'personal'"); $pdo->exec('UPDATE personal_accounts SET balance = 0'); $blocked = true; }
     elseif ($mode === 'transfer-external') { $pdo->exec("UPDATE finance_transfers SET from_type = 'personal', from_id = 0"); $blocked = true; }
     else $pdo->exec("UPDATE finance_transfers SET status = '" . substr($mode, strlen('transfer-')) . "'");
 }

@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . "/sourcing.php";
 
 /**
  * Provides reusable helpers for the manufacturing module.
@@ -8,7 +9,7 @@ function manufacturing_get_step_definitions() {
     return [
         'sourcing' => [
             'label' => 'Sourcing & Procurement',
-            'description' => 'Confirm supplier availability, request samples, and secure contracts for the raw materials required by the customer formula.',
+            'description' => 'Confirm supplier availability, request samples, and secure contracts for the raw materials and packaging required by the formula and selected packaging option.',
             'handover' => 'Provide POs, lead-time confirmations, and supplier QA approvals to the receiving team.'
         ],
         'receipt' => [
@@ -732,19 +733,23 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
         $deliveryStmt->close();
     }
 
-    $html .= '<table><thead><tr><th>Component</th><th>Quantity / Ratio</th><th>Unit</th><th>Notes</th></tr></thead><tbody>';
-    if (is_array($components) && count($components) > 0) {
-        foreach ($components as $component) {
-            $componentName = htmlspecialchars($component['name'] ?? 'TBD');
-            $quantity = htmlspecialchars($component['quantity'] ?? ($component['ratio'] ?? ''));
-            $unit = htmlspecialchars($component['unit'] ?? 'N/A');
-            $componentNotes = htmlspecialchars($component['notes'] ?? '-');
-            $html .= "<tr><td>{$componentName}</td><td>{$quantity}</td><td>{$unit}</td><td>{$componentNotes}</td></tr>";
-        }
+    if ($stepKey === 'sourcing' && $conn) {
+        $html .= manufacturing_sourcing_document_html((int)$order['id'], $canViewComponentName);
     } else {
-        $html .= '<tr><td colspan="4" class="text-center">No components defined.</td></tr>';
+        $html .= '<table><thead><tr><th>Component</th><th>Quantity / Ratio</th><th>Unit</th><th>Notes</th></tr></thead><tbody>';
+        if (is_array($components) && count($components) > 0) {
+            foreach ($components as $component) {
+                $componentName = htmlspecialchars($component['name'] ?? 'TBD');
+                $quantity = htmlspecialchars($component['quantity'] ?? ($component['ratio'] ?? ''));
+                $unit = htmlspecialchars($component['unit'] ?? 'N/A');
+                $componentNotes = htmlspecialchars($component['notes'] ?? '-');
+                $html .= "<tr><td>{$componentName}</td><td>{$quantity}</td><td>{$unit}</td><td>{$componentNotes}</td></tr>";
+            }
+        } else {
+            $html .= '<tr><td colspan="4" class="text-center">No components defined.</td></tr>';
+        }
+        $html .= '</tbody></table>';
     }
-    $html .= '</tbody></table>';
 
     return $html;
 }

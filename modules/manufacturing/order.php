@@ -77,16 +77,6 @@ $formulaComponents = manufacturing_recalculate_components($order, $formulaCompon
 $canViewFormula = hasPermission('manufacturing.formula.view_all');
 $canViewComponentName = hasPermission('manufacturing.component.name.view');
 
-$stepStatusesByKey = [];
-$statusStmt = $conn->prepare("SELECT step_key, status FROM manufacturing_order_steps WHERE manufacturing_order_id = ?");
-$statusStmt->bind_param("i", $orderId);
-$statusStmt->execute();
-$statusResult = $statusStmt->get_result();
-while ($statusRow = $statusResult->fetch_assoc()) {
-    $stepStatusesByKey[$statusRow['step_key']] = $statusRow['status'];
-}
-$statusStmt->close();
-
 $compProductIds = [];
 foreach ($formulaComponents as $fc) {
     if (!empty($fc['product_id'])) {
@@ -101,88 +91,12 @@ if (!empty($compProductIds)) {
     }
 }
 
-if (($stepStatusesByKey['sourcing'] ?? null) !== 'completed') {
-    // Check and sync sourcing components to match current formula components.
-    // Only read formula-sourced rows so packaging rows (same index range) don't collide.
-    $existingSourcing = [];
-    $hasSourceCol = $conn->query("SHOW COLUMNS FROM manufacturing_sourcing_components LIKE 'source'")->num_rows > 0;
-    $getSourcingSQL = $hasSourceCol
-        ? "SELECT id, formula_component_index FROM manufacturing_sourcing_components WHERE manufacturing_order_id = ? AND (source = 'formula' OR source IS NULL)"
-        : "SELECT id, formula_component_index FROM manufacturing_sourcing_components WHERE manufacturing_order_id = ?";
-    $getSourcingStmt = $conn->prepare($getSourcingSQL);
-    $getSourcingStmt->bind_param("i", $orderId);
-    $getSourcingStmt->execute();
-    $res = $getSourcingStmt->get_result();
-    while ($row = $res->fetch_assoc()) {
-        $existingSourcing[$row['formula_component_index']] = $row['id'];
-    }
-    $getSourcingStmt->close();
-
-    $formulaIndices = [];
-    foreach ($formulaComponents as $index => $component) {
-        $formulaIndices[] = $index;
-        $productId = $component['product_id'] ?? null;
-        $componentName = $component['name'] ?? '';
-        $requiredQty = $component['quantity'] ?? $component['ratio'] ?? 0;
-        $unit = $component['unit'] ?? '';
-
-        if (isset($existingSourcing[$index])) {
-            // Update existing record to match current formula data
-            $updateSourcingStmt = $conn->prepare("
-                UPDATE manufacturing_sourcing_components
-                SET product_id = ?, component_name = ?, required_quantity = ?, unit = ?
-                WHERE id = ?
-            ");
-            $updateSourcingStmt->bind_param("isdsi", $productId, $componentName, $requiredQty, $unit, $existingSourcing[$index]);
-            $updateSourcingStmt->execute();
-            $updateSourcingStmt->close();
-        } else {
-            // Insert new record for new formula component
-            if ($hasSourceCol) {
-                $insertSourcingStmt = $conn->prepare("
-                    INSERT INTO manufacturing_sourcing_components
-                    (manufacturing_order_id, source, formula_component_index, product_id, component_name, required_quantity, unit, available_quantity)
-                    VALUES (?, 'formula', ?, ?, ?, ?, ?, 0)
-                ");
-                $insertSourcingStmt->bind_param("iiisds", $orderId, $index, $productId, $componentName, $requiredQty, $unit);
-            } else {
-                $insertSourcingStmt = $conn->prepare("
-                    INSERT INTO manufacturing_sourcing_components
-                    (manufacturing_order_id, formula_component_index, product_id, component_name, required_quantity, unit, available_quantity)
-                    VALUES (?, ?, ?, ?, ?, ?, 0)
-                ");
-                $insertSourcingStmt->bind_param("iiisds", $orderId, $index, $productId, $componentName, $requiredQty, $unit);
-            }
-            $insertSourcingStmt->execute();
-            $insertSourcingStmt->close();
-        }
-    }
-
-    // Remove sourcing components that are no longer in the formula
-    foreach ($existingSourcing as $index => $id) {
-        if (!in_array($index, $formulaIndices)) {
-            $deleteSourcingStmt = $conn->prepare("DELETE FROM manufacturing_sourcing_components WHERE id = ?");
-            $deleteSourcingStmt->bind_param("i", $id);
-            $deleteSourcingStmt->execute();
-            $deleteSourcingStmt->close();
-        }
-    }
-
-    // Clean up stale duplicate formula rows: keep only the IDs tracked in $existingSourcing,
-    // delete any other formula-source rows for this order that slipped in from old bug.
-    if ($hasSourceCol) {
-        $knownIds = array_values($existingSourcing);
-        if (!empty($knownIds)) {
-            $placeholders = implode(',', array_fill(0, count($knownIds), '?'));
-            $types = str_repeat('i', count($knownIds) + 1);
-            $cleanupStmt = $conn->prepare("DELETE FROM manufacturing_sourcing_components WHERE manufacturing_order_id = ? AND (source = 'formula' OR source IS NULL) AND id NOT IN ($placeholders)");
-            $params = array_merge([$orderId], $knownIds);
-            $cleanupStmt->bind_param($types, ...$params);
-            $cleanupStmt->execute();
-            $cleanupStmt->close();
-        }
-    }
-}
+// Refresh both sources together; completed/consumed orders are protected by the helper.
+manufacturing_sync_sourcing($orderId);
+$packagingInfoStmt = $pdo->prepare("SELECT po.name FROM manufacturing_orders mo
+    JOIN packaging_options po ON po.id = mo.packaging_option_id WHERE mo.id = ?");
+$packagingInfoStmt->execute([$orderId]);
+$packagingOptionName = $packagingInfoStmt->fetchColumn() ?: '';
 
 // Initialize quality validation checklist if it doesn't exist yet for quality step
 $checkQualityStmt = $conn->prepare("SELECT COUNT(*) as count FROM manufacturing_quality_checklist WHERE manufacturing_order_id = ?");
@@ -1471,12 +1385,18 @@ $isCompletedOrder = $order['status'] === 'completed';
                                 <?php endif; ?>
                                 <fieldset <?= $isStepLocked ? 'disabled' : ''; ?>>
                                 <?php if ($stepRow['step_key'] === 'sourcing'): ?>
+                                    <div class="alert alert-light border small mb-3">
+                                        <strong>Requirements:</strong> Raw materials from the formula + packaging from
+                                        <strong><?= e($packagingOptionName ?: 'no selected packaging option'); ?></strong>.
+                                        Packaging quantities = quantity per bottle × number of bottles.
+                                        Packaging items also present in the formula are counted once from the kit when the open list is refreshed.
+                                    </div>
                                     <!-- Sourcing Components Table -->
                                     <?php
                                     $sourcingStmt = $conn->prepare("
                                         SELECT MIN(msc.id) AS id,
                                                msc.component_name, msc.product_id, SUM(msc.required_quantity) AS required_quantity,
-                                               msc.unit, GROUP_CONCAT(DISTINCT msc.notes SEPARATOR '; ') AS notes,
+                                               msc.unit, GROUP_CONCAT(DISTINCT msc.source) AS sources, GROUP_CONCAT(DISTINCT msc.notes SEPARATOR '; ') AS notes,
                                                p.barcode, p.sku,
                                                COALESCE((
                                                    SELECT SUM(ip.quantity)
@@ -1488,7 +1408,7 @@ $isCompletedOrder = $order['status'] === 'completed';
                                         LEFT JOIN products p ON p.id = msc.product_id
                                         WHERE msc.manufacturing_order_id = ?
                                         GROUP BY msc.component_name, msc.product_id, msc.unit, p.barcode, p.sku
-                                        ORDER BY MIN(msc.formula_component_index)
+                                        ORDER BY MIN(CASE WHEN msc.source = 'formula' THEN 0 ELSE 1 END), MIN(msc.formula_component_index)
                                     ");
                                     $sourcingStmt->bind_param("ii", $order['location_id'], $orderId);
                                     $sourcingStmt->execute();
@@ -1537,6 +1457,7 @@ $isCompletedOrder = $order['status'] === 'completed';
                                                             <?php else: ?>
                                                                 <span class="text-muted"><?= $sc['sku'] ? htmlspecialchars($sc['sku']) : 'Hidden'; ?></span>
                                                             <?php endif; ?>
+                                                            <div><span class="badge bg-light text-dark border"><?= str_contains($sc['sources'] ?? '', 'packaging') ? 'Packaging' : 'Formula'; ?></span></div>
                                                         </td>
                                                         <td>
                                                             <?= $sc['sku'] ? htmlspecialchars($sc['sku']) . '<br>' : ''; ?>

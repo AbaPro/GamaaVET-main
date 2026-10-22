@@ -105,16 +105,16 @@ while ($row = $orderPayments->fetch_assoc()) {
 }
 $orderPaymentStmt->close();
 
-// Manual customer-wallet cash payments also credit the selected safe.
+// Manual customer-wallet cash deposits and payments also credit the selected safe.
 $walletPaymentStmt = $conn->prepare("
-    SELECT wt.id, wt.amount, wt.notes, wt.transaction_date, wt.created_at,
+    SELECT wt.id, wt.type, wt.amount, wt.notes, wt.transaction_date, wt.created_at,
            u.name AS created_by_name,
            c.id AS customer_id, c.name AS customer_name
     FROM customer_wallet_transactions wt
     JOIN customers c ON c.id = wt.customer_id
     LEFT JOIN factories customer_factory ON customer_factory.id = c.factory_id
     LEFT JOIN users u ON u.id = wt.created_by
-    WHERE wt.type = 'payment'
+    WHERE wt.type IN ('deposit', 'payment')
       AND wt.payment_method = 'cash'
       AND wt.safe_id = ?
       AND $customerScope
@@ -128,7 +128,7 @@ while ($row = $walletPayments->fetch_assoc()) {
         'sort_id' => (int)$row['id'],
         'transaction_date' => $row['transaction_date'],
         'created_at' => $row['created_at'],
-        'type' => 'Customer Wallet Payment',
+        'type' => $row['type'] === 'deposit' ? 'Customer Wallet Deposit' : 'Customer Wallet Payment',
         'direction' => 'in',
         'amount' => (float)$row['amount'],
         'reference' => 'Wallet transaction #' . $row['id'],

@@ -2,6 +2,8 @@ Finance deletion verification
 
 `deletion_workflows.php` creates a minimal schema and verifies the original finance and manufacturing approvals. `finance_record_deletions.php` extends that schema and verifies wallet, payment, invoice, transfer, settlement, closure and reopening behavior. Both scripts refuse to modify the application database.
 
+Approved cash/bank order-payment deletions reverse the original credit even if the destination balance is negative, zero, or below the payment amount. The suite covers these balances, transfer audit reversal, and unchanged records when permissions, newer settlements, or inconsistent order totals block approval. Other reversal types retain their existing balance checks.
+
 Use a disposable MariaDB 10.4 container with database `gammavet_deletion_tests`. Mount this repository at `/work` and mount `tests/fixtures/deletion_local.php` over `/work/config/local.php` inside the PHP test container. The PHP container needs mysqli and PDO MySQL and must share the disposable database container's network namespace, so the fixture can connect to `127.0.0.1`.
 
 Run against a fresh disposable database:

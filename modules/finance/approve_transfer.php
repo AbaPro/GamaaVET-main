@@ -47,7 +47,8 @@ try {
 
     $amount = round((float)$transfer['amount'], 2);
     if ($amount <= 0) throw new Exception('Transfer amount is invalid.');
-    if ((float)$source['balance'] < $amount) {
+    // Safes and bank accounts may go negative; personal accounts may not.
+    if ($transfer['from_type'] === 'personal' && (float)$source['balance'] < $amount) {
         throw new Exception(
             'Insufficient balance in ' . $source['account_name'] . '. Available: '
             . number_format((float)$source['balance'], 2) . ' ' . ($source['currency'] ?? 'EGP') . '.'

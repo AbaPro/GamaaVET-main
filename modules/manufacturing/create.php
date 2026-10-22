@@ -145,14 +145,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $pkgCheckStmt = $pdo->prepare("
                         SELECT COUNT(*)
                         FROM packaging_options
-                        WHERE id = ? AND customer_id = ? AND (product_id = ? OR product_id IS NULL)
+                        WHERE id = ? AND customer_id = ? AND is_active = 1 AND (product_id = ? OR product_id IS NULL)
                     ");
                     $pkgCheckStmt->execute([$packagingOptionId, $customerId, $productId]);
                 } else {
                     $pkgCheckStmt = $pdo->prepare("
                         SELECT COUNT(*)
                         FROM packaging_options
-                        WHERE id = ? AND customer_id = ?
+                        WHERE id = ? AND customer_id = ? AND is_active = 1
                     ");
                     $pkgCheckStmt->execute([$packagingOptionId, $customerId]);
                 }
@@ -200,60 +200,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ]);
             $orderId = $pdo->lastInsertId();
 
-            // Seed sourcing components from formula
-            $formulaStmt = $pdo->prepare("SELECT components_json, batch_size AS formula_batch_size FROM manufacturing_formulas WHERE id = ?");
-            $formulaStmt->execute([$formulaId]);
-            $formulaRow = $formulaStmt->fetch(PDO::FETCH_ASSOC);
-            $formulaComponents = json_decode($formulaRow['components_json'] ?? '[]', true) ?: [];
-            $formulaBatchSize = (float)($formulaRow['formula_batch_size'] ?? 1);
-            if ($formulaBatchSize <= 0) $formulaBatchSize = 1;
-            $productionRatio = $computedBatchSize > 0 ? ($computedBatchSize / $formulaBatchSize) : 1;
-
-            // Check if the 'source' column exists (added in migration 20260420)
-            $hasSourceCol = $conn->query("SHOW COLUMNS FROM manufacturing_sourcing_components LIKE 'source'")->num_rows > 0;
-
-            $sourcingStmt = $hasSourceCol
-                ? $pdo->prepare("INSERT INTO manufacturing_sourcing_components (manufacturing_order_id, source, formula_component_index, product_id, component_name, required_quantity, unit, notes) VALUES (?, 'formula', ?, ?, ?, ?, ?, ?)")
-                : $pdo->prepare("INSERT INTO manufacturing_sourcing_components (manufacturing_order_id, formula_component_index, product_id, component_name, required_quantity, unit, notes) VALUES (?, ?, ?, ?, ?, ?, ?)");
-
-            foreach ($formulaComponents as $idx => $component) {
-                $baseQty = (float)($component['quantity'] ?? 0);
-                $requiredQty = round($baseQty * $productionRatio, 4);
-                $params = $hasSourceCol
-                    ? [$orderId, $idx, $component['product_id'] ?? null, $component['name'] ?? '', $requiredQty, $component['unit'] ?? '', $component['notes'] ?? '']
-                    : [$orderId, $idx, $component['product_id'] ?? null, $component['name'] ?? '', $requiredQty, $component['unit'] ?? '', $component['notes'] ?? ''];
-                $sourcingStmt->execute($params);
-            }
-
-            // Seed sourcing components from packaging option (qty * number_of_bottles)
-            if ($packagingOptionId) {
-                $pkgItemsStmt = $pdo->prepare("
-                    SELECT poi.product_id, p.name AS product_name, poi.quantity, poi.unit, poi.notes
-                    FROM packaging_option_items poi
-                    JOIN products p ON p.id = poi.product_id
-                    WHERE poi.packaging_option_id = ?
-                ");
-                $pkgItemsStmt->execute([$packagingOptionId]);
-                $pkgItems = $pkgItemsStmt->fetchAll(PDO::FETCH_ASSOC);
-
-                $pkgSourcingStmt = $hasSourceCol
-                    ? $pdo->prepare("INSERT INTO manufacturing_sourcing_components (manufacturing_order_id, source, formula_component_index, product_id, component_name, required_quantity, unit, notes) VALUES (?, 'packaging', ?, ?, ?, ?, ?, ?)")
-                    : $pdo->prepare("INSERT INTO manufacturing_sourcing_components (manufacturing_order_id, formula_component_index, product_id, component_name, required_quantity, unit, notes) VALUES (?, ?, ?, ?, ?, ?, ?)");
-
-                foreach ($pkgItems as $pkgIdx => $pkgItem) {
-                    $pkgRequiredQty = round((float)$pkgItem['quantity'] * $numberOfBottles, 4);
-                    $pkgSourcingStmt->execute([
-                        $orderId,
-                        $pkgIdx,
-                        $pkgItem['product_id'],
-                        $pkgItem['product_name'],
-                        $pkgRequiredQty,
-                        $pkgItem['unit'] ?? '',
-                        $pkgItem['notes'] ?? '',
-                    ]);
-                }
-            }
-
             $stepStmt = $pdo->prepare("
                 INSERT INTO manufacturing_order_steps (manufacturing_order_id, step_key, label)
                 VALUES (?, ?, ?)
@@ -261,6 +207,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             foreach (manufacturing_get_step_definitions() as $stepKey => $stepMeta) {
                 $stepStmt->execute([$orderId, $stepKey, $stepMeta['label']]);
             }
+
+            manufacturing_sync_sourcing((int)$orderId);
 
             $pdo->commit();
             setAlert('success', "Manufacturing order {$orderNumber} created.");
@@ -425,6 +373,8 @@ foreach ($bottleSizes as $bs) {
                     <select class="form-select select2" name="packaging_option_id" id="packaging_option_id" disabled>
                         <option value="">— Select customer first —</option>
                     </select>
+                    <small class="text-muted">Uses the same packaging kits as pricing. Product-specific kits are selected first; choose another if needed.</small>
+                    <div id="packagingPreview" class="small mt-2" aria-live="polite"></div>
                 </div>
                 <div class="col-md-6">
                     <label class="form-label">Order notes</label>
@@ -475,6 +425,8 @@ foreach ($bottleSizes as $bs) {
     let loadedFormulas = [];
     let pendingFormulaSelection = <?php echo json_encode($selectedFormulaId ?: ''); ?>;
     let pendingProductSelection = <?php echo json_encode($old['product_id'] ?? ''); ?>;
+    let loadedPackagingOptions = [];
+    let packagingRequest = null;
     let pendingPackagingSelection = <?php echo json_encode($old['packaging_option_id'] ?? ''); ?>;
 
     function escapeForAttr(value) {
@@ -599,27 +551,52 @@ foreach ($bottleSizes as $bs) {
         loadPackagingOptions(customerId, productSelect.val());
     }
 
+    function renderPackagingPreview() {
+        const selected = loadedPackagingOptions.find(o => String(o.id) === String(packagingSelect.val()));
+        const preview = $('#packagingPreview').empty();
+        if (!selected) {
+            preview.text('No active packaging kit is linked to this product. Add one in Packaging Options if packaging is required.');
+            return;
+        }
+        const count = Number(numberOfBottlesInput.val()) || 0;
+        $('<div>').addClass('fw-semibold').text('Packaging requirements' + (count ? ' for ' + count.toLocaleString() + ' bottles' : ' per bottle')).appendTo(preview);
+        if (!selected.items.length) $('<div>').addClass('text-warning').text('This packaging kit has no materials. Add its items before production.').appendTo(preview);
+        selected.items.forEach(item => {
+            const quantity = Number(item.quantity) * (count || 1);
+            $('<div>').text(item.name + ': ' + quantity.toLocaleString(undefined, { maximumFractionDigits: 4 }) + ' ' + (item.unit || '')).appendTo(preview);
+        });
+        $('<div>').addClass('text-muted mt-1').text('Formula supplies raw materials; this kit supplies packaging. Materials present in both are counted once from the kit.').appendTo(preview);
+    }
+
     function loadPackagingOptions(customerId, productId) {
+        if (packagingRequest) packagingRequest.abort();
+        loadedPackagingOptions = [];
+        $('#packagingPreview').empty();
         if (!customerId || !productId) {
             packagingSelect.html('<option value="">— Select customer and product first —</option>').prop('disabled', true);
             if ($.fn.select2) packagingSelect.trigger('change.select2');
             return;
         }
 
-        packagingSelect.prop('disabled', true).html('<option>Loading…</option>');
-        $.getJSON('../../ajax/get_packaging_options.php', { customer_id: customerId, product_id: productId })
+        packagingSelect.prop('disabled', true).html('<option value="">Loading…</option>');
+        packagingRequest = $.getJSON('../../ajax/get_packaging_options.php', { customer_id: customerId, product_id: productId })
             .done(function (resp) {
-                let opts = '<option value="">— No packaging option —</option>';
-                if (resp.success && resp.options.length) {
-                    resp.options.forEach(function (o) {
-                        const sel = pendingPackagingSelection && String(o.id) === String(pendingPackagingSelection) ? 'selected' : '';
-                        opts += `<option value="${o.id}" ${sel}>${escapeForAttr(o.name)}</option>`;
-                    });
-                    packagingSelect.prop('disabled', false);
+                loadedPackagingOptions = resp.success ? resp.options : [];
+                packagingSelect.empty();
+                if (loadedPackagingOptions.length) {
+                    loadedPackagingOptions.forEach(o => $('<option>').val(o.id).text(o.name).appendTo(packagingSelect));
+                    const previous = loadedPackagingOptions.find(o => String(o.id) === String(pendingPackagingSelection));
+                    packagingSelect.val(previous ? previous.id : loadedPackagingOptions[0].id).prop('disabled', false);
+                } else {
+                    $('<option>').val('').text('— No packaging option available —').appendTo(packagingSelect);
                 }
-                packagingSelect.html(opts);
                 if ($.fn.select2) packagingSelect.trigger('change.select2');
                 pendingPackagingSelection = '';
+                renderPackagingPreview();
+            }).fail(function (_xhr, status) {
+                if (status === 'abort') return;
+                packagingSelect.html('<option value="">Unable to load packaging</option>');
+                $('#packagingPreview').text('Packaging could not be loaded. Reselect the product to retry.');
             });
     }
 
@@ -629,7 +606,8 @@ foreach ($bottleSizes as $bs) {
         }
 
         bottleSizeSelect.on('change', updateBatchSizeDisplay);
-        numberOfBottlesInput.on('input', updateBatchSizeDisplay);
+        numberOfBottlesInput.on('input', function () { updateBatchSizeDisplay(); renderPackagingPreview(); });
+        packagingSelect.on('change', renderPackagingPreview);
         updateBatchSizeDisplay();
 
         customerSelect.on('change', function () {

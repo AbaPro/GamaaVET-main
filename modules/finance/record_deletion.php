@@ -104,7 +104,7 @@ function financeCheckLaterSettlement($type, $id, $createdAt, $excludedId = 0) {
     if ($stmt->fetchColumn()) throw new DomainException('Delete the newer balance settlements for this account first.');
 }
 
-function financeReverseBalance($type, $id, $delta, $createdAt = null, $excludedAdjustment = 0) {
+function financeReverseBalance($type, $id, $delta, $createdAt = null, $excludedAdjustment = 0, $allowNegativeBalance = false) {
     global $pdo;
     financeScopedBalanceRow($type, $id, true);
     financeCheckLaterSettlement($type, $id, $createdAt, $excludedAdjustment);
@@ -112,7 +112,8 @@ function financeReverseBalance($type, $id, $delta, $createdAt = null, $excludedA
     $column = in_array($type, ['customer', 'vendor'], true) ? 'wallet_balance' : 'balance';
     $delta = round((float)$delta, 2);
     if (abs($delta) < 0.005) return;
-    $guard = in_array($type, ['safe', 'bank', 'personal'], true) && $delta < 0 ? " AND `$column` >= ?" : '';
+    // Safes and bank accounts may go negative; personal accounts may not.
+    $guard = !$allowNegativeBalance && $type === 'personal' && $delta < 0 ? " AND `$column` >= ?" : '';
     $args = [$delta, $id];
     if ($guard) $args[] = -$delta;
     $stmt = $pdo->prepare("UPDATE `$table` SET `$column` = `$column` + ? WHERE id = ?$guard");
@@ -159,7 +160,9 @@ function financeReverseOrderPayment($payment) {
         $type = $method === 'cash' ? 'safe' : 'bank';
         $id = (int)($payment[$method === 'cash' ? 'safe_id' : 'bank_account_id'] ?? 0);
         if (!$id) throw new DomainException('Payment destination is missing; reconcile the account before deletion.');
-        financeReverseBalance($type, $id, -$amount, $payment['created_at']);
+        // Approved corrections undo the original credit even when subsequent
+        // activity has left the destination with insufficient or negative funds.
+        financeReverseBalance($type, $id, -$amount, $payment['created_at'], 0, true);
         // These transfers are an audit mirror of the payment, not a second movement.
         $stmt = $pdo->prepare("SELECT id FROM finance_transfers WHERE from_type = 'personal' AND from_id = 0 AND to_type = ? AND to_id = ? AND amount = ? AND notes = ? AND transaction_date = ? AND status = 'approved' ORDER BY id DESC LIMIT 1 FOR UPDATE");
         $stmt->execute([$type, $id, $amount, 'Order Payment Reference: ' . $payment['reference'], $payment['transaction_date']]);
@@ -289,7 +292,8 @@ function financeDeleteWalletTransaction($type, $row) {
     }
     $credit = $customer ? in_array($row['type'], ['deposit', 'refund'], true) : $row['type'] === 'deposit';
     financeReverseBalance($customer ? 'customer' : 'vendor', (int)$row[$customer ? 'customer_id' : 'vendor_id'], $credit ? -$row['amount'] : $row['amount'], $row['created_at']);
-    if ($customer && $row['type'] === 'payment') {
+    // Manual deposits and payments both put the cash into the chosen safe or bank.
+    if ($customer && in_array($row['type'], ['deposit', 'payment'], true) && (!empty($row['safe_id']) || !empty($row['bank_account_id']))) {
         if (($row['payment_method'] ?? '') === 'cash' && !empty($row['safe_id'])) financeReverseBalance('safe', (int)$row['safe_id'], -$row['amount'], $row['created_at']);
         elseif (($row['payment_method'] ?? '') === 'transfer' && !empty($row['bank_account_id'])) financeReverseBalance('bank', (int)$row['bank_account_id'], -$row['amount'], $row['created_at']);
         else throw new DomainException('Wallet payment destination is missing.');

@@ -87,7 +87,8 @@ function financeTransferAdjustBalance($type, $id, $delta) {
     if (!$config || $id <= 0 || abs($delta) < 0.005) return false;
     if (!isFinanceAccountInCurrentAccount($type, $id)) return false;
 
-    if ($delta < 0) {
+    // Safes and bank accounts may go negative; personal accounts may not.
+    if ($delta < 0 && $type === 'personal') {
         $required = abs($delta);
         $sql = "UPDATE `{$config['table']}`
                 SET `{$config['balance']}` = `{$config['balance']}` - ?

@@ -188,10 +188,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $transactionDate = normalizeTransactionDate($_POST['transaction_date'] ?? '');
     $user_id = $_SESSION['user_id'];
     $isDebit = in_array($type, ['payment', 'withdrawal'], true);
+    // Deposits and payments are cash received into a safe or bank account.
+    // Refunds only credit the customer's wallet and move no cash.
+    $movesCash = in_array($type, ['deposit', 'payment'], true);
+    if (!$movesCash) {
+        $payment_method = null;
+        $safe_id = null;
+        $bank_account_id = null;
+    } elseif ($payment_method === 'cash') {
+        $bank_account_id = null;
+    } else {
+        $safe_id = null;
+    }
 
     $validationError = null;
     if ($transactionDate === null) {
         $validationError = 'Enter a valid transaction date.';
+    } elseif (!in_array($type, ['deposit', 'payment', 'refund'], true)) {
+        $validationError = 'Select a valid transaction type.';
+    } elseif (!$movesCash) {
+        // No destination to validate.
     } elseif (!in_array($payment_method, ['cash', 'transfer'], true)) {
         $validationError = 'Select a valid payment method.';
     } elseif ($payment_method === 'cash' && (!$safe_id || !isSafeInCurrentAccount($safe_id))) {
@@ -245,8 +261,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $update_stmt->execute();
         $update_stmt->close();
 
-        // Update destination balance based on payment method (for payment type only)
-        if ($type === 'payment') {
+        // Credit the destination safe or bank account with the cash received.
+        if ($movesCash) {
             if ($payment_method === 'cash' && $safe_id) {
                 $safe_stmt = $conn->prepare("UPDATE safes SET balance = balance + ? WHERE id = ?");
                 $safe_stmt->bind_param("di", $amount, $safe_id);
@@ -456,7 +472,7 @@ require_once '../../includes/header.php';
                         <label for="transaction_date" class="form-label">Transaction Date*</label>
                         <input type="date" class="form-control" id="transaction_date" name="transaction_date" value="<?php echo date('Y-m-d'); ?>" required>
                     </div>
-                    <div class="mb-3">
+                    <div class="mb-3" id="payment_method_container">
                         <label for="payment_method" class="form-label">Payment Method</label>
                         <select class="form-select" id="payment_method" name="payment_method">
                             <option value="cash">Cash</option>
@@ -697,9 +713,19 @@ require_once '../../includes/header.php';
 <script>
 $(document).ready(function() {
     // Handle payment method change
+    // Refunds only credit the wallet; deposits and payments need a destination.
+    $('#type').change(function() {
+        const movesCash = $(this).val() !== 'refund';
+        $('#payment_method_container').toggle(movesCash);
+        $('#payment_method').trigger('change');
+    });
+
     $('#payment_method').change(function() {
         const method = $(this).val();
-        if (method === 'transfer') {
+        if ($('#type').val() === 'refund') {
+            $('#bank_account_container, #safe_container').hide();
+            $('#bank_account_id, #safe_id').prop('required', false).val('');
+        } else if (method === 'transfer') {
             $('#bank_account_container').show();
             $('#bank_account_id').prop('required', true);
             $('#safe_container').hide();
@@ -713,7 +739,7 @@ $(document).ready(function() {
     });
 
     // Trigger initial state
-    $('#payment_method').trigger('change');
+    $('#type').trigger('change');
 });
 </script>
 

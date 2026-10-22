@@ -130,6 +130,7 @@
             ]],
             ['key' => 'manufacturing', 'label' => 'Manufacturing', 'icon' => 'fa-industry', 'show' => hasPermission('manufacturing.view') && $isFactory, 'items' => [
                 ['label' => 'Orders List', 'icon' => 'fa-list', 'url' => 'modules/manufacturing/', 'show' => true],
+                ['label' => 'Sourcing & Procurement', 'icon' => 'fa-boxes-stacked', 'url' => 'modules/manufacturing/sourcing_list.php', 'show' => hasPermission('manufacturing.view_step_sourcing')],
                 ['label' => 'Deletion Requests', 'icon' => 'fa-check-circle', 'url' => 'modules/manufacturing/deletion_requests.php', 'show' => hasPermission('manufacturing.deletions.request') || hasPermission('manufacturing.deletions.approve')],
                 ['label' => 'Formulas', 'icon' => 'fa-flask', 'url' => 'modules/manufacturing/formulas.php', 'show' => true],
                 ['label' => 'Formula Templates', 'icon' => 'fa-layer-group', 'url' => 'modules/manufacturing/formula_templates.php', 'show' => hasPermission('manufacturing.formula.view_all')],

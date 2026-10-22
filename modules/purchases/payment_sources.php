@@ -31,8 +31,11 @@ function debitPoPaymentSource($type, $id, $amount) {
     if (!$config || $id <= 0) throw new DomainException('Select a valid payment source.');
     $scope = $type === 'safe' ? getSafeScopeSql() : ($type === 'bank' ? getBankScopeSql() : getAccountScopeSql());
     $active = $type === 'personal' ? ' AND is_active = 1' : '';
-    $stmt = $pdo->prepare("UPDATE `{$config['table']}` SET balance = balance - ? WHERE id = ? AND $scope $active AND balance >= ?");
-    $stmt->execute([$amount, $id, $amount]);
+    // Safes and bank accounts may go negative; personal accounts may not.
+    $guard = $type === 'personal' ? ' AND balance >= ?' : '';
+    $args = $guard ? [$amount, $id, $amount] : [$amount, $id];
+    $stmt = $pdo->prepare("UPDATE `{$config['table']}` SET balance = balance - ? WHERE id = ? AND $scope $active$guard");
+    $stmt->execute($args);
     if ($stmt->rowCount() !== 1) throw new DomainException('The selected payment source is unavailable or has insufficient balance.');
 }
 
