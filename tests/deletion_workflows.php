@@ -65,6 +65,8 @@ if ($mode === 'suite') {
     check((int)scalar("SELECT COUNT(*) FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id WHERE rp.role_id = 1 AND p.`key` LIKE '%.deletions.approve'") === 0, 'Requesters must not receive approval access.');
     check((int)scalar("SELECT COUNT(*) FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id WHERE rp.role_id = 2 AND p.`key` LIKE '%.deletions.approve'") === 2, 'Admins receive both approvals.');
     $cases = ['m-request', 'm-no-request', 'm-no-delete', 'm-no-view', 'm-csrf', 'm-get', 'm-customer', 'm-self', 'm-admin-self', 'm-no-approve', 'm-account', 'm-mismatch', 'm-reviewed', 'm-in-use', 'm-template-locked', 'm-approve-order', 'm-approve-formula', 'm-approve-template', 'm-approve-bottle_size', 'm-approve-packaging_option', 'f-request', 'f-no-request', 'f-no-delete', 'f-csrf', 'f-self', 'f-admin-self', 'f-no-approve', 'f-account', 'f-mismatch', 'f-reviewed', 'f-force-mismatch', 'f-balance', 'f-history', 'f-approve', 'f-force-request', 'f-force-approve', 'm-reject', 'm-reject-self', 'm-reject-user-self', 'm-reject-denied', 'f-reject', 'f-reject-self', 'f-reject-user-self', 'f-reject-denied', 'm-list-denied', 'f-list-denied'];
+    passthru(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/deletion_duplicates.php'), $duplicateStatus);
+    check($duplicateStatus === 0, 'Duplicate request regression tests failed.');
     foreach ($cases as $case) {
         passthru(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__FILE__) . ' ' . escapeshellarg($case), $status);
         check($status === 0, 'Failed scenario: ' . $case);

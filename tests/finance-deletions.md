@@ -2,6 +2,10 @@ Finance deletion verification
 
 `deletion_workflows.php` creates a minimal schema and verifies the original finance and manufacturing approvals. `finance_record_deletions.php` extends that schema and verifies wallet, payment, invoice, transfer, settlement, closure and reopening behavior. Both scripts refuse to modify the application database.
 
+The workflow suite also runs `deletion_duplicates.php`: it verifies cleanup of historical duplicates, migration reruns, concurrent submissions from separate PHP processes, normal/force request collisions, resubmission after rejection, and account isolation.
+
+Apply `20261024_unique_pending_deletion_requests.sql` to existing databases before deploying the duplicate request guard. It retains the oldest pending request per account and record and marks additional requests rejected. Pending requests created before an existing approval are also rejected; later requests (for example after reopening an account) are retained. Reviewed request rows remain as history. Automatic cleanup sets the review time and leaves the reviewer empty. The generated column and unique index require MariaDB, matching the project's MariaDB 10.4 environment.
+
 Approved cash/bank order-payment deletions reverse the original credit even if the destination balance is negative, zero, or below the payment amount. The suite covers these balances, transfer audit reversal, and unchanged records when permissions, newer settlements, or inconsistent order totals block approval. Other reversal types retain their existing balance checks.
 
 Use a disposable MariaDB 10.4 container with database `gammavet_deletion_tests`. Mount this repository at `/work` and mount `tests/fixtures/deletion_local.php` over `/work/config/local.php` inside the PHP test container. The PHP container needs mysqli and PDO MySQL and must share the disposable database container's network namespace, so the fixture can connect to `127.0.0.1`.

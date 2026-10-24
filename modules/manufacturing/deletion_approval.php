@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/../../includes/deletion_requests.php';
 require_once __DIR__ . '/../../includes/formula_access.php';
 
 function manufacturingDeletionConfig($type) {
@@ -71,9 +72,8 @@ function handleManufacturingDeletion($type) {
         if (!$isApproval) {
             if (!hasPermission('manufacturing.deletions.request')) throw new DomainException('Manufacturing deletion request permission is required.');
             manufacturingDeletionRecord($type, $id);
-            $stmt = $pdo->prepare('INSERT INTO manufacturing_deletion_requests (account_id, entity_type, entity_id, requested_by) VALUES (?, ?, ?, ?)');
-            $stmt->execute([getCurrentAccountId(), $type, $id, (int)$_SESSION['user_id']]);
-            logActivity('Requested manufacturing deletion', ['type' => $type, 'id' => $id], 'create', 'manufacturing_deletion_request', (int)$pdo->lastInsertId());
+            $requestId = createPendingDeletionRequest('manufacturing_deletion_requests', $type, $id);
+            logActivity('Requested manufacturing deletion', ['type' => $type, 'id' => $id], 'create', 'manufacturing_deletion_request', $requestId);
             setAlert('success', 'Deletion requested. An authorized user must approve it. Admins can approve their own requests.');
             redirect($returnPage);
             return;

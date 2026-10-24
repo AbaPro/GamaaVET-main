@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/../../includes/deletion_requests.php';
 // All executions use the same connection/transaction as the financial deletion.
 function financeDeletionQuery($db, $sql, array $args = []) {
     $stmt = $db->prepare($sql);
@@ -73,7 +74,11 @@ function financeDeletionRecordUrl($type, $id) {
         'expense_payment' => ['expense_payments', 'expense_id', 'expenses/details.php'],
     ];
     try {
-        if ($type === 'category') return 'expenses/categories.php';
+        if ($type === 'category') {
+            $stmt = $pdo->prepare('SELECT id FROM expense_categories WHERE id = ?');
+            $stmt->execute([$id]);
+            return $stmt->fetchColumn() ? 'expenses/categories.php' : null;
+        }
         if (isset($direct[$type])) {
             $stmt = $pdo->prepare("SELECT id FROM `{$tables[$type]}` WHERE id = ?");
             $stmt->execute([$id]);
@@ -159,10 +164,9 @@ function financeCreateDeletionRequest($type, $id, $force = false) {
     financeDeletionValidateToken();
     financeDeletionCheckPermission($type, $force);
     if (!hasPermission('finance.deletions.request')) throw new DomainException('Finance deletion request permission is required.');
-    $stmt = $pdo->prepare("INSERT INTO finance_deletion_requests (account_id, entity_type, entity_id, force_delete, requested_by) VALUES (?, ?, ?, ?, ?)");
-    $stmt->execute([getCurrentAccountId(), $type, $id, (int)$force, (int)$_SESSION['user_id']]);
-    logActivity('Requested finance deletion', ['type' => $type, 'id' => $id, 'force' => $force], 'create', 'finance_deletion_request', (int)$pdo->lastInsertId());
-    return (int)$pdo->lastInsertId();
+    $requestId = createPendingDeletionRequest('finance_deletion_requests', $type, $id, $force);
+    logActivity('Requested finance deletion', ['type' => $type, 'id' => $id, 'force' => $force], 'create', 'finance_deletion_request', $requestId);
+    return $requestId;
 }
 
 function financeDeletionRequest($type, $id, $force, $returnPage) {

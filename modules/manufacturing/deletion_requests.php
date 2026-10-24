@@ -58,7 +58,7 @@ require_once '../../includes/header.php';
             <td><?= htmlspecialchars($request['requester'] ?? '') ?></td><td><?= htmlspecialchars($request['created_at']) ?></td>
             <td><?= htmlspecialchars($request['status']) ?></td><td><?= htmlspecialchars($request['reviewer'] ?? '') ?></td>
             <td><?php if ($canReview): ?>
-                <?php if ($config && hasPermission('manufacturing.delete') && ($request['entity_type'] !== 'template' || (hasPermission('manufacturing.formula.view_all') && areFormulasUnlocked()))): ?>
+                <?php if ($recordExists && $config && hasPermission('manufacturing.delete') && ($request['entity_type'] !== 'template' || (hasPermission('manufacturing.formula.view_all') && areFormulasUnlocked()))): ?>
                 <form method="post" action="<?= htmlspecialchars($config['route']) ?>" class="d-inline" onsubmit="return confirm('Approve and execute this deletion now?');">
                     <input type="hidden" name="deletion_token" value="<?= htmlspecialchars(manufacturingDeletionToken()) ?>">
                     <input type="hidden" name="deletion_request_id" value="<?= (int)$request['id'] ?>">

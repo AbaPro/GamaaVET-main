@@ -62,7 +62,7 @@ require_once '../../includes/header.php';
             <td><?= htmlspecialchars($request['requester'] ?? '') ?></td><td><?= htmlspecialchars($request['created_at']) ?></td>
             <td><?= htmlspecialchars($request['status']) ?></td><td><?= htmlspecialchars($request['reviewer'] ?? '') ?></td>
             <td><?php if ($canReview): ?>
-                <?php if ($route && hasPermission($permission)): ?>
+                <?php if ($recordUrl && $route && hasPermission($permission)): ?>
                 <form method="post" action="<?= htmlspecialchars($route[0]) ?>" class="d-inline" onsubmit="return confirm('Approve and execute this deletion now?');">
                     <input type="hidden" name="deletion_token" value="<?= htmlspecialchars(financeDeletionToken()) ?>">
                     <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['finance_account_delete_token']) ?>">
