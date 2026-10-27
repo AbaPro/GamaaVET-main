@@ -481,6 +481,9 @@ require_once '../../includes/header.php';
                                 <td>
 	                                    <?= number_format($order['total_amount'], 2) ?>
                                     <span class="badge bg-secondary ms-1"><?= htmlspecialchars($order['currency'] ?? 'EGP') ?></span>
+                                    <?php if (($order['currency'] ?? 'EGP') !== 'EGP' && (float)($order['exchange_rate'] ?? 0) > 0): ?>
+                                        <div class="small text-muted">EGP equivalent: <?= e(formatCurrency((float)$order['total_amount'] * (float)$order['exchange_rate'], 'EGP')) ?> (recorded order rate)</div>
+                                    <?php endif; ?>
                                 </td>
                                 <td></td>
                             </tr>

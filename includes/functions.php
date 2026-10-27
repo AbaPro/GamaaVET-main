@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/currency.php';
 
 // Function to sanitize input data
 function sanitize($data) {

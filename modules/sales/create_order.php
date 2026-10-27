@@ -102,8 +102,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
         $total_amount = max(0, $itemsSubtotal - $discount_amount) + $shippingCost;
         $notes = $_POST['notes'] ?? null;
-        $currency      = in_array($_POST['currency'] ?? '', ['EGP', 'USD', 'EUR', 'SAR']) ? $_POST['currency'] : 'EGP';
-        $exchange_rate = isset($_POST['exchange_rate']) && (float)$_POST['exchange_rate'] > 0 ? (float)$_POST['exchange_rate'] : 1.0000;
+        $currency = is_string($_POST['currency'] ?? null) ? $_POST['currency'] : 'EGP';
+        $exchange_rate = currencyRateToEgp(getCurrencyRates(), $currency);
 
         // Insert order
         $stmt = $pdo->prepare("
@@ -205,7 +205,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 }
 
 // Get currencies for dropdown
-$currencies = $pdo->query("SELECT * FROM currencies ORDER BY is_default DESC, code ASC")->fetchAll(PDO::FETCH_ASSOC);
+$currencies = getCurrencyRates();
 
 // Get customers for the selected direct-sales channel and current salesperson.
 $loginRegion = $_SESSION['login_region'] ?? 'factory';
@@ -326,7 +326,7 @@ require_once '../../includes/header.php';
                         <label for="currency" class="form-label">Currency</label>
                         <select class="form-select" id="currency" name="currency">
                             <?php foreach ($currencies as $cur): ?>
-                                <option value="<?= $cur['code'] ?>" <?= $cur['is_default'] ? 'selected' : '' ?>>
+                                <option value="<?= e($cur['code']) ?>" data-rate="<?= e($cur['code'] === 'EGP' ? '1.0000' : $cur['rate_to_egp']) ?>" <?= $cur['is_default'] ? 'selected' : '' ?>>
                                     <?= htmlspecialchars($cur['code']) ?> — <?= htmlspecialchars($cur['name']) ?>
                                 </option>
                             <?php endforeach; ?>
@@ -334,8 +334,8 @@ require_once '../../includes/header.php';
                     </div>
                     <div class="col-md-3 mb-3" id="exchange_rate_field" style="display:none;">
                         <label for="exchange_rate" class="form-label">Exchange Rate <small class="text-muted">(to EGP)</small></label>
-                        <input type="number" class="form-control" id="exchange_rate" name="exchange_rate"
-                               step="0.0001" min="0.0001" value="1.0000">
+                        <input type="text" class="form-control" id="exchange_rate" readonly value="1.0000">
+                        <div class="form-text">Uses the rate saved in Settings. Prices are entered in the selected currency.</div>
                     </div>
                 </div>
             </div>
@@ -851,15 +851,17 @@ require_once '../../includes/header.php';
         updateSummary();
     });
 
-    // Currency exchange rate toggle
+    // Display only: the server independently loads the current configured rate.
     $('#currency').on('change', function() {
+        const rate = $(this).find(':selected').attr('data-rate');
+        $('#exchange_rate').val(rate || 'Not configured — contact an administrator');
         if ($(this).val() !== 'EGP') {
             $('#exchange_rate_field').show();
         } else {
             $('#exchange_rate_field').hide();
             $('#exchange_rate').val('1.0000');
         }
-    });
+    }).trigger('change');
 </script>
 
 <?php require_once '../../includes/footer.php'; ?>

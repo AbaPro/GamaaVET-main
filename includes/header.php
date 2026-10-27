@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes">
     <title><?php echo isset($page_title) ? $page_title . ' | Gammavet System' : 'Gammavet System'; ?></title>
     <!-- Bootstrap 5 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -25,6 +25,8 @@
 
     <!-- Custom CSS -->
     <link rel="stylesheet" href="<?php echo BASE_URL; ?>assets/css/style.css">
+    <link rel="stylesheet" href="<?php echo BASE_URL; ?>assets/css/mobile-tables.css">
+    <script src="<?php echo BASE_URL; ?>assets/js/mobile-tables.js" defer></script>
 </head>
 
 <body>
@@ -101,6 +103,7 @@
         // Each group: a single link ('url') or a collapsible list of 'items'.
         // 'show' carries the same permission checks the old navbar used.
         $navGroups = [
+            ['key' => 'settings', 'label' => 'Settings', 'icon' => 'fa-cog', 'url' => 'modules/settings/', 'show' => hasPermission('settings.currencies.view') || hasPermission('settings.currencies.manage')],
             ['key' => 'dashboard', 'label' => 'Dashboard', 'icon' => 'fa-gauge-high', 'url' => 'dashboard.php', 'show' => $isFactory],
             ['key' => 'sales', 'label' => 'Sales', 'icon' => 'fa-cart-shopping', 'show' => $canSales, 'items' => [
                 ['label' => 'Dashboard', 'icon' => 'fa-chart-line', 'url' => 'modules/sales/', 'show' => $canSalesDashboard],
@@ -293,6 +296,9 @@
                         </a>
                         <ul class="dropdown-menu dropdown-menu-end position-absolute">
                             <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/users/profile.php"><i class="fas fa-user me-2"></i> Profile</a></li>
+                            <?php if (hasPermission('settings.currencies.view') || hasPermission('settings.currencies.manage')): ?>
+                            <li><a class="dropdown-item" href="<?= BASE_URL ?>modules/settings/"><i class="fas fa-cog me-2"></i> Settings</a></li>
+                            <?php endif; ?>
                             <li>
                                 <hr class="dropdown-divider">
                             </li>

@@ -1,0 +1,86 @@
+/* Shared by the application layout and the standalone customer portal. */
+@media screen and (max-width: 991px) {
+  .mobile-table-scroll {
+    max-width: 100%;
+    max-height: 70vh;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    border-radius: 10px;
+    box-shadow: inset -12px 0 10px -10px rgba(0, 0, 0, .18);
+    isolation: isolate;
+  }
+
+  .mobile-table-scroll table {
+    font-size: 14px !important;
+    min-width: 640px;
+    border-collapse: separate;
+    border-spacing: 0;
+    --mobile-table-row: #fff;
+    --mobile-table-stripe: #fafbfc;
+    --mobile-table-head: #f4f6f9;
+  }
+
+  .mobile-table-scroll th,
+  .mobile-table-scroll td {
+    padding: 12px 10px !important;
+    white-space: nowrap;
+    line-height: 1.5;
+    vertical-align: middle;
+  }
+
+  .mobile-table-scroll thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--mobile-table-head);
+    font-weight: 700;
+    font-size: 13px;
+  }
+
+  .mobile-table-scroll th:first-child,
+  .mobile-table-scroll td:first-child {
+    position: sticky;
+    inset-inline-start: 0;
+    z-index: 1;
+    background: var(--mobile-table-row);
+    box-shadow: 2px 0 4px rgba(0, 0, 0, .06);
+  }
+
+  .mobile-table-scroll tbody tr:nth-child(even) td {
+    background: var(--mobile-table-stripe);
+  }
+
+  /* The shared hover rule is translucent; pinned cells need an opaque fill. */
+  .mobile-table-scroll table.table-hover tbody tr:hover td {
+    background-color: var(--mobile-table-stripe) !important;
+  }
+
+  .mobile-table-scroll thead th:first-child {
+    z-index: 3;
+    background: var(--mobile-table-head);
+  }
+
+  .mobile-table-scroll .btn {
+    min-height: 36px;
+    padding: 6px 12px;
+    font-size: 13px;
+  }
+
+  .mobile-table-scroll td.text-right,
+  .mobile-table-scroll td.text-end {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
+
+  [dir="rtl"] .mobile-table-scroll th:first-child,
+  [dir="rtl"] .mobile-table-scroll td:first-child {
+    box-shadow: -2px 0 4px rgba(0, 0, 0, .06);
+  }
+
+  /* Keep the customer portal's optional dark theme readable. */
+  .dark .mobile-table-scroll table {
+    --mobile-table-row: #0f172a;
+    --mobile-table-stripe: #1e293b;
+    --mobile-table-head: #020617;
+  }
+}

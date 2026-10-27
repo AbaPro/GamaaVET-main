@@ -14,7 +14,7 @@ function renderMessage(string $text): void
 <head>
   <meta charset="utf-8">
   <title>بوابة العميل - GammaVET</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
@@ -69,7 +69,7 @@ function renderPasswordPrompt(array $customer, string $token, ?string $hint = nu
 <head>
   <meta charset="utf-8">
   <title>بوابة العميل - GammaVET</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
@@ -720,7 +720,9 @@ if (!empty($orders)) {
 <head>
   <meta charset="utf-8">
   <title>بوابة العميل - <?= htmlspecialchars($customer['name']) ?></title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="<?= BASE_URL ?>assets/css/mobile-tables.css">
+  <script src="<?= BASE_URL ?>assets/js/mobile-tables.js" defer></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
