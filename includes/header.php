@@ -103,7 +103,6 @@
         // Each group: a single link ('url') or a collapsible list of 'items'.
         // 'show' carries the same permission checks the old navbar used.
         $navGroups = [
-            ['key' => 'settings', 'label' => 'Settings', 'icon' => 'fa-cog', 'url' => 'modules/settings/', 'show' => hasPermission('settings.currencies.view') || hasPermission('settings.currencies.manage')],
             ['key' => 'dashboard', 'label' => 'Dashboard', 'icon' => 'fa-gauge-high', 'url' => 'dashboard.php', 'show' => $isFactory],
             ['key' => 'sales', 'label' => 'Sales', 'icon' => 'fa-cart-shopping', 'show' => $canSales, 'items' => [
                 ['label' => 'Dashboard', 'icon' => 'fa-chart-line', 'url' => 'modules/sales/', 'show' => $canSalesDashboard],
@@ -162,6 +161,8 @@
                 ['label' => 'Vendor Wallets', 'icon' => 'fa-truck-field', 'url' => 'modules/finance/vendors.php', 'show' => $isFactory && (hasPermission('finance.vendor_wallet.view') || hasPermission('finance.balances.settle'))],
                 ['label' => 'Financial Workbook Export', 'icon' => 'fa-file-excel', 'url' => 'modules/analysis/financial_workbook.php', 'show' => $isFactory && hasPermission('analysis.view_reports')],
             ]],
+            // Kept last so Settings sits at the bottom of the sidebar.
+            ['key' => 'settings', 'label' => 'Settings', 'icon' => 'fa-cog', 'url' => 'modules/settings/', 'show' => hasPermission('settings.currencies.view') || hasPermission('settings.currencies.manage')],
         ];
 
         // Drop hidden groups/items, then mark the link for the current page.
