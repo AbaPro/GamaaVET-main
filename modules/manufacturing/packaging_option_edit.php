@@ -174,9 +174,12 @@ $canonicalUnits = ['kg', 'g', 'L', 'ml', 'pcs'];
 
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h2><?= $page_title; ?></h2>
-    <a href="packaging_options.php" class="btn btn-outline-secondary">
-        <i class="fas fa-arrow-left me-1"></i> Back to List
-    </a>
+    <div class="d-flex gap-2">
+        <?php if ($id > 0) echo activityLogLink('packaging_option', $id); ?>
+        <a href="packaging_options.php" class="btn btn-outline-secondary">
+            <i class="fas fa-arrow-left me-1"></i> Back to List
+        </a>
+    </div>
 </div>
 
 <form method="post">

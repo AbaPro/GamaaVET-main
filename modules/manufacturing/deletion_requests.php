@@ -16,7 +16,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt = $pdo->prepare("UPDATE manufacturing_deletion_requests SET status = 'rejected', reviewed_by = ?, reviewed_at = NOW() WHERE id = ? AND account_id = ? AND status = 'pending' AND (requested_by <> ? OR ? = 1)");
         $stmt->execute([$userId, (int)($_POST['reject'] ?? 0), getCurrentAccountId(), $userId, (int)isAdminUser()]);
         if ($stmt->rowCount() !== 1) throw new DomainException('Request unavailable. You cannot review your own request.');
-        logActivity('Rejected manufacturing deletion', null, 'update', 'manufacturing_deletion_request', (int)$_POST['reject']);
+        $rejectedStmt = $pdo->prepare('SELECT entity_type, entity_id FROM manufacturing_deletion_requests WHERE id = ?');
+        $rejectedStmt->execute([(int)$_POST['reject']]);
+        $rejected = $rejectedStmt->fetch(PDO::FETCH_ASSOC);
+        logActivity("Rejected deletion of manufacturing {$rejected['entity_type']} ID: {$rejected['entity_id']}", ['request_id' => (int)$_POST['reject']], 'other', manufacturingDeletionLogEntity($rejected['entity_type']), (int)$rejected['entity_id']);
         setAlert('success', 'Deletion rejected.');
     } catch (Throwable $error) { setAlert('danger', $error->getMessage()); }
     redirect('deletion_requests.php');

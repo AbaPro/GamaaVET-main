@@ -49,6 +49,7 @@ require_once '../../includes/header.php';
         <a href="formulas.php" class="btn btn-outline-secondary">
             <i class="fas fa-arrow-left me-1"></i> Back to Formulas
         </a>
+        <?= activityLogLink('formula_template'); ?>
         <a href="formula_template_edit.php" class="btn btn-primary">
             <i class="fas fa-plus me-2"></i> New Template
         </a>

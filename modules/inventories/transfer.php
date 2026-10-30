@@ -137,7 +137,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         );
 
         setAlert('success', 'Transfer created and sent to the receiver for confirmation. Reference: ' . $transfer_reference);
-        logActivity("Created inventory transfer: $transfer_reference (ID: $transfer_id) awaiting receiver ID $receiver_id");
+        logActivity("Created inventory transfer: $transfer_reference (ID: $transfer_id) awaiting receiver ID $receiver_id", ['items' => $itemCount, 'from_inventory_id' => $from_inventory_id, 'to_inventory_id' => $to_inventory_id], 'create', 'inventory_transfer', $transfer_id);
         redirect('transfers_list.php');
     } catch (Exception $e) {
         // Rollback transaction on error
@@ -226,7 +226,7 @@ $receiverCandidates = getUsersWithPermission('inventories.transfer.receive');
                         <tr>
                             <th>Item</th>
                             <th>Unit</th>
-                            <th>Available</th>
+                            <th>Available <?= helpTip('Current stock in the source inventory. Stock does not move until the receiver confirms the transfer.'); ?></th>
                             <th>Quantity</th>
                             <th>Action</th>
                         </tr>
@@ -234,11 +234,18 @@ $receiverCandidates = getUsersWithPermission('inventories.transfer.receive');
                     <tbody id="transferItemsBody">
                         <!-- Items will be added dynamically -->
                     </tbody>
+                    <tbody id="transferItemsEmpty">
+                        <tr>
+                            <td colspan="5" class="text-center text-muted py-3">
+                                No items yet. Choose the source inventory, then click <strong>Add Items</strong>. You can tick several items at once.
+                            </td>
+                        </tr>
+                    </tbody>
                     <tfoot>
                         <tr>
                             <td colspan="5">
                                 <button type="button" class="btn btn-sm btn-primary" id="addTransferItem">
-                                    <i class="fas fa-plus"></i> Add Item
+                                    <i class="fas fa-plus"></i> Add Items
                                 </button>
                             </td>
                         </tr>
@@ -255,21 +262,25 @@ $receiverCandidates = getUsersWithPermission('inventories.transfer.receive');
 
 <!-- Product Select Modal -->
 <div class="modal fade" id="productSelectModal" tabindex="-1" aria-labelledby="productSelectModalLabel" aria-hidden="true">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title" id="productSelectModalLabel">Select Item</h5>
+                <h5 class="modal-title" id="productSelectModalLabel">Select Items</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
                 <div class="mb-3">
                     <label for="productSearch" class="form-label">Search Products</label>
                     <input type="text" class="form-control" id="productSearch" placeholder="Search by product name or SKU">
+                    <div class="form-text">Tick the items you need and click <strong>Add Selected</strong>, or click <strong>Select</strong> to add a single item. Greyed-out items are already on this transfer.</div>
                 </div>
                 <div class="table-responsive">
                     <table class="table table-hover" id="productSelectTable">
                         <thead>
                             <tr>
+                                <th style="width: 40px;">
+                                    <input type="checkbox" class="form-check-input" id="selectAllProducts" data-bs-toggle="tooltip" title="Select every item shown by the current search">
+                                </th>
                                 <th>Name</th>
                                 <th>Type</th>
                                 <th>SKU</th>
@@ -286,6 +297,9 @@ $receiverCandidates = getUsersWithPermission('inventories.transfer.receive');
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary" id="addSelectedProducts" disabled>
+                    <i class="fas fa-plus"></i> Add Selected (<span id="selectedProductsCount">0</span>)
+                </button>
             </div>
         </div>
     </div>
@@ -294,9 +308,70 @@ $receiverCandidates = getUsersWithPermission('inventories.transfer.receive');
 <?php require_once '../../includes/footer.php'; ?>
 
 <script>
+function escapeHtml(value) {
+    return $('<div>').text(value == null ? '' : String(value)).html();
+}
+
+function isProductAdded(productId) {
+    return $('#transferItemsBody tr[data-id="' + productId + '"]').length > 0;
+}
+
+function addTransferRow(product) {
+    if (isProductAdded(product.id)) {
+        return false;
+    }
+
+    var row = '<tr data-id="' + product.id + '">' +
+              '<td>' + escapeHtml(product.name) + '<input type="hidden" name="product_id[]" value="' + product.id + '"></td>' +
+              '<td>' + escapeHtml(product.unit || '-') + '</td>' +
+              '<td><span class="available-quantity">' + escapeHtml(product.quantity) + '</span></td>' +
+              '<td><input type="number" class="form-control form-control-sm quantity" name="quantity[]" min="0" max="' + escapeHtml(product.quantity) + '" step="0.01" required></td>' +
+              '<td><button type="button" class="btn btn-sm btn-danger remove-item"><i class="fas fa-trash"></i></button></td>' +
+              '</tr>';
+
+    $('#transferItemsBody').append(row);
+    refreshTransferEmptyState();
+    return true;
+}
+
+// Disable items already on the transfer so they can't be picked twice, and
+// keep the select-all checkbox and "Add Selected" counter in sync.
+function refreshTransferEmptyState() {
+    $('#transferItemsEmpty').toggle($('#transferItemsBody tr').length === 0);
+}
+
+function refreshProductSelection() {
+    $('#productSelectBody tr[data-id]').each(function() {
+        var added = isProductAdded($(this).data('id'));
+        $(this).find('.product-checkbox').prop('disabled', added).prop('checked', function(i, checked) {
+            return added ? false : checked;
+        });
+        $(this).toggleClass('table-secondary', added)
+            .attr('title', added ? 'Already on this transfer' : null);
+    });
+
+    var selected = $('#productSelectBody .product-checkbox:checked').length;
+    var visible = $('#productSelectBody tr[data-id]:visible .product-checkbox:not(:disabled)');
+    $('#selectedProductsCount').text(selected);
+    $('#addSelectedProducts').prop('disabled', selected === 0);
+    $('#selectAllProducts').prop('checked', visible.length > 0 && visible.filter(':checked').length === visible.length);
+}
+
 $(document).ready(function() {
     // Get products for selected inventory
+    // Items belong to the source inventory, so switching it clears the list (after confirming).
+    var previousSourceInventory = $('#from_inventory_id').val();
     $('#from_inventory_id').change(function() {
+        if ($('#transferItemsBody tr').length > 0) {
+            if (!confirm('Changing the source inventory removes the items already added. Continue?')) {
+                $(this).val(previousSourceInventory);
+                return;
+            }
+            $('#transferItemsBody').empty();
+            refreshTransferEmptyState();
+        }
+        previousSourceInventory = $(this).val();
+        $('#productSelectBody').empty();
         var inventory_id = $(this).val();
         if (inventory_id) {
             $.ajax({
@@ -307,74 +382,107 @@ $(document).ready(function() {
                 success: function(response) {
                     var products = response.products;
                     var html = '';
-                    
+
                     if (products.length > 0) {
                         $.each(products, function(index, product) {
-                            html += '<tr>' +
-                                    '<td>' + product.name + '</td>' +
+                            var unit = product.type === 'material' ? (product.unit || '') : '';
+                            html += '<tr data-id="' + product.id + '" ' +
+                                    'data-name="' + escapeHtml(product.name) + '" ' +
+                                    'data-unit="' + escapeHtml(unit) + '" ' +
+                                    'data-quantity="' + escapeHtml(product.quantity) + '">' +
+                                    '<td><input type="checkbox" class="form-check-input product-checkbox"></td>' +
+                                    '<td>' + escapeHtml(product.name) + '</td>' +
                                     '<td>' + (product.type === 'material' ? 'Raw Material' : 'Final Product') + '</td>' +
-                                    '<td>' + product.sku + '</td>' +
-                                    '<td>' + (product.type === 'material' ? (product.unit || 'Not set') : '-') + '</td>' +
-                                    '<td>' + product.quantity + '</td>' +
-                                    '<td><button type="button" class="btn btn-sm btn-primary select-product" ' +
-                                    'data-id="' + product.id + '" ' +
-                                    'data-name="' + product.name + '" ' +
-                                    'data-unit="' + (product.unit || '') + '" ' +
-                                    'data-quantity="' + product.quantity + '">Select</button></td>' +
+                                    '<td>' + escapeHtml(product.sku) + '</td>' +
+                                    '<td>' + (product.type === 'material' ? escapeHtml(product.unit || 'Not set') : '-') + '</td>' +
+                                    '<td>' + escapeHtml(product.quantity) + '</td>' +
+                                    '<td><button type="button" class="btn btn-sm btn-primary select-product">Select</button></td>' +
                                     '</tr>';
                         });
                     } else {
-                        html = '<tr><td colspan="6" class="text-center">No items found in this inventory</td></tr>';
+                        html = '<tr><td colspan="7" class="text-center">No items found in this inventory</td></tr>';
                     }
-                    
+
                     $('#productSelectBody').html(html);
+                    refreshProductSelection();
                 }
             });
         }
     });
-    
+
     // Add item button
     $('#addTransferItem').click(function() {
+        if (!$('#from_inventory_id').val()) {
+            alert('Please choose the source inventory first.');
+            $('#from_inventory_id').focus();
+            return;
+        }
+        refreshProductSelection();
         $('#productSelectModal').modal('show');
     });
-    
+
     // Product search
     $('#productSearch').keyup(function() {
         var search = $(this).val().toLowerCase();
         $('#productSelectBody tr').filter(function() {
             $(this).toggle($(this).text().toLowerCase().indexOf(search) > -1);
         });
+        refreshProductSelection();
     });
-    
-    // Select product
+
+    function productFromRow(tr) {
+        return {
+            id: tr.data('id'),
+            name: tr.data('name'),
+            unit: tr.data('unit'),
+            quantity: tr.data('quantity')
+        };
+    }
+
+    // Select a single product
     $(document).on('click', '.select-product', function() {
-        var product_id = $(this).data('id');
-        var product_name = $(this).data('name');
-        var product_unit = $(this).data('unit') || '-';
-        var available = $(this).data('quantity');
-        
-        // Check if product already added
-        if ($('#transferItemsBody tr[data-id="' + product_id + '"]').length > 0) {
+        if (!addTransferRow(productFromRow($(this).closest('tr')))) {
             alert('This product is already added to the transfer.');
             return;
         }
-        
-        // Add to transfer items table
-        var row = '<tr data-id="' + product_id + '">' +
-                  '<td>' + product_name + '<input type="hidden" name="product_id[]" value="' + product_id + '"></td>' +
-                  '<td>' + product_unit + '</td>' +
-                  '<td><span class="available-quantity">' + available + '</span></td>' +
-                  '<td><input type="number" class="form-control form-control-sm quantity" name="quantity[]" min="0" max="' + available + '" step="0.01" required></td>' +
-                  '<td><button type="button" class="btn btn-sm btn-danger remove-item"><i class="fas fa-trash"></i></button></td>' +
-                  '</tr>';
-        
-        $('#transferItemsBody').append(row);
         $('#productSelectModal').modal('hide');
     });
-    
+
+    // Clicking anywhere on a row toggles its checkbox
+    $(document).on('click', '#productSelectBody tr[data-id] td', function(e) {
+        if ($(e.target).is('input, button, .btn, i')) {
+            return;
+        }
+        var checkbox = $(this).closest('tr').find('.product-checkbox');
+        if (!checkbox.prop('disabled')) {
+            checkbox.prop('checked', !checkbox.prop('checked'));
+            refreshProductSelection();
+        }
+    });
+
+    $(document).on('change', '.product-checkbox', refreshProductSelection);
+
+    // Select all only affects rows visible under the current search
+    $('#selectAllProducts').change(function() {
+        $('#productSelectBody tr[data-id]:visible .product-checkbox:not(:disabled)').prop('checked', this.checked);
+        refreshProductSelection();
+    });
+
+    // Add every checked product at once
+    $('#addSelectedProducts').click(function() {
+        $('#productSelectBody .product-checkbox:checked').each(function() {
+            addTransferRow(productFromRow($(this).closest('tr')));
+        });
+        $('#productSelectBody .product-checkbox').prop('checked', false);
+        refreshProductSelection();
+        $('#productSelectModal').modal('hide');
+        $('#transferItemsBody .quantity').filter(function() { return !this.value; }).first().focus();
+    });
+
     // Remove item
     $(document).on('click', '.remove-item', function() {
         $(this).closest('tr').remove();
+        refreshTransferEmptyState();
     });
     
     // Form submission validation

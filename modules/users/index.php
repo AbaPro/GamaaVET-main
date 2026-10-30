@@ -12,11 +12,38 @@ if (session_status() === PHP_SESSION_NONE) {
 require_once __DIR__ . '/../../config/database.php';
 require_once __DIR__ . '/../../includes/functions.php';
 require_once __DIR__ . '/users_functions.php';
+require_once __DIR__ . '/../../includes/auth.php';
 
 // Check permission
 if (!hasPermission('users.manage')) {
     header("Location: /dashboard.php");
     exit();
+}
+
+if (empty($_SESSION['user_session_action_token'])) {
+    $_SESSION['user_session_action_token'] = bin2hex(random_bytes(32));
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $token = $_POST['csrf_token'] ?? '';
+    if (!is_string($token) || !hash_equals($_SESSION['user_session_action_token'], $token)) {
+        http_response_code(403);
+        exit('Invalid request. Refresh the page and try again.');
+    }
+    $id = filter_var($_POST['user_id'] ?? null, FILTER_VALIDATE_INT);
+    if (($_POST['action'] ?? '') !== 'force_logout' || !$id || $id < 1) {
+        http_response_code(400);
+        exit('Invalid user action.');
+    }
+    $success = forceLogoutUser($id);
+    if ($success && $id === (int)$_SESSION['user_id']) {
+        isLoggedIn();
+        setAlert('success', 'All your sessions have been logged out. Please login again.');
+        redirect(BASE_URL . 'index.php');
+    }
+    $_SESSION['message'] = ['type' => $success ? 'success' : 'danger', 'text' => $success
+        ? 'All sessions for this user have been logged out.' : 'User not found.'];
+    redirect('index.php');
 }
 
 // Handle delete request
@@ -116,6 +143,12 @@ include __DIR__ . '/../../includes/header.php';
                                             <a href="edit.php?id=<?= $user['id'] ?>" class="btn btn-sm btn-warning" data-toggle="tooltip" title="Edit">
                                                 <i class="fas fa-edit"></i>
                                             </a>
+                                            <form method="POST" class="d-inline" onsubmit="return confirm('Log this user out on every device?')">
+                                                <input type="hidden" name="csrf_token" value="<?= e($_SESSION['user_session_action_token']) ?>">
+                                                <input type="hidden" name="action" value="force_logout">
+                                                <input type="hidden" name="user_id" value="<?= (int)$user['id'] ?>">
+                                                <button type="submit" class="btn btn-sm btn-outline-danger" title="Force logout on all devices">Force Logout</button>
+                                            </form>
                                             <a href="index.php?delete=1&id=<?= $user['id'] ?>" class="btn btn-sm btn-danger" data-toggle="tooltip" title="Delete" onclick="return confirm('Are you sure you want to delete this user?')">
                                                 <i class="fas fa-trash"></i>
                                             </a>

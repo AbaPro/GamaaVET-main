@@ -79,6 +79,7 @@ if ($result) {
         <a href="index.php" class="btn btn-outline-secondary">
             <i class="fas fa-arrow-left me-1"></i> Back to Orders
         </a>
+        <?= activityLogLink('packaging_option'); ?>
         <a href="packaging_option_edit.php" class="btn btn-primary">
             <i class="fas fa-plus me-2"></i> New Packaging Option
         </a>

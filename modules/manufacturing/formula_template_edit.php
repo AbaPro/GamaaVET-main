@@ -112,9 +112,12 @@ require_once '../../includes/header.php';
         <h2><?= htmlspecialchars($page_title); ?></h2>
         <p class="text-muted mb-0">Choose ingredients once. Default quantities are optional and can be changed after applying the template to a formula.</p>
     </div>
-    <a href="formula_templates.php" class="btn btn-outline-secondary">
-        <i class="fas fa-arrow-left me-1"></i> Back to Templates
-    </a>
+    <div class="d-flex gap-2">
+        <?php if ($id > 0) echo activityLogLink('formula_template', $id); ?>
+        <a href="formula_templates.php" class="btn btn-outline-secondary">
+            <i class="fas fa-arrow-left me-1"></i> Back to Templates
+        </a>
+    </div>
 </div>
 
 <form method="post">

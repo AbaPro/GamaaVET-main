@@ -130,6 +130,10 @@ $canViewComponentName = hasPermission('manufacturing.component.name.view');
         <a href="formula_templates.php" class="btn btn-outline-primary">
             <i class="fas fa-layer-group me-2"></i> Formula Templates
         </a>
+        <?= activityLogLink('formula'); ?>
+        <a href="formula_upload.php" class="btn btn-outline-success" data-bs-toggle="tooltip" title="Create or update many formulas at once from a CSV or Excel file">
+            <i class="fas fa-file-upload me-2"></i> Bulk Upload
+        </a>
         <a href="formula_edit.php" class="btn btn-primary">
             <i class="fas fa-plus me-2"></i> New Formula
         </a>
@@ -257,6 +261,7 @@ $canViewComponentName = hasPermission('manufacturing.component.name.view');
                                         <a href="formula_edit.php?id=<?= $formula['id']; ?>" class="btn btn-sm btn-outline-warning">
                                             <i class="fas fa-edit me-1"></i> Edit
                                         </a>
+                                        <?= activityLogLink('formula', $formula['id'], '', 'btn btn-sm btn-outline-secondary'); ?>
                                         <?php if (canRequestManufacturingDeletion()): ?>
                                             <a href="javascript:void(0)" class="btn btn-sm btn-outline-danger" 
                                                onclick="confirmDelete(<?= $formula['id']; ?>, '<?= htmlspecialchars($formula['name']); ?>')">

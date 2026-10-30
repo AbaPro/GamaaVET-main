@@ -67,9 +67,12 @@ require_once '../../includes/header.php';
 
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h2><?= $page_title; ?></h2>
-    <a href="bottle_sizes.php" class="btn btn-outline-secondary">
-        <i class="fas fa-arrow-left me-1"></i> Back to List
-    </a>
+    <div class="d-flex gap-2">
+        <?php if ($id > 0) echo activityLogLink('bottle_size', $id); ?>
+        <a href="bottle_sizes.php" class="btn btn-outline-secondary">
+            <i class="fas fa-arrow-left me-1"></i> Back to List
+        </a>
+    </div>
 </div>
 
 <div class="row">

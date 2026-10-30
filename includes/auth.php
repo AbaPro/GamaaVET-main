@@ -6,7 +6,7 @@ require_once __DIR__ . '/functions.php';
 
 // Reject revoked sessions before processing any login, logout, or page action.
 if (isset($_SESSION['user_id']) && !isLoggedIn()) {
-    setAlert('danger', 'Your account is no longer available. Please login again.');
+    setAlert('danger', 'Your session has ended or your account is inactive. Please login again.');
     redirect(defined('BASE_URL') ? BASE_URL . 'index.php' : 'index.php');
     exit;
 }
@@ -25,11 +25,13 @@ if (isset($_POST['login'])) {
     if ($result->num_rows === 1) {
         $user = $result->fetch_assoc();
         if (password_verify($password, $user['password'])) {
+            session_regenerate_id(true);
             // Do not carry another account's role or permissions into this login.
             unset($_SESSION['role_id'], $_SESSION['role_slug'], $_SESSION['user_role'], $_SESSION['permissions'], $_SESSION['login_region']);
             $_SESSION['user_id'] = $user['id'];
             $_SESSION['user_name'] = $user['name'];
             $_SESSION['user_email'] = $user['email'];
+            $_SESSION['session_version'] = (int)$user['session_version'];
 
             // Prefer dynamic role from roles table; fall back to legacy column
             if (!empty($user['role_slug'])) {

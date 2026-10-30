@@ -10,6 +10,7 @@ if (session_status() === PHP_SESSION_NONE) {
 require_once __DIR__ . '/../../config/database.php';
 require_once __DIR__ . '/../../includes/functions.php';
 require_once __DIR__ . '/users_functions.php';
+require_once __DIR__ . '/../../includes/auth.php';
 
 // Check permission
 if (!hasPermission('users.manage')) {

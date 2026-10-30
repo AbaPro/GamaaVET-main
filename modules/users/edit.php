@@ -7,6 +7,7 @@ if (session_status() === PHP_SESSION_NONE) {
 require_once __DIR__ . '/../../config/database.php';
 require_once __DIR__ . '/../../includes/functions.php';
 require_once __DIR__ . '/users_functions.php';
+require_once __DIR__ . '/../../includes/auth.php';
 
 // Check permission
 if (!hasPermission('users.manage')) {
@@ -32,6 +33,11 @@ if (!$user) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $token = $_POST['safe_access_token'] ?? '';
+    if (!is_string($token) || $token === '' || !hash_equals($_SESSION['user_safe_access_token'] ?? '', $token)) {
+        http_response_code(403);
+        exit('Invalid request. Refresh the page and try again.');
+    }
     // Validate input
     $required = ['name', 'username', 'email'];
     foreach ($required as $field) {
@@ -105,7 +111,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     
     // Update user
-    if (updateUser($id, $updateData)) {
+    try {
+        $updated = updateUser($id, $updateData);
+    } catch (DomainException $e) {
+        $_SESSION['message'] = ['type' => 'danger', 'text' => $e->getMessage()];
+        header("Location: edit.php?id=$id");
+        exit();
+    }
+    if ($updated) {
+        if (!isLoggedIn()) {
+            setAlert('success', 'User updated. Please login again.');
+            redirect(BASE_URL . 'index.php');
+        }
         $_SESSION['message'] = ['type' => 'success', 'text' => 'User updated successfully'];
         header("Location: index.php");
         exit();
@@ -194,6 +211,7 @@ include __DIR__ . '/../../includes/header.php';
                                     <input class="form-check-input" type="checkbox" id="is_active" name="is_active" 
                                            <?= $user['is_active'] ? 'checked' : '' ?>>
                                     <label class="form-check-label" for="is_active">Active User</label>
+                                    <small class="d-block text-muted">Inactive users cannot sign in. Deactivating also logs out all their devices.</small>
                                 </div>
                             </div>
                             <div class="col-md-6">

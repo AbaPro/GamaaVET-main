@@ -518,6 +518,24 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
             $html .= '</div>';
         }
         $packagingStmt->close();
+
+        if (manufacturing_table_exists($conn, 'manufacturing_packaging_images')) {
+            $packImageStmt = $conn->prepare("SELECT file_path, original_name FROM manufacturing_packaging_images WHERE manufacturing_order_id = ? ORDER BY uploaded_at DESC");
+            $packImageStmt->bind_param("i", $order['id']);
+            $packImageStmt->execute();
+            $packImageResult = $packImageStmt->get_result();
+            if ($packImageResult->num_rows > 0) {
+                $html .= '<h4>Packaging & Labeling Images</h4>';
+                $html .= '<table><thead><tr><th>Image</th><th>File</th></tr></thead><tbody>';
+                while ($image = $packImageResult->fetch_assoc()) {
+                    $imagePath = htmlspecialchars($image['file_path']);
+                    $imageName = htmlspecialchars($image['original_name'] ?: basename($image['file_path']));
+                    $html .= '<tr><td><img src="' . $imagePath . '" style="max-width:140px;max-height:100px;"></td><td>' . $imageName . '</td></tr>';
+                }
+                $html .= '</tbody></table>';
+            }
+            $packImageStmt->close();
+        }
     }
 
     // Dispatch Prep data
@@ -1234,8 +1252,17 @@ function manufacturing_build_full_report_html($conn, $orderId) {
     $stepStmt->bind_param('i', $orderId);
     $stepStmt->execute();
     $res = $stepStmt->get_result();
-    while ($row = $res->fetch_assoc()) $steps[] = $row;
+    $qualityStep = [];
+    while ($row = $res->fetch_assoc()) {
+        $steps[] = $row;
+        if ($row['step_key'] === 'quality') $qualityStep = $row;
+    }
     $stepStmt->close();
+
+    $qualityStartDate = !empty($qualityStep['started_at'])
+        ? date('d/m/Y H:i', strtotime($qualityStep['started_at'])) : 'Not started';
+    $qualityEndDate = !empty($qualityStep['completed_at'])
+        ? date('d/m/Y H:i', strtotime($qualityStep['completed_at'])) : 'Not completed';
 
     $stepPeople = manufacturing_get_step_people($conn, array_column($steps, 'id'));
     $auditNotes = manufacturing_detect_order_audit_notes($conn, $order, $steps);
@@ -1290,6 +1317,7 @@ function manufacturing_build_full_report_html($conn, $orderId) {
     $html .= "<tr><td class=\"col-label\">Target Product</td><td>" . htmlspecialchars($order['product_name'] ?? 'N/A') . "</td><td class=\"col-label\">Product SKU</td><td>" . htmlspecialchars($order['product_sku'] ?? 'N/A') . "</td></tr>";
     $html .= "<tr><td class=\"col-label\">Production Site</td><td>" . htmlspecialchars($order['location_name'] ?? 'N/A') . "</td><td class=\"col-label\">Current Stage</td><td>" . htmlspecialchars(ucfirst($order['status'])) . "</td></tr>";
     $html .= "<tr><td class=\"col-label\">Created By</td><td>" . htmlspecialchars($order['created_by_name'] ?? 'Unknown') . "</td><td class=\"col-label\">Created At</td><td>" . htmlspecialchars($order['created_at'] ?? '-') . "</td></tr>";
+    $html .= '<tr><td class="col-label">Quality Validation Start Date</td><td>' . htmlspecialchars($qualityStartDate) . '</td><td class="col-label">Quality Validation End Date</td><td>' . htmlspecialchars($qualityEndDate) . '</td></tr>';
     $html .= '</tbody></table>';
     $html .= '</div>';
 
@@ -1337,8 +1365,13 @@ function manufacturing_build_full_report_html($conn, $orderId) {
         $html .= '<div class="step-info">';
         $html .= '<table><tbody><tr>';
         $html .= '<td style="border:none; width:33%;"><strong>Status:</strong> <span class="status-badge ' . $statusClass . '">' . $stepStatus . '</span></td>';
-        if ($step['started_at']) $html .= '<td style="border:none; width:33%;"><strong>Start:</strong> ' . date('d/m/Y H:i', strtotime($step['started_at'])) . '</td>';
-        if ($step['completed_at']) $html .= '<td style="border:none; width:33%;"><strong>End:</strong> ' . date('d/m/Y H:i', strtotime($step['completed_at'])) . '</td>';
+        if ($step['step_key'] === 'quality') {
+            $html .= '<td style="border:none; width:33%;"><strong>Start Date:</strong> ' . htmlspecialchars($qualityStartDate) . '</td>';
+            $html .= '<td style="border:none; width:33%;"><strong>End Date:</strong> ' . htmlspecialchars($qualityEndDate) . '</td>';
+        } else {
+            if ($step['started_at']) $html .= '<td style="border:none; width:33%;"><strong>Start:</strong> ' . date('d/m/Y H:i', strtotime($step['started_at'])) . '</td>';
+            if ($step['completed_at']) $html .= '<td style="border:none; width:33%;"><strong>End:</strong> ' . date('d/m/Y H:i', strtotime($step['completed_at'])) . '</td>';
+        }
         $html .= '</tr></tbody></table>';
         $people = $stepPeople[(int)$step['id']] ?? [];
         $html .= '<table><tbody><tr>';

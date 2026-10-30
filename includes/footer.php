@@ -41,6 +41,11 @@
                 window.GamaaTableTools.init();
             }
 
+            // Delegated so tooltips also work on rows/modals added later by JS.
+            if (window.bootstrap && bootstrap.Tooltip) {
+                new bootstrap.Tooltip(document.body, { selector: '[data-bs-toggle="tooltip"]', container: 'body' });
+            }
+
             document.addEventListener('DOMContentLoaded', function() {
                 // Global table row click logic
                 if (window.jQuery) {
@@ -96,7 +101,7 @@
 
                     jQuery(document).on('click', 'table.table-hover tbody tr', function(e) {
                         // Don't trigger if clicking on an interactive element
-                        if (jQuery(e.target).closest('a, button, input, select, textarea, .dropdown-menu, .js-order-preview').length) {
+                        if (jQuery(e.target).closest('a, button, input, select, textarea, .dropdown-menu, .js-order-preview, [data-bs-toggle="tooltip"]').length) {
                             return;
                         }
 
@@ -123,6 +128,30 @@
             });
         </script>
         <!-- Custom JS -->
+        <?php if (isLoggedIn()): ?>
+        <script>
+        (() => {
+            let pending = false;
+            async function checkSession() {
+                if (pending) return;
+                pending = true;
+                try {
+                    const response = await fetch(<?= json_encode(BASE_URL . 'ajax/session_status.php') ?>, {
+                        credentials: 'same-origin', cache: 'no-store'
+                    });
+                    if (response.status === 401) window.location.replace(<?= json_encode(BASE_URL . 'index.php') ?>);
+                } catch (_) {
+                    // A network interruption does not mean the session was revoked.
+                } finally { pending = false; }
+            }
+            setInterval(checkSession, 15000);
+            window.addEventListener('focus', checkSession);
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden) checkSession();
+            });
+        })();
+        </script>
+        <?php endif; ?>
         <!-- <script src="<?php echo BASE_URL; ?>assets/js/custom.js"></script> -->
     </body>
 </html>

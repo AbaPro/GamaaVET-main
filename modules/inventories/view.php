@@ -168,6 +168,7 @@ $ariaSort = static function (string $column) use ($sortBy, $sortDir): string {
         </span>
     </h2>
     <div>
+        <?= activityLogLink('inventory', $inventory_id); ?>
         <a href="upload.php?inventory_id=<?php echo $inventory_id; ?>" class="btn btn-outline-primary">
             <i class="fas fa-file-upload"></i> Bulk Upload
         </a>

@@ -508,6 +508,7 @@ CREATE TABLE `users` (
   `role_id` int(11) DEFAULT NULL,
   `is_active` tinyint(1) DEFAULT 1,
   `last_login` datetime DEFAULT NULL,
+  `session_version` bigint unsigned NOT NULL DEFAULT 0,
   `created_at` timestamp NULL DEFAULT current_timestamp(),
   `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
   `personal_balance` decimal(10,2) DEFAULT 0.00

@@ -494,6 +494,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     // Store packaging checklist values for packaging step
+    $packagingImagesUploaded = 0;
     if ($stepKey === 'packaging') {
         $packagingValues = $_POST['packaging_values'] ?? [];
         
@@ -517,6 +518,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $updatePackagingStmt->execute();
                 $updatePackagingStmt->close();
             }
+        }
+
+        if (!empty($_FILES['packaging_images']) && is_array($_FILES['packaging_images']['name'])
+            && manufacturing_table_exists($conn, 'manufacturing_packaging_images')) {
+            $targetDir = manufacturing_get_storage_path_for_step($order['order_number'], 'packaging_images');
+            $relativeDir = 'assets/uploads/manufacturing/' . manufacturing_slugify($order['order_number']) . '/packaging_images';
+            $insertImageStmt = $conn->prepare("INSERT INTO manufacturing_packaging_images (manufacturing_order_id, manufacturing_order_step_id, file_path, original_name, uploaded_by) VALUES (?, ?, ?, ?, ?)");
+            $stepId = (int)$stepRow['id'];
+            foreach ($_FILES['packaging_images']['name'] as $idx => $originalName) {
+                if ($originalName === '') {
+                    continue;
+                }
+                $uploaded = manufacturing_store_uploaded_image(
+                    manufacturing_normalize_uploaded_file($_FILES['packaging_images'], $idx),
+                    $targetDir,
+                    $relativeDir,
+                    'packaging_' . $orderId
+                );
+                if ($uploaded) {
+                    $uploadedBy = $_SESSION['user_id'] ?? null;
+                    $filePath = $uploaded['path'];
+                    $originalFileName = $uploaded['original_name'];
+                    $insertImageStmt->bind_param('iissi', $orderId, $stepId, $filePath, $originalFileName, $uploadedBy);
+                    $insertImageStmt->execute();
+                    $packagingImagesUploaded++;
+                }
+            }
+            $insertImageStmt->close();
         }
     }
 
@@ -1024,6 +1053,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'order_id' => $orderId,
         'step_key' => $stepKey,
         'status' => $statusToSave,
+        'packaging_images_uploaded' => $packagingImagesUploaded,
     ], 'update', 'manufacturing_order', $orderId);
 
     header('Location: order.php?id=' . $orderId);
@@ -1092,6 +1122,7 @@ $isCompletedOrder = $order['status'] === 'completed';
         <span class="badge <?= $orderBadge['class']; ?> text-uppercase">
             <?= $orderBadge['label']; ?>
         </span>
+        <?= activityLogLink('manufacturing_order', $orderId); ?>
         <?php if (!$isCompletedOrder): ?>
             <a href="edit.php?id=<?= $orderId; ?>" class="btn btn-outline-primary">
                 <i class="fas fa-edit me-1"></i> Edit
@@ -1917,16 +1948,22 @@ $isCompletedOrder = $order['status'] === 'completed';
                                         </div>
                                         
                                         <!-- Material Tracking Summary Table -->
-                                        <h6 class="mt-4 mb-3 text-primary">تتبع المواد (Material Tracking)</h6>
+                                        <h6 class="mt-4 mb-2 text-primary">تتبع المواد (Material Tracking)</h6>
+                                        <div class="alert alert-light border small py-2 mb-2" dir="rtl">
+                                            <i class="fas fa-info-circle ms-1"></i>
+                                            هذا الجدول للتسجيل فقط ولا يغيّر رصيد المخزن. خامات التعبئة تُخصم من المخزن عند إكمال مرحلة التوريد.
+                                            يجب أن يكون: <strong>مصروف = مستخدم + راجع + هالك</strong>.
+                                        </div>
                                         <div class="table-responsive mb-3">
-                                            <table class="table table-bordered table-sm">
+                                            <table class="table table-bordered table-sm" id="materialTrackingTable">
                                                 <thead class="table-light">
                                                     <tr>
-                                                        <th style="text-align: right;">المادة</th>
-                                                        <th style="text-align: right;">مصروف</th>
-                                                        <th style="text-align: right;">مستخدم</th>
-                                                        <th style="text-align: right;">راجع</th>
-                                                        <th style="text-align: right;">الهالك</th>
+                                                        <th style="text-align: right;">المادة <?= helpTip('اسم مادة التعبئة. يمكن تعديل اسم الصف الأول ليناسب المادة المستخدمة.'); ?></th>
+                                                        <th style="text-align: right;">مصروف <?= helpTip('الكمية التي تم صرفها من المخزن لخط التعبئة.'); ?></th>
+                                                        <th style="text-align: right;">مستخدم <?= helpTip('الكمية التي دخلت فعليًا في المنتج النهائي.'); ?></th>
+                                                        <th style="text-align: right;">راجع <?= helpTip('الكمية السليمة غير المستخدمة التي تعود للمخزن.'); ?></th>
+                                                        <th style="text-align: right;">الهالك <?= helpTip('الكمية التالفة أو المهدرة أثناء التعبئة.'); ?></th>
+                                                        <th style="text-align: center; width: 90px;">المطابقة <?= helpTip('يتحقق أن المصروف = المستخدم + الراجع + الهالك.'); ?></th>
                                                     </tr>
                                                 </thead>
                                                 <tbody>
@@ -1973,16 +2010,42 @@ $isCompletedOrder = $order['status'] === 'completed';
                                                                     <strong><?= htmlspecialchars($matLabel); ?></strong>
                                                                 <?php endif; ?>
                                                             </td>
-                                                            <td><input type="number" class="form-control form-control-sm" name="packaging_values[<?= $issuedKey; ?>]" value="<?= htmlspecialchars($issuedVal); ?>" placeholder="0" required></td>
-                                                            <td><input type="number" class="form-control form-control-sm" name="packaging_values[<?= $usedKey; ?>]" value="<?= htmlspecialchars($usedVal); ?>" placeholder="0" required></td>
-                                                            <td><input type="number" class="form-control form-control-sm" name="packaging_values[<?= $returnedKey; ?>]" value="<?= htmlspecialchars($returnedVal); ?>" placeholder="0" required></td>
-                                                            <td><input type="number" class="form-control form-control-sm" name="packaging_values[<?= $wasteKey; ?>]" value="<?= htmlspecialchars($wasteVal); ?>" placeholder="0" required></td>
+                                                            <td><input type="number" min="0" step="any" class="form-control form-control-sm mt-issued" name="packaging_values[<?= $issuedKey; ?>]" value="<?= htmlspecialchars($issuedVal); ?>" placeholder="0" required></td>
+                                                            <td><input type="number" min="0" step="any" class="form-control form-control-sm mt-used" name="packaging_values[<?= $usedKey; ?>]" value="<?= htmlspecialchars($usedVal); ?>" placeholder="0" required></td>
+                                                            <td><input type="number" min="0" step="any" class="form-control form-control-sm mt-returned" name="packaging_values[<?= $returnedKey; ?>]" value="<?= htmlspecialchars($returnedVal); ?>" placeholder="0" required></td>
+                                                            <td><input type="number" min="0" step="any" class="form-control form-control-sm mt-waste" name="packaging_values[<?= $wasteKey; ?>]" value="<?= htmlspecialchars($wasteVal); ?>" placeholder="0" required></td>
+                                                            <td class="text-center align-middle mt-status"></td>
                                                         </tr>
                                                     <?php endforeach; ?>
                                                 </tbody>
                                             </table>
                                         </div>
                                     </div>
+                                    <?php if (manufacturing_table_exists($conn, 'manufacturing_packaging_images')):
+                                        $packImageStmt = $conn->prepare("SELECT file_path, original_name FROM manufacturing_packaging_images WHERE manufacturing_order_id = ? ORDER BY uploaded_at DESC");
+                                        $packImageStmt->bind_param('i', $orderId);
+                                        $packImageStmt->execute();
+                                        $packImages = $packImageStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+                                        $packImageStmt->close();
+                                    ?>
+                                    <div class="mb-3">
+                                        <h6 class="mb-2">Packaging &amp; Labeling Images <?= helpTip('Photos of the labeled and packed product. They are kept with this order and included in the packaging step document.'); ?></h6>
+                                        <input type="file" class="form-control form-control-sm" name="packaging_images[]" accept="image/jpeg,image/png,image/gif,image/webp" multiple>
+                                        <div class="form-text">Optional. You can pick several images; they upload when you save this step. Allowed: JPG, PNG, GIF, WEBP. Max 5MB per image.</div>
+                                        <?php if (!empty($packImages)): ?>
+                                            <div class="row g-2 mt-2">
+                                                <?php foreach ($packImages as $packImage): ?>
+                                                    <div class="col-6 col-md-3">
+                                                        <a href="../../<?= htmlspecialchars($packImage['file_path']); ?>" target="_blank" class="d-block border rounded p-1 bg-light">
+                                                            <img src="../../<?= htmlspecialchars($packImage['file_path']); ?>" class="img-fluid rounded" alt="Packaging image">
+                                                        </a>
+                                                        <small class="text-muted d-block text-truncate mt-1"><?= htmlspecialchars($packImage['original_name'] ?: basename($packImage['file_path'])); ?></small>
+                                                    </div>
+                                                <?php endforeach; ?>
+                                            </div>
+                                        <?php endif; ?>
+                                    </div>
+                                    <?php endif; ?>
                                     <div class="alert alert-info small mb-3">
                                         <i class="fas fa-info-circle me-2"></i>
                                         <strong>Packaging Guidelines:</strong> Complete line clearance before starting. Track all materials accurately and record final counts. Ensure all packaging materials are reconciled (issued = used + returned + waste).
@@ -2416,6 +2479,31 @@ $isCompletedOrder = $order['status'] === 'completed';
                 : '<i class="fas fa-expand-alt me-1"></i> Expand all';
         });
     }
+
+    // Material tracking: show live whether issued = used + returned + waste for each row.
+    function refreshMaterialTrackingRow(row) {
+        const num = (selector) => parseFloat(row.querySelector(selector)?.value) || 0;
+        const fields = ['.mt-issued', '.mt-used', '.mt-returned', '.mt-waste'];
+        const isEmpty = fields.every((selector) => (row.querySelector(selector)?.value ?? '') === '');
+        const status = row.querySelector('.mt-status');
+        if (!status) return;
+        if (isEmpty) {
+            status.innerHTML = '<span class="text-muted">—</span>';
+            return;
+        }
+        const diff = num('.mt-issued') - (num('.mt-used') + num('.mt-returned') + num('.mt-waste'));
+        if (Math.abs(diff) < 0.0001) {
+            status.innerHTML = '<span class="badge bg-success"><i class="fas fa-check"></i> مطابق</span>';
+        } else {
+            const amount = Number(Math.abs(diff).toFixed(3));
+            const label = diff > 0 ? 'غير محسوب ' + amount : 'زائد ' + amount;
+            status.innerHTML = '<span class="badge bg-danger" title="المصروف لا يساوي المستخدم + الراجع + الهالك">' + label + '</span>';
+        }
+    }
+    document.querySelectorAll('#materialTrackingTable tbody tr').forEach((row) => {
+        refreshMaterialTrackingRow(row);
+        row.addEventListener('input', () => refreshMaterialTrackingRow(row));
+    });
 
     function confirmDelete(id, orderNumber) {
         if (confirm('Request approval to delete manufacturing order #' + orderNumber + '? The order and its related data will remain until another authorized user approves deletion.')) {

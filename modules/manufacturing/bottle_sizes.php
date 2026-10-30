@@ -46,6 +46,7 @@ if ($result) {
         <a href="index.php" class="btn btn-outline-secondary">
             <i class="fas fa-arrow-left me-1"></i> Back to Orders
         </a>
+        <?= activityLogLink('bottle_size'); ?>
         <a href="bottle_size_edit.php" class="btn btn-primary">
             <i class="fas fa-plus me-2"></i> New Bottle Size
         </a>

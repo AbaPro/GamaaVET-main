@@ -182,7 +182,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 );
             }
             setAlert('success', 'Manufacturing order updated successfully.');
-            logActivity("Updated manufacturing order ID: $orderId", ['order_id' => $orderId]);
+            logActivity("Updated manufacturing order ID: $orderId", ['order_id' => $orderId], 'update', 'manufacturing_order', $orderId);
             redirect('order.php?id=' . $orderId);
         } catch (Exception $exception) {
             if ($pdo->inTransaction()) $pdo->rollBack();

@@ -20,6 +20,8 @@ if (!canAccessCustomer($customer_id) || !isCustomerInCurrentChannel($customer_id
 $page_title = 'Customer Details';
 $canViewPhoneNumbers = hasPermission('contacts.phone.view');
 $canViewOrderPrices = hasPermission('sales.orders.price.view');
+$canViewFinalProductPrices = canViewProductPrice('final');
+$canViewFinalProductCosts = canViewProductCost('final');
 $canViewOrderDiscounts = hasPermission('sales.orders.discount.view');
 $canViewOrderShipping = hasPermission('sales.orders.shipping.view') && $canViewOrderPrices;
 $canViewCustomerWallet = hasPermission('customers.wallet.view')
@@ -117,10 +119,13 @@ if ($canViewOrderDiscounts) {
 $exportLineHeaders[] = 'Notes';
 
 // Get customer products with inventory details
+$customerProductPriceSelect = $canViewFinalProductPrices
+    ? ", CASE WHEN p.type = 'final' THEN p.unit_price END AS selling_price"
+    : '';
 $customer_products_sql = "SELECT p.id, p.name, p.sku, p.type, 
                                  i.name as inventory_name, 
                                  l.name as location_name, 
-                                 ip.quantity
+                                 ip.quantity $customerProductPriceSelect
                           FROM products p
                           LEFT JOIN inventory_products ip ON p.id = ip.product_id
                           LEFT JOIN inventories i ON ip.inventory_id = i.id
@@ -130,7 +135,17 @@ $customer_products_sql = "SELECT p.id, p.name, p.sku, p.type,
 $cp_stmt = $conn->prepare($customer_products_sql);
 $cp_stmt->bind_param("i", $customer_id);
 $cp_stmt->execute();
-$customer_products_result = $cp_stmt->get_result();
+$customerProducts = $cp_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+$cp_stmt->close();
+$customerProductCostDetails = [];
+if ($canViewFinalProductCosts) {
+    $finalProductIds = [];
+    foreach ($customerProducts as $product) {
+        if ($product['type'] === 'final') $finalProductIds[] = (int)$product['id'];
+    }
+    $customerProductCostDetails = getCalculatedProductCostDetails($finalProductIds);
+}
+$customerProductsColspan = 7 + (int)$canViewFinalProductPrices + (int)$canViewFinalProductCosts;
 
 $factories_data = [];
 if (($_SESSION['login_region'] ?? 'factory') === 'factory') {
@@ -380,12 +395,14 @@ if (($_SESSION['login_region'] ?? 'factory') === 'factory') {
                                 <th>Inventory</th>
                                 <th>Location</th>
                                 <th>Quantity</th>
+                                <?php if ($canViewFinalProductPrices): ?><th>Selling Price</th><?php endif; ?>
+                                <?php if ($canViewFinalProductCosts): ?><th>Cost Price</th><?php endif; ?>
                                 <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
-                            <?php if ($customer_products_result->num_rows > 0): ?>
-                                <?php while ($item = $customer_products_result->fetch_assoc()): ?>
+                            <?php if ($customerProducts): ?>
+                                <?php foreach ($customerProducts as $item): ?>
                                     <tr>
                                         <td><?php echo e($item['name']); ?></td>
                                         <td><?php echo e($item['sku'] ?? '-'); ?></td>
@@ -397,16 +414,33 @@ if (($_SESSION['login_region'] ?? 'factory') === 'factory') {
                                         <td><?php echo $item['inventory_name'] ? e($item['inventory_name']) : '<span class="text-muted">No inventory records</span>'; ?></td>
                                         <td><?php echo $item['location_name'] ? e($item['location_name']) : '-'; ?></td>
                                         <td><?php echo $item['quantity'] !== null ? number_format($item['quantity']) : '-'; ?></td>
+                                        <?php if ($canViewFinalProductPrices): ?>
+                                        <td><?= $item['type'] === 'final' && $item['selling_price'] !== null && $item['selling_price'] !== ''
+                                            ? number_format((float)$item['selling_price'], 2) : '-' ?></td>
+                                        <?php endif; ?>
+                                        <?php if ($canViewFinalProductCosts): ?>
+                                        <?php $costDetail = $item['type'] === 'final' ? ($customerProductCostDetails[(int)$item['id']] ?? []) : []; ?>
+                                        <td>
+                                            <?php if (isset($costDetail['value'])): ?>
+                                                <?= number_format((float)$costDetail['value'], 2) ?>
+                                                <?php if (($costDetail['source'] ?? '') === 'formula'): ?>
+                                                    <div class="small text-muted" title="<?= e('Calculated from formula: ' . ($costDetail['formula_name'] ?? '')) ?>">formula<?= !empty($costDetail['basis_unit']) ? ' / ' . e($costDetail['basis_unit']) : '' ?></div>
+                                                <?php endif; ?>
+                                            <?php else: ?>
+                                                <span class="text-muted" title="<?= e(!empty($costDetail['missing_components']) ? 'Missing component costs: ' . implode(', ', $costDetail['missing_components']) : 'No cost available') ?>">-</span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <?php endif; ?>
                                         <td>
                                             <a href="../products/index.php?search=<?php echo urlencode($item['sku']); ?>" class="btn btn-sm btn-outline-info">
                                                 <i class="fas fa-search"></i> Find
                                             </a>
                                         </td>
                                     </tr>
-                                <?php endwhile; ?>
+                                <?php endforeach; ?>
                             <?php else: ?>
                                 <tr>
-                                    <td colspan="7" class="text-center">No linked products found for this customer</td>
+                                    <td colspan="<?= $customerProductsColspan ?>" class="text-center">No linked products found for this customer</td>
                                 </tr>
                             <?php endif; ?>
                         </tbody>

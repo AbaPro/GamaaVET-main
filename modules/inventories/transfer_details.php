@@ -141,6 +141,7 @@ require_once '../../includes/header.php';
         <?php endif; ?>
     </div>
     <div>
+        <?= activityLogLink('inventory_transfer', $transfer_id); ?>
         <?php if ($showReceiveActions): ?>
             <a href="receive_transfer.php?id=<?= $transfer_id ?>"
                class="btn btn-outline-success"

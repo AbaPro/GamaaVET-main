@@ -135,7 +135,7 @@ function createUser($data) {
     }
     
     $hashed_password = password_hash($data['password'], PASSWORD_DEFAULT);
-    $is_active = isset($data['is_active']) ? 1 : 0;
+    $is_active = !empty($data['is_active']) ? 1 : 0;
 
     $role_id = isset($data['role_id']) ? (int)$data['role_id'] : 0;
     $role_slug = null;
@@ -182,7 +182,10 @@ function createUser($data) {
 function updateUser($id, $data) {
     global $conn;
     
-    $is_active = isset($data['is_active']) ? 1 : 0;
+    $is_active = !empty($data['is_active']) ? 1 : 0;
+    if (!$is_active && (int)$id === (int)($_SESSION['user_id'] ?? 0)) {
+        throw new DomainException('You cannot deactivate your own account. Ask another administrator.');
+    }
     
     // Resolve role
     $role_id = isset($data['role_id']) ? (int)$data['role_id'] : 0;
@@ -215,7 +218,7 @@ function updateUser($id, $data) {
         }
         $hashed_password = password_hash($data['password'], PASSWORD_DEFAULT);
         
-        $stmt = $conn->prepare("UPDATE users SET username = ?, password = ?, name = ?, email = ?, role = ?, role_id = ?, is_active = ?, region = ?, safe_access_ids = ?, bank_access_ids = ? WHERE id = ?");
+        $stmt = $conn->prepare("UPDATE users SET username = ?, password = ?, name = ?, email = ?, role = ?, role_id = ?, is_active = ?, region = ?, safe_access_ids = ?, bank_access_ids = ?, session_version = session_version + 1 WHERE id = ?");
         $stmt->bind_param("sssssiisssi",
             $data['username'],
             $hashed_password,
@@ -230,7 +233,7 @@ function updateUser($id, $data) {
             $id
         );
     } else {
-        $stmt = $conn->prepare("UPDATE users SET username = ?, name = ?, email = ?, role = ?, role_id = ?, is_active = ?, region = ?, safe_access_ids = ?, bank_access_ids = ? WHERE id = ?");
+        $stmt = $conn->prepare("UPDATE users SET username = ?, name = ?, email = ?, role = ?, role_id = ?, is_active = ?, region = ?, safe_access_ids = ?, bank_access_ids = ?, session_version = session_version + IF(is_active = 0, 1, 0) WHERE id = ?");
         $stmt->bind_param("ssssiisssi",
             $data['username'],
             $data['name'],
@@ -254,6 +257,17 @@ function updateUser($id, $data) {
     }
     logActivity("Updated user ID: $id", $changes, 'update', 'user', $id);
     return true;
+}
+
+function forceLogoutUser($id) {
+    global $conn;
+    $stmt = $conn->prepare('UPDATE users SET session_version = session_version + 1 WHERE id = ?');
+    $stmt->bind_param('i', $id);
+    $stmt->execute();
+    $changed = $stmt->affected_rows === 1;
+    $stmt->close();
+    if ($changed) logActivity("Forced logout for user ID: $id", null, 'logout', 'user', $id);
+    return $changed;
 }
 
 function deleteUser($id) {

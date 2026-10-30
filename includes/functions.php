@@ -271,10 +271,13 @@ function isLoggedIn() {
 
     // Sessions on every device must stop granting access after account deletion
     // or deactivation, even if they still contain cached admin permissions.
-    $stmt = $conn->prepare("SELECT id FROM users WHERE id = ? AND is_active = 1");
+    $stmt = $conn->prepare("SELECT session_version FROM users WHERE id = ? AND is_active = 1");
     $stmt->bind_param("i", $_SESSION['user_id']);
     $stmt->execute();
-    $active = $stmt->get_result()->num_rows === 1;
+    $user = $stmt->get_result()->fetch_assoc();
+    // Sessions created before session revocation was introduced have version 0.
+    // Never adopt the current version here: that would revive revoked sessions.
+    $active = $user && (int)($_SESSION['session_version'] ?? 0) === (int)$user['session_version'];
     $stmt->close();
     if (!$active) {
         $_SESSION = [];
@@ -462,6 +465,27 @@ function activityActionTypes() {
         'delete' => ['Delete', 'danger'],
         'other' => ['Other', 'light'],
     ];
+}
+
+// Quick link to the activity log filtered to one record type (and optionally one record).
+// Renders nothing for users who cannot view the log.
+function activityLogLink($entityType, $entityId = null, $label = 'Activity Log', $class = 'btn btn-outline-secondary') {
+    if (!hasPermission('users.activity_logs.view')) {
+        return '';
+    }
+    $params = ['entity_type' => $entityType];
+    if ($entityId) {
+        $params['entity_id'] = (int)$entityId;
+    }
+    $url = BASE_URL . 'modules/users/activity_logs.php?' . http_build_query($params);
+    $icon = '<i class="fas fa-history' . ($label !== '' ? ' me-1' : '') . '"></i>';
+    $tip = $entityId ? 'See who created, edited or deleted this record' : 'See who created, edited or deleted these records';
+    return '<a href="' . e($url) . '" class="' . e($class) . '" data-bs-toggle="tooltip" title="' . e($tip) . '">' . $icon . e($label) . '</a>';
+}
+
+// Small "?" icon that explains a field on hover/focus.
+function helpTip($text) {
+    return '<i class="fas fa-circle-question text-muted ms-1" tabindex="0" role="button" data-bs-toggle="tooltip" title="' . e($text) . '" aria-label="' . e($text) . '"></i>';
 }
 
 // Best-effort classification of free-text actions such as "Deleted product ID: 5"

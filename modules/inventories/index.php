@@ -78,6 +78,7 @@ $result = $stmt->get_result();
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2>Inventories</h2>
     <div>
+        <?= activityLogLink('inventory'); ?>
         <a href="upload.php" class="btn btn-outline-primary">
             <i class="fas fa-file-upload"></i> Bulk Upload Products Quantity
         </a>

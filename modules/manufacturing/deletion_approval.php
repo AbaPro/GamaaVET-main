@@ -12,6 +12,17 @@ function manufacturingDeletionConfig($type) {
     ][$type] ?? null;
 }
 
+// Activity-log entity for each deletable type, so a record's history includes its deletion.
+function manufacturingDeletionLogEntity($type) {
+    return [
+        'order' => 'manufacturing_order',
+        'formula' => 'formula',
+        'template' => 'formula_template',
+        'bottle_size' => 'bottle_size',
+        'packaging_option' => 'packaging_option',
+    ][$type] ?? 'manufacturing_deletion_request';
+}
+
 function manufacturingDeletionToken() {
     if (empty($_SESSION['manufacturing_deletion_token'])) $_SESSION['manufacturing_deletion_token'] = bin2hex(random_bytes(32));
     return $_SESSION['manufacturing_deletion_token'];
@@ -73,7 +84,7 @@ function handleManufacturingDeletion($type) {
             if (!hasPermission('manufacturing.deletions.request')) throw new DomainException('Manufacturing deletion request permission is required.');
             manufacturingDeletionRecord($type, $id);
             $requestId = createPendingDeletionRequest('manufacturing_deletion_requests', $type, $id);
-            logActivity('Requested manufacturing deletion', ['type' => $type, 'id' => $id], 'create', 'manufacturing_deletion_request', $requestId);
+            logActivity("Requested deletion of manufacturing $type ID: $id", ['type' => $type, 'id' => $id, 'request_id' => $requestId], 'other', manufacturingDeletionLogEntity($type), $id);
             setAlert('success', 'Deletion requested. An authorized user must approve it. Admins can approve their own requests.');
             redirect($returnPage);
             return;
@@ -109,7 +120,7 @@ function handleManufacturingDeletion($type) {
             $path = realpath(ROOT_PATH . '/' . $file);
             if ($path && strpos($path, ROOT_PATH . '/uploads/') === 0 && is_file($path)) unlink($path);
         }
-        logActivity('Approved manufacturing deletion', ['type' => $type, 'id' => $id, 'requested_by' => (int)$request['requested_by']], 'delete', 'manufacturing_deletion_request', (int)$request['id']);
+        logActivity("Deleted manufacturing $type ID: $id (deletion approved)", ['type' => $type, 'id' => $id, 'name' => $record['name'] ?? ($record['order_number'] ?? null), 'request_id' => (int)$request['id'], 'requested_by' => (int)$request['requested_by']], 'delete', manufacturingDeletionLogEntity($type), $id);
         setAlert('success', 'Deletion approved and record deleted.');
     } catch (Throwable $error) {
         if ($pdo->inTransaction()) $pdo->rollBack();
