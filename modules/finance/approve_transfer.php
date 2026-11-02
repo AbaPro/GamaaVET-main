@@ -37,28 +37,41 @@ try {
         throw new Exception('You cannot approve your own transfer request.');
     }
 
-    $source = financeTransferGetAccount($transfer['from_type'], $transfer['from_id'], true);
-    $receiver = financeTransferGetAccount($transfer['to_type'], $transfer['to_id'], true);
-    if (!$source) throw new Exception('Sender account no longer exists.');
-    if (!$receiver) throw new Exception('Receiver account no longer exists.');
-    if (($source['currency'] ?? 'EGP') !== ($receiver['currency'] ?? 'EGP')) {
+    // Personal id 0 is outside cash: a deposit has no sender to debit and a
+    // withdrawal has no receiver to credit.
+    $fromExternal = financeTransferIsExternal($transfer['from_type'], $transfer['from_id']);
+    $toExternal = financeTransferIsExternal($transfer['to_type'], $transfer['to_id']);
+    if ($fromExternal && $toExternal) throw new Exception('A transfer needs at least one real account.');
+    $source = $fromExternal ? null : financeTransferGetAccount($transfer['from_type'], $transfer['from_id'], true);
+    $receiver = $toExternal ? null : financeTransferGetAccount($transfer['to_type'], $transfer['to_id'], true);
+    if (!$fromExternal && !$source) throw new Exception('Sender account no longer exists.');
+    if (!$toExternal && !$receiver) throw new Exception('Receiver account no longer exists.');
+
+    $sourceCurrency = $source['currency'] ?? $receiver['currency'] ?? 'EGP';
+    $receiverCurrency = $receiver['currency'] ?? $sourceCurrency;
+    $isExchange = financeTransferIsExchange($transfer);
+    if ($sourceCurrency !== $receiverCurrency && !$isExchange) {
         throw new Exception('Sender and receiver currencies no longer match. The transfer cannot be approved.');
+    }
+    if ($sourceCurrency === $receiverCurrency && $isExchange) {
+        throw new Exception('Sender and receiver now use the same currency, so the recorded exchange no longer applies. Reject and resubmit the transfer.');
     }
 
     $amount = round((float)$transfer['amount'], 2);
-    if ($amount <= 0) throw new Exception('Transfer amount is invalid.');
+    $receivedAmount = financeTransferReceivedAmount($transfer);
+    if ($amount <= 0 || $receivedAmount <= 0) throw new Exception('Transfer amount is invalid.');
     // Safes and bank accounts may go negative; personal accounts may not.
-    if ($transfer['from_type'] === 'personal' && (float)$source['balance'] < $amount) {
+    if ($transfer['from_type'] === 'personal' && !$fromExternal && (float)$source['balance'] < $amount) {
         throw new Exception(
             'Insufficient balance in ' . $source['account_name'] . '. Available: '
-            . number_format((float)$source['balance'], 2) . ' ' . ($source['currency'] ?? 'EGP') . '.'
+            . number_format((float)$source['balance'], 2) . ' ' . $sourceCurrency . '.'
         );
     }
 
-    if (!financeTransferAdjustBalance($transfer['from_type'], $transfer['from_id'], -$amount)) {
+    if (!$fromExternal && !financeTransferAdjustBalance($transfer['from_type'], $transfer['from_id'], -$amount)) {
         throw new Exception('Could not deduct the sender balance. It may have changed; please review and try again.');
     }
-    if (!financeTransferAdjustBalance($transfer['to_type'], $transfer['to_id'], $amount)) {
+    if (!$toExternal && !financeTransferAdjustBalance($transfer['to_type'], $transfer['to_id'], $receivedAmount)) {
         throw new Exception('Could not credit the receiver balance.');
     }
 
@@ -77,7 +90,10 @@ try {
     logFinanceTransferHistory(
         $transferId,
         'approved',
-        'Approved; ' . number_format($amount, 2) . ' moved from ' . $source['account_name'] . ' to ' . $receiver['account_name'],
+        'Approved; ' . number_format($amount, 2) . ' ' . $sourceCurrency
+            . ' moved from ' . ($source['account_name'] ?? 'external cash')
+            . ' to ' . ($receiver['account_name'] ?? 'external cash')
+            . ($isExchange ? ' (credited ' . number_format($receivedAmount, 2) . ' ' . $receiverCurrency . ')' : ''),
         $userId
     );
     $conn->commit();

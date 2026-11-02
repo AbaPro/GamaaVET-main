@@ -8,6 +8,12 @@ function financeTransferTypeLabel($type) {
     ][$type] ?? ucfirst((string)$type);
 }
 
+function financeTransferSideLabel($row, $side) {
+    return financeTransferIsExternal($row[$side . '_type'] ?? '', $row[$side . '_id'] ?? 0)
+        ? 'External'
+        : financeTransferTypeLabel($row[$side . '_type'] ?? '');
+}
+
 function financeTransferAccountConfig($type) {
     $configs = [
         'safe' => ['table' => 'safes', 'name' => 'name', 'balance' => 'balance', 'currency' => 'currency'],
@@ -109,11 +115,50 @@ function financeTransferAdjustBalance($type, $id, $delta) {
     return $changed;
 }
 
+/** Personal id 0 is the outside world: customer payments, cash deposits and withdrawals. */
+function financeTransferIsExternal($type, $id) {
+    return $type === 'personal' && (int)$id === 0;
+}
+
+function financeTransferExternalLabel($row) {
+    return strpos((string)($row['notes'] ?? ''), 'Order Payment Reference:') === 0
+        ? 'External / Customer Payment'
+        : 'External cash (deposit / withdrawal)';
+}
+
+function financeTransferExchangeReady() {
+    global $conn;
+    static $ready = null;
+    if ($ready === null) {
+        $result = $conn->query("SHOW COLUMNS FROM finance_transfers LIKE 'to_amount'");
+        $ready = $result && $result->num_rows === 1;
+    }
+    return $ready;
+}
+
+/** A transfer between two currencies stores the receiver's amount separately. */
+function financeTransferIsExchange($row) {
+    return isset($row['to_amount']) && $row['to_amount'] !== null && $row['to_amount'] !== '';
+}
+
+/** What the receiving account is credited, in the receiver's own currency. */
+function financeTransferReceivedAmount($row) {
+    return round((float)(financeTransferIsExchange($row) ? $row['to_amount'] : $row['amount']), 2);
+}
+
+function financeTransferExchangeSummary($row) {
+    $from = $row['currency'] ?? 'EGP';
+    $to = $row['to_currency'] ?? 'EGP';
+    return number_format((float)$row['amount'], 2) . ' ' . $from . ' → '
+        . number_format((float)$row['to_amount'], 2) . ' ' . $to
+        . ' @ ' . rtrim(rtrim(number_format((float)$row['exchange_rate'], 6, '.', ''), '0'), '.');
+}
+
 function financeTransferAccountName($row, $side) {
     $type = $row[$side . '_type'] ?? '';
     $id = (int)($row[$side . '_id'] ?? 0);
     $name = $row[$side . '_account_name'] ?? null;
-    if ($type === 'personal' && $id === 0) return 'External / Customer Payment';
+    if (financeTransferIsExternal($type, $id)) return financeTransferExternalLabel($row);
     return $name ?: financeTransferTypeLabel($type) . ' #' . $id;
 }
 

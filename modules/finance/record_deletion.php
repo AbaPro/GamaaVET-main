@@ -404,9 +404,13 @@ function financeExecuteRecordDeletion($type, $row) {
     }
     if ($type === 'transfer') {
         if ($row['status'] === 'approved') {
-            if ((int)$row['from_id'] === 0 || (int)$row['to_id'] === 0) throw new DomainException('Delete the source order payment first. Its transfer history can then be deleted.');
-            financeReverseBalance($row['to_type'], (int)$row['to_id'], -$row['amount'], $row['approved_at'] ?: $row['created_at']);
-            financeReverseBalance($row['from_type'], (int)$row['from_id'], $row['amount'], $row['approved_at'] ?: $row['created_at']);
+            // Automatic order-payment mirrors are reversed through their order payment.
+            // Manual cash deposits / withdrawals reverse only their real account.
+            $hasExternalSide = (int)$row['from_id'] === 0 || (int)$row['to_id'] === 0;
+            if ($hasExternalSide && strpos((string)$row['notes'], 'Order Payment Reference:') === 0) throw new DomainException('Delete the source order payment first. Its transfer history can then be deleted.');
+            $receivedAmount = ($row['to_amount'] ?? null) !== null ? $row['to_amount'] : $row['amount'];
+            if ((int)$row['to_id'] > 0) financeReverseBalance($row['to_type'], (int)$row['to_id'], -$receivedAmount, $row['approved_at'] ?: $row['created_at']);
+            if ((int)$row['from_id'] > 0) financeReverseBalance($row['from_type'], (int)$row['from_id'], $row['amount'], $row['approved_at'] ?: $row['created_at']);
         } elseif (!in_array($row['status'], ['pending', 'rejected', 'reversed'], true)) throw new DomainException('Unsupported transfer status.');
         $files = financeDeletionAttachmentFiles('finance_transfer_images', 'finance_transfer_id', $id);
         if (!empty($row['image_path'])) $files[] = $row['image_path'];

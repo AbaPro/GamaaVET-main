@@ -35,7 +35,7 @@ if ($mode === 'suite') {
         'roles' => 'id INT PRIMARY KEY, slug VARCHAR(100)',
         'permissions' => 'id INT AUTO_INCREMENT PRIMARY KEY, module VARCHAR(50), name VARCHAR(100), `key` VARCHAR(100) UNIQUE, description TEXT',
         'role_permissions' => 'role_id INT, permission_id INT, PRIMARY KEY(role_id, permission_id)',
-        'users' => 'id INT PRIMARY KEY, name VARCHAR(100), is_active INT, role VARCHAR(100), role_id INT, safe_access_ids TEXT NULL',
+        'users' => 'id INT PRIMARY KEY, name VARCHAR(100), is_active INT, role VARCHAR(100), role_id INT, safe_access_ids TEXT NULL, session_version INT NOT NULL DEFAULT 0',
         'accounts' => 'id INT PRIMARY KEY, slug VARCHAR(100)',
         'factories' => 'id INT PRIMARY KEY, sales_person_id INT NULL',
         'customers' => 'id INT PRIMARY KEY, factory_id INT NULL, sales_person_id INT NULL, direct_sale VARCHAR(30) NULL',
@@ -55,7 +55,7 @@ if ($mode === 'suite') {
     ];
     foreach ($schema as $table => $columns) $pdo->exec("CREATE TABLE `$table` ($columns) ENGINE=InnoDB");
     $pdo->exec("INSERT INTO roles VALUES (1, 'user'), (2, 'admin'), (3, 'viewer')");
-    $pdo->exec("INSERT INTO users VALUES (1, 'Requester', 1, 'user', 1, NULL), (2, 'Admin', 1, 'admin', 2, NULL)");
+    $pdo->exec("INSERT INTO users VALUES (1, 'Requester', 1, 'user', 1, NULL, 0), (2, 'Admin', 1, 'admin', 2, NULL, 0)");
     $pdo->exec("INSERT INTO accounts VALUES (1, 'factory'), (2, 'primer')");
     $pdo->exec("INSERT INTO customers VALUES (1, NULL, NULL, NULL), (2, NULL, NULL, 'primer')");
     $pdo->exec("INSERT INTO permissions (module, name, `key`) VALUES ('manufacturing', 'Delete', 'manufacturing.delete'), ('finance', 'Delete', 'finance.safes.delete'), ('region', 'Factory', 'region.factory'), ('manufacturing', 'View', 'manufacturing.view')");

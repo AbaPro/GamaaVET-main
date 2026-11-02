@@ -440,10 +440,13 @@ $ftWhere = dateFilterClause('ft.transaction_date', $cbDateFrom, $cbDateTo);
 $ftWhere[] = "ft.status = 'approved'";
 require_once __DIR__ . '/../finance/transfer_helpers.php';
 $ftWhere[] = financeTransferScopeSql('ft');
-$ftSql = "SELECT COALESCE(from_safe.currency, from_bank.currency, 'EGP') AS currency, ft.amount, ft.from_type, ft.from_id, ft.to_type, ft.to_id, ft.reason, ft.notes, ft.transaction_date
+$ftSql = "SELECT ft.*, COALESCE(from_safe.currency, from_bank.currency, 'EGP') AS currency,
+                 COALESCE(to_safe.currency, to_bank.currency, 'EGP') AS to_currency
           FROM finance_transfers ft
           LEFT JOIN safes from_safe ON ft.from_type = 'safe' AND from_safe.id = ft.from_id
-          LEFT JOIN bank_accounts from_bank ON ft.from_type = 'bank' AND from_bank.id = ft.from_id";
+          LEFT JOIN bank_accounts from_bank ON ft.from_type = 'bank' AND from_bank.id = ft.from_id
+          LEFT JOIN safes to_safe ON ft.to_type = 'safe' AND to_safe.id = ft.to_id
+          LEFT JOIN bank_accounts to_bank ON ft.to_type = 'bank' AND to_bank.id = ft.to_id";
 if (!empty($ftWhere)) {
     $ftSql .= ' WHERE ' . implode(' AND ', $ftWhere);
 }
@@ -489,7 +492,11 @@ if ($ftResult) {
             'outflow' => 0,
             'reference' => '',
             'transfer' => fmtNum($row['amount']),
-            'note' => implode(' - ', array_filter([$row['reason'] ?? '', $row['notes'] ?? ''])),
+            'note' => implode(' - ', array_filter([
+                financeTransferIsExchange($row) ? 'Exchange ' . financeTransferExchangeSummary($row) : '',
+                $row['reason'] ?? '',
+                $row['notes'] ?? '',
+            ])),
         ];
     }
 }

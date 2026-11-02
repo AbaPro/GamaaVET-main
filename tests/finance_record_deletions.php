@@ -14,7 +14,7 @@ $cases = [
  'purchase-cash', 'purchase-wallet', 'order-cash', 'order-bank', 'order-wallet', 'order-transfer-mirror',
  'order-cash-negative', 'order-bank-negative', 'order-cash-insufficient', 'order-bank-insufficient', 'order-cash-zero', 'order-bank-zero',
  'order-negative-mirror', 'order-negative-settlement-blocked', 'order-negative-totals-blocked', 'order-negative-permission-blocked',
- 'transfer-approved', 'transfer-pending', 'transfer-rejected', 'transfer-reversed', 'transfer-insufficient', 'transfer-personal-insufficient', 'transfer-external',
+ 'transfer-approved', 'transfer-pending', 'transfer-rejected', 'transfer-reversed', 'transfer-insufficient', 'transfer-personal-insufficient', 'transfer-external', 'transfer-cash-deposit', 'transfer-cash-withdrawal', 'transfer-exchange',
  'customer-settlement', 'bank-settlement', 'personal-settlement', 'vendor-settlement', 'newer-settlement-blocked', 'older-settlement-blocked',
  'customer-close', 'customer-close-debt', 'customer-close-orders', 'vendor-close', 'vendor-close-debt', 'vendor-close-orders',
  'customer-reopen', 'reopen-denied', 'invoice-sales', 'invoice-purchase', 'invoice-paid-blocked', 'invoice-receipt-blocked', 'invoice-inventory-blocked', 'invoice-stock', 'invoice-stock-missing', 'invoice-stock-otherbrand', 'invoice-stock-duplicate', 'invoice-stock-never-stocked', 'invoice-stock-unstocked-nolog', 'invoice-stock-row-deleted',
@@ -45,7 +45,7 @@ if ($mode === 'suite') {
         'finance_transfer_history' => 'id INT AUTO_INCREMENT PRIMARY KEY, finance_transfer_id INT, action VARCHAR(30), note TEXT, created_by INT',
     ];
     foreach ($schema as $table => $columns) $pdo->exec("CREATE TABLE `$table` ($columns) ENGINE=InnoDB");
-    foreach (['purchase_order_payments' => 'purchase_order_id INT, amount DECIMAL(15,2), payment_method VARCHAR(30), safe_id INT NULL, bank_account_id INT NULL, reference VARCHAR(100), notes TEXT, transaction_date DATE, created_at DATETIME, created_by INT', 'finance_transfers' => 'amount DECIMAL(15,2), transaction_date DATE, created_at DATETIME, status VARCHAR(30), approved_at DATETIME NULL, notes TEXT, image_path TEXT NULL, reversed_by INT NULL, reversed_at DATETIME NULL, reversal_reason TEXT NULL'] as $table => $columns) {
+    foreach (['purchase_order_payments' => 'purchase_order_id INT, amount DECIMAL(15,2), payment_method VARCHAR(30), safe_id INT NULL, bank_account_id INT NULL, reference VARCHAR(100), notes TEXT, transaction_date DATE, created_at DATETIME, created_by INT', 'finance_transfers' => 'amount DECIMAL(15,2), transaction_date DATE, created_at DATETIME, status VARCHAR(30), approved_at DATETIME NULL, notes TEXT, image_path TEXT NULL, reversed_by INT NULL, reversed_at DATETIME NULL, reversal_reason TEXT NULL, to_amount DECIMAL(12,2) NULL, exchange_rate DECIMAL(16,6) NULL'] as $table => $columns) {
         $pdo->exec("ALTER TABLE `$table` ADD " . str_replace(', ', ', ADD ', $columns));
     }
     foreach (['expense_payment_attachments' => 'expense_payment_id', 'purchase_order_payment_attachments' => 'purchase_order_payment_id', 'vendor_wallet_transaction_attachments' => 'vendor_wallet_transaction_id', 'finance_transfer_images' => 'finance_transfer_id', 'purchase_order_images' => 'purchase_order_id'] as $table => $column) $pdo->exec("CREATE TABLE `$table` (id INT AUTO_INCREMENT PRIMARY KEY, `$column` INT, file_path TEXT) ENGINE=InnoDB");
@@ -132,7 +132,13 @@ if (str_starts_with($mode, 'transfer-')) {
     // Safes and bank accounts may go negative; personal accounts may not.
     elseif ($mode === 'transfer-insufficient') { $pdo->exec('UPDATE bank_accounts SET balance = 0'); $checks = ['SELECT balance FROM safes WHERE id = 1' => 125, 'SELECT balance FROM bank_accounts WHERE id = 1' => -25]; }
     elseif ($mode === 'transfer-personal-insufficient') { $pdo->exec("UPDATE finance_transfers SET to_type = 'personal'"); $pdo->exec('UPDATE personal_accounts SET balance = 0'); $blocked = true; }
-    elseif ($mode === 'transfer-external') { $pdo->exec("UPDATE finance_transfers SET from_type = 'personal', from_id = 0"); $blocked = true; }
+    // Automatic order-payment mirrors must be reversed through the order payment.
+    elseif ($mode === 'transfer-external') { $pdo->exec("UPDATE finance_transfers SET from_type = 'personal', from_id = 0, notes = 'Order Payment Reference: REF'"); $blocked = true; }
+    // Manual cash deposits / withdrawals reverse only the real account.
+    elseif ($mode === 'transfer-cash-deposit') { $pdo->exec("UPDATE finance_transfers SET from_type = 'personal', from_id = 0, notes = 'Cash deposit'"); $checks = ['SELECT balance FROM safes WHERE id = 1' => 100, 'SELECT balance FROM bank_accounts WHERE id = 1' => 75]; }
+    elseif ($mode === 'transfer-cash-withdrawal') { $pdo->exec("UPDATE finance_transfers SET to_type = 'personal', to_id = 0, notes = 'Cash withdrawal'"); $checks = ['SELECT balance FROM safes WHERE id = 1' => 125, 'SELECT balance FROM bank_accounts WHERE id = 1' => 100]; }
+    // 25 sender units were exchanged into 1400 receiver units; each side reverses its own amount.
+    elseif ($mode === 'transfer-exchange') { $pdo->exec("UPDATE bank_accounts SET balance = 2000"); $pdo->exec("UPDATE finance_transfers SET to_amount = 1400, exchange_rate = 56"); $checks = ['SELECT balance FROM safes WHERE id = 1' => 125, 'SELECT balance FROM bank_accounts WHERE id = 1' => 600]; }
     else $pdo->exec("UPDATE finance_transfers SET status = '" . substr($mode, strlen('transfer-')) . "'");
 }
 if (str_ends_with($mode, '-settlement') || $mode === 'older-settlement-blocked') {

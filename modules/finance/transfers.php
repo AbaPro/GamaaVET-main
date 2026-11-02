@@ -38,9 +38,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $ticketId = null;
     }
 
+    // "external" is money entering or leaving the company: a cash deposit into,
+    // or a cash withdrawal out of, a safe / bank / personal account.
+    $fromExternal = $fromType === 'external';
+    $toExternal = $toType === 'external';
+    if ($fromExternal) [$fromType, $fromId] = ['personal', 0];
+    if ($toExternal) [$toType, $toId] = ['personal', 0];
     if (!in_array($fromType, $accountTypes, true) || !in_array($toType, $accountTypes, true)) {
         setAlert('danger', 'Select valid sender and receiver account types.');
         redirect('transfers.php');
+    }
+    if ($fromExternal && $toExternal) {
+        setAlert('danger', 'A deposit or withdrawal needs one real safe, bank or personal account.');
+        redirect('transfers.php');
+    }
+    if (($fromExternal || $toExternal) && strpos($notes, 'Order Payment Reference:') === 0) {
+        $notes = 'Note: ' . $notes; // that prefix is reserved for automatic order-payment mirrors
     }
     if ($transactionDate === null) {
         setAlert('danger', 'Enter a valid transaction date.');
@@ -48,11 +61,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     $fromAccount = $fromId > 0 ? financeTransferGetAccount($fromType, $fromId) : null;
     $toAccount = $toId > 0 ? financeTransferGetAccount($toType, $toId) : null;
-    if (!$fromAccount) {
+    if (!$fromAccount && !$fromExternal) {
         setAlert('danger', 'Select a valid sender account.');
         redirect('transfers.php');
     }
-    if (!$toAccount) {
+    if (!$toAccount && !$toExternal) {
         setAlert('danger', 'Select a valid receiver account.');
         redirect('transfers.php');
     }
@@ -60,14 +73,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         setAlert('danger', 'Sender and receiver accounts must be different.');
         redirect('transfers.php');
     }
-    if (($fromAccount['currency'] ?? 'EGP') !== ($toAccount['currency'] ?? 'EGP')) {
-        setAlert('danger', 'Sender and receiver must use the same currency. Exchange transactions require separate reconciliation entries.');
-        redirect('transfers.php');
-    }
-    $transferCurrency = $fromAccount['currency'] ?? 'EGP';
+    // External money takes the currency of the real account it enters or leaves.
+    $transferCurrency = $fromAccount['currency'] ?? $toAccount['currency'] ?? 'EGP';
+    $receiverCurrency = $toAccount['currency'] ?? $transferCurrency;
     if ($amount <= 0) {
         setAlert('danger', 'Transfer amount must be greater than zero.');
         redirect('transfers.php');
+    }
+    // Different currencies = currency exchange: the receiver is credited
+    // amount x rate in its own currency. The rate defaults to Settings and
+    // may be overridden with the rate actually agreed for this exchange.
+    $toAmount = null;
+    $exchangeRate = null;
+    if ($transferCurrency !== $receiverCurrency) {
+        if (!financeTransferExchangeReady()) {
+            setAlert('danger', 'Apply migration 20261031_finance_transfer_exchange.sql to enable currency exchange transfers.');
+            redirect('transfers.php');
+        }
+        $exchangeRate = round((float)($_POST['exchange_rate'] ?? 0), 6);
+        if ($exchangeRate <= 0) {
+            try {
+                $rates = getCurrencyRates();
+                $exchangeRate = round(currencyRateToEgp($rates, $transferCurrency) / currencyRateToEgp($rates, $receiverCurrency), 6);
+            } catch (InvalidArgumentException $e) {
+                setAlert('danger', $e->getMessage() . ' Or enter the agreed exchange rate on the transfer.');
+                redirect('transfers.php');
+            }
+        }
+        $toAmount = round($amount * $exchangeRate, 2);
+        if ($toAmount <= 0) {
+            setAlert('danger', 'The converted amount must be greater than zero.');
+            redirect('transfers.php');
+        }
     }
     if ($reason === '') {
         setAlert('danger', 'Reason for transfer is required.');
@@ -154,6 +191,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $transferId = $stmt->insert_id;
         $stmt->close();
 
+        if ($toAmount !== null) {
+            $exchangeStmt = $conn->prepare('UPDATE finance_transfers SET to_amount = ?, exchange_rate = ? WHERE id = ?');
+            $exchangeStmt->bind_param('ddi', $toAmount, $exchangeRate, $transferId);
+            if (!$exchangeStmt->execute()) {
+                throw new Exception('Unable to save the exchange amount.');
+            }
+            $exchangeStmt->close();
+        }
+
         $imageStmt = $conn->prepare("
             INSERT INTO finance_transfer_images
                 (finance_transfer_id, file_path, original_name, created_by)
@@ -167,7 +213,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         $imageStmt->close();
 
-        logFinanceTransferHistory($transferId, 'created', 'Transfer requested and assigned for approval', $createdBy);
+        logFinanceTransferHistory(
+            $transferId,
+            'created',
+            'Transfer requested and assigned for approval'
+                . ($toAmount !== null
+                    ? '; exchange ' . number_format($amount, 2) . ' ' . $transferCurrency . ' → '
+                        . number_format($toAmount, 2) . ' ' . $receiverCurrency . ' at ' . $exchangeRate
+                    : ''),
+            $createdBy
+        );
         $conn->commit();
 
         createNotification(
@@ -186,6 +241,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'finance_transfer_id' => $transferId,
             'reference' => $reference,
             'amount' => $amount,
+            'currency' => $transferCurrency,
+            'to_amount' => $toAmount,
+            'to_currency' => $receiverCurrency,
+            'exchange_rate' => $exchangeRate,
             'assigned_approver_id' => $assignedApproverId,
         ], 'create', 'finance_transfer', $transferId);
         setAlert('success', 'Transfer submitted for approval. No balances have moved yet. Reference: ' . $reference);
@@ -222,7 +281,7 @@ $accountScope = getAccountScopeSql();
 $safeScope = getSafeScopeSql();
 $safeResult = $conn->query("SELECT id, name, balance, currency FROM safes WHERE $safeScope ORDER BY name");
 while ($row = $safeResult->fetch_assoc()) {
-    $safeAccounts[] = ['id' => (int)$row['id'], 'label' => $row['name'] . ' — ' . number_format((float)$row['balance'], 2) . ' ' . ($row['currency'] ?: 'EGP')];
+    $safeAccounts[] = ['id' => (int)$row['id'], 'currency' => $row['currency'] ?: 'EGP', 'label' => $row['name'] . ' — ' . number_format((float)$row['balance'], 2) . ' ' . ($row['currency'] ?: 'EGP')];
 }
 
 $bankAccounts = [];
@@ -230,6 +289,7 @@ $bankResult = $conn->query("SELECT id, bank_name, account_number, balance, curre
 while ($row = $bankResult->fetch_assoc()) {
     $bankAccounts[] = [
         'id' => (int)$row['id'],
+        'currency' => $row['currency'] ?: 'EGP',
         'label' => $row['bank_name'] . ' (#' . $row['account_number'] . ') — ' . number_format((float)$row['balance'], 2) . ' ' . ($row['currency'] ?: 'EGP'),
     ];
 }
@@ -239,11 +299,20 @@ $personalResult = $conn->query("SELECT id, name, email, balance FROM personal_ac
 while ($row = $personalResult->fetch_assoc()) {
     $personalAccounts[] = [
         'id' => (int)$row['id'],
-        'label' => $row['name'] . ($row['email'] ? ' (' . $row['email'] . ')' : '') . ' — ' . number_format((float)$row['balance'], 2),
+        'currency' => 'EGP',
+        'label' => $row['name'] . ($row['email'] ? ' (' . $row['email'] . ')' : '') . ' — ' . number_format((float)$row['balance'], 2) . ' EGP',
     ];
 }
 
 $accountOptions = ['safe' => $safeAccounts, 'bank' => $bankAccounts, 'personal' => $personalAccounts];
+// EGP per one unit, from Settings; used to pre-fill the exchange rate.
+$currencyRates = [];
+foreach (getCurrencyRates() as $code => $currencyRow) {
+    if (is_numeric($currencyRow['rate_to_egp']) && (float)$currencyRow['rate_to_egp'] > 0) {
+        $currencyRates[$code] = (float)$currencyRow['rate_to_egp'];
+    }
+}
+$currencyRates['EGP'] = 1.0;
 $approvers = getUsersWithPermission('finance.transfers.approve');
 $loginRegion = $_SESSION['login_region'] ?? 'factory';
 if ($loginRegion !== 'factory') {
@@ -311,20 +380,26 @@ require_once '../../includes/header.php';
                         <tr>
                             <td class="fw-semibold"><?= e($row['transfer_reference']); ?></td>
                             <td>
-                                <span class="badge bg-secondary"><?= e(financeTransferTypeLabel($row['from_type'])); ?></span>
+                                <span class="badge bg-secondary"><?= e(financeTransferSideLabel($row, 'from')); ?></span>
                                 <div>
                                     <?php if ($fromUrl): ?><a href="<?= e($fromUrl); ?>"><?= e(financeTransferAccountName($row, 'from')); ?></a>
                                     <?php else: ?><?= e(financeTransferAccountName($row, 'from')); ?><?php endif; ?>
                                 </div>
                             </td>
                             <td>
-                                <span class="badge bg-secondary"><?= e(financeTransferTypeLabel($row['to_type'])); ?></span>
+                                <span class="badge bg-secondary"><?= e(financeTransferSideLabel($row, 'to')); ?></span>
                                 <div>
                                     <?php if ($toUrl): ?><a href="<?= e($toUrl); ?>"><?= e(financeTransferAccountName($row, 'to')); ?></a>
                                     <?php else: ?><?= e(financeTransferAccountName($row, 'to')); ?><?php endif; ?>
                                 </div>
                             </td>
-                            <td class="fw-bold"><?= e(formatCurrency((float)$row['amount'], $row['currency'] ?? 'EGP')); ?></td>
+                            <td class="fw-bold">
+                                <?= e(formatCurrency((float)$row['amount'], $row['currency'] ?? 'EGP')); ?>
+                                <?php if (financeTransferIsExchange($row)): ?>
+                                    <div class="small text-primary fw-normal" title="Currency exchange">→ <?= e(formatCurrency((float)$row['to_amount'], $row['to_currency'] ?? 'EGP')); ?></div>
+                                    <div class="small text-muted fw-normal">@ <?= e(rtrim(rtrim(number_format((float)$row['exchange_rate'], 6, '.', ''), '0'), '.')); ?></div>
+                                <?php endif; ?>
+                            </td>
                             <td><span class="badge bg-<?= $statusColors[$status] ?? 'secondary'; ?>"><?= e(ucfirst($status)); ?></span></td>
                             <td><?= e($row['reason'] ?: $row['notes']); ?></td>
                             <td>
@@ -374,7 +449,7 @@ require_once '../../includes/header.php';
                         <div class="col-md-3">
                             <label class="form-label">Sender Type <span class="text-danger">*</span></label>
                             <select class="form-select js-account-type" name="from_type" data-target="from_id" required>
-                                <option value="safe">Safe</option><option value="bank">Bank</option><option value="personal">Personal</option>
+                                <option value="safe">Safe</option><option value="bank">Bank</option><option value="personal">Personal</option><option value="external">External cash (deposit / withdrawal)</option>
                             </select>
                         </div>
                         <div class="col-md-3">
@@ -384,7 +459,7 @@ require_once '../../includes/header.php';
                         <div class="col-md-3">
                             <label class="form-label">Receiver Type <span class="text-danger">*</span></label>
                             <select class="form-select js-account-type" name="to_type" data-target="to_id" required>
-                                <option value="safe">Safe</option><option value="bank">Bank</option><option value="personal">Personal</option>
+                                <option value="safe">Safe</option><option value="bank">Bank</option><option value="personal">Personal</option><option value="external">External cash (deposit / withdrawal)</option>
                             </select>
                         </div>
                         <div class="col-md-3">
@@ -392,8 +467,27 @@ require_once '../../includes/header.php';
                             <select class="form-select" name="to_id" id="to_id" required></select>
                         </div>
                         <div class="col-md-3">
-                            <label class="form-label">Amount <span class="text-danger">*</span></label>
-                            <input type="number" class="form-control" name="amount" min="0.01" step="0.01" required>
+                            <label class="form-label">Amount <span class="js-from-currency text-muted"></span> <span class="text-danger">*</span></label>
+                            <input type="number" class="form-control" name="amount" id="transfer_amount" min="0.01" step="0.01" required>
+                        </div>
+                        <div class="col-12 d-none" id="exchangeSection">
+                            <div class="alert alert-info mb-0">
+                                <div class="fw-semibold mb-2"><i class="fas fa-money-bill-transfer me-1"></i>Currency exchange: <span id="exchangePair"></span></div>
+                                <div class="row g-3 align-items-end">
+                                    <div class="col-md-4">
+                                        <label class="form-label mb-1">Exchange rate (1 <span class="js-from-code"></span> = ? <span class="js-to-code"></span>) <span class="text-danger">*</span></label>
+                                        <input type="number" class="form-control" name="exchange_rate" id="exchange_rate" min="0.000001" step="0.000001">
+                                        <div class="form-text" id="exchangeRateHint"></div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label mb-1">Receiver gets</label>
+                                        <div class="form-control bg-light fw-bold" id="exchangeReceived">-</div>
+                                    </div>
+                                    <div class="col-md-4 small">
+                                        The sender is debited the amount in its currency; the receiver is credited the converted amount in its own currency when the transfer is approved.
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                         <div class="col-md-3">
                             <label class="form-label">Transaction Date <span class="text-danger">*</span></label>
@@ -442,6 +536,7 @@ require_once '../../includes/header.php';
                     </div>
                     <div class="alert alert-warning mt-3 mb-0">
                         Submitting creates a pending request only. Balances move atomically when the assigned approver approves it.
+                        <div class="small mt-1">Cash deposit: Sender = <em>External cash</em>. Cash withdrawal: Receiver = <em>External cash</em>. Different currencies (e.g. USD safe → EGP safe) are exchanged at the rate shown.</div>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -458,22 +553,76 @@ require_once '../../includes/header.php';
 document.addEventListener('DOMContentLoaded', function () {
     const accountOptions = <?= json_encode($accountOptions, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>;
 
+    const currencyRates = <?= json_encode($currencyRates); ?>;
+
     function populateAccountSelect(typeSelect) {
         const target = document.getElementById(typeSelect.dataset.target);
         if (!target) return;
-        target.innerHTML = '<option value="">-- Select Account --</option>';
+        const external = typeSelect.value === 'external';
+        target.innerHTML = external
+            ? '<option value="0">Outside the company (cash)</option>'
+            : '<option value="">-- Select Account --</option>';
+        target.required = !external;
         (accountOptions[typeSelect.value] || []).forEach(function (account) {
             const option = document.createElement('option');
             option.value = account.id;
             option.textContent = account.label;
+            option.dataset.currency = account.currency;
             target.appendChild(option);
         });
+        updateExchange();
+    }
+
+    function selectedCurrency(id) {
+        const select = document.getElementById(id);
+        const option = select && select.options[select.selectedIndex];
+        return option && option.dataset.currency ? option.dataset.currency : null;
+    }
+
+    let rateTouched = false;
+    function updateExchange() {
+        const section = document.getElementById('exchangeSection');
+        const rateInput = document.getElementById('exchange_rate');
+        if (!section || !rateInput) return;
+        const from = selectedCurrency('from_id');
+        const to = selectedCurrency('to_id');
+        document.querySelectorAll('.js-from-currency').forEach(el => el.textContent = (from || to) ? '(' + (from || to) + ')' : '');
+        const isExchange = !!(from && to && from !== to);
+        section.classList.toggle('d-none', !isExchange);
+        rateInput.required = isExchange;
+        if (!isExchange) { rateInput.value = ''; rateTouched = false; return; }
+
+        if (rateInput.dataset.pair !== from + to) rateTouched = false;
+        document.getElementById('exchangePair').textContent = from + ' → ' + to;
+        document.querySelectorAll('.js-from-code').forEach(el => el.textContent = from);
+        document.querySelectorAll('.js-to-code').forEach(el => el.textContent = to);
+        const hint = document.getElementById('exchangeRateHint');
+        if (currencyRates[from] && currencyRates[to]) {
+            const settingsRate = +(currencyRates[from] / currencyRates[to]).toFixed(6);
+            hint.textContent = 'Settings rate: ' + settingsRate + '. Change it if a different rate was agreed.';
+            if (!rateTouched) rateInput.value = settingsRate;
+        } else {
+            hint.textContent = 'No rate for ' + (currencyRates[from] ? to : from) + ' in Settings — enter the agreed rate.';
+            if (!rateTouched) rateInput.value = '';
+        }
+        rateInput.dataset.pair = from + to;
+        const amount = parseFloat(document.getElementById('transfer_amount').value);
+        const rate = parseFloat(rateInput.value);
+        document.getElementById('exchangeReceived').textContent = amount > 0 && rate > 0
+            ? (Math.round(amount * rate * 100) / 100).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' ' + to
+            : '-';
     }
 
     document.querySelectorAll('.js-account-type').forEach(function (select) {
         select.addEventListener('change', function () { populateAccountSelect(select); });
         populateAccountSelect(select);
     });
+    ['from_id', 'to_id', 'transfer_amount'].forEach(function (id) {
+        const el = document.getElementById(id);
+        if (el) { el.addEventListener('change', updateExchange); el.addEventListener('input', updateExchange); }
+    });
+    const exchangeRateInput = document.getElementById('exchange_rate');
+    if (exchangeRateInput) exchangeRateInput.addEventListener('input', function () { rateTouched = true; updateExchange(); });
 
     if (window.jQuery && jQuery.fn.select2) {
         jQuery('.js-searchable-select').select2({theme: 'bootstrap-5', dropdownParent: jQuery('#transferModal')});

@@ -208,6 +208,27 @@ foreach ($balanceSections as &$section) {
 unset($section);
 $visibleSections = array_values(array_filter($balanceSections, static fn($section) => $section['visible']));
 
+// Company-wide cash position across every visible safe, bank and personal account,
+// per currency, plus an EGP equivalent at the Settings rates.
+$companyTotals = [];
+foreach ($visibleSections as $section) {
+    foreach ($section['totals'] as $currency => $total) {
+        $companyTotals[$currency] = ($companyTotals[$currency] ?? 0) + $total;
+    }
+}
+ksort($companyTotals);
+$companyEgpTotal = 0.0;
+$unratedCurrencies = [];
+$currencyRates = getCurrencyRates();
+foreach ($companyTotals as $currency => $total) {
+    try {
+        $companyEgpTotal += $total * currencyRateToEgp($currencyRates, $currency);
+    } catch (InvalidArgumentException $e) {
+        $unratedCurrencies[] = $currency;
+    }
+}
+$canViewMovements = $canViewSafes || $canViewBanks;
+
 $transferUrl = 'transfers.php?new=1';
 $page_title = 'Finance Dashboard';
 require_once '../../includes/header.php';
@@ -325,6 +346,30 @@ require_once '../../includes/header.php';
         <button type="button" class="btn btn-outline-secondary js-fd-view" data-view="cards" aria-pressed="false"><i class="fas fa-grip me-1"></i>Cards</button>
     </div>
 </div>
+<?php endif; ?>
+
+<?php if ($companyTotals): ?>
+<div class="card border-0 shadow-sm mb-4 border-start border-4 border-primary"><div class="card-body">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+        <div>
+            <div class="small text-uppercase text-muted fw-bold">Company Total Balances</div>
+            <div class="small text-muted">All safes, bank accounts and personal accounts shown below</div>
+        </div>
+        <?php if ($canViewMovements): ?>
+            <a href="treasury_movements.php" class="btn btn-sm btn-outline-primary"><i class="fas fa-chart-column me-1"></i>Daily / Monthly Movements</a>
+        <?php endif; ?>
+    </div>
+    <div class="d-flex flex-wrap gap-4 mt-2">
+        <?php foreach ($companyTotals as $currency => $total): ?>
+            <div><div class="small text-muted"><?= e($currency); ?></div><div class="h4 mb-0 <?= $total < 0 ? 'text-danger' : 'text-success'; ?>"><?= e(formatCurrency($total, $currency)); ?></div></div>
+        <?php endforeach; ?>
+        <?php if (count($companyTotals) > 1 || !isset($companyTotals['EGP'])): ?>
+            <div class="border-start ps-4"><div class="small text-muted">Total in EGP (Settings rates)</div><div class="h4 mb-0 fw-bold"><?= e(formatCurrency($companyEgpTotal, 'EGP')); ?></div>
+                <?php if ($unratedCurrencies): ?><div class="small text-warning"><i class="fas fa-triangle-exclamation me-1"></i>Excludes <?= e(implode(', ', $unratedCurrencies)); ?> (no rate in Settings)</div><?php endif; ?>
+            </div>
+        <?php endif; ?>
+    </div>
+</div></div>
 <?php endif; ?>
 
 <?php foreach ($visibleSections as $section): ?>

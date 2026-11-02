@@ -102,15 +102,19 @@ foreach ($transfers as &$transfer) {
     $counterpartySide = $isOutgoing ? 'to' : 'from';
     $transfer['counterparty'] = financeTransferAccountName($transfer, $counterpartySide);
     $transfer['running_balance'] = null;
+    // Incoming currency exchanges credit this (EGP) account the converted amount.
+    $transfer['ledger_amount'] = $transfer['direction'] === 'in'
+        ? financeTransferReceivedAmount($transfer)
+        : (float)$transfer['amount'];
 
     if ($transfer['status'] === 'approved') {
         $transfer['running_balance'] = $runningBalance;
         if ($transfer['direction'] === 'in') {
-            $totalReceived += (float)$transfer['amount'];
-            $runningBalance -= (float)$transfer['amount'];
+            $totalReceived += $transfer['ledger_amount'];
+            $runningBalance -= $transfer['ledger_amount'];
         } elseif ($transfer['direction'] === 'out') {
-            $totalSpent += (float)$transfer['amount'];
-            $runningBalance += (float)$transfer['amount'];
+            $totalSpent += $transfer['ledger_amount'];
+            $runningBalance += $transfer['ledger_amount'];
         }
     }
 }
@@ -219,8 +223,8 @@ require_once '../../includes/header.php';
                                     <?php else: ?><span class="badge bg-secondary">Internal</span><?php endif; ?>
                                 </td>
                                 <td><?= e($transfer['counterparty']); ?></td>
-                                <td class="text-end text-success fw-semibold"><?= $transfer['status'] === 'approved' && $transfer['direction'] === 'in' ? number_format((float)$transfer['amount'], 2) : '-'; ?></td>
-                                <td class="text-end text-danger fw-semibold"><?= $transfer['status'] === 'approved' && $transfer['direction'] === 'out' ? number_format((float)$transfer['amount'], 2) : '-'; ?></td>
+                                <td class="text-end text-success fw-semibold"><?= $transfer['status'] === 'approved' && $transfer['direction'] === 'in' ? number_format($transfer['ledger_amount'], 2) : '-'; ?></td>
+                                <td class="text-end text-danger fw-semibold"><?= $transfer['status'] === 'approved' && $transfer['direction'] === 'out' ? number_format($transfer['ledger_amount'], 2) : '-'; ?></td>
                                 <td><?= e($transfer['reason'] ?: $transfer['notes']); ?></td>
                                 <td>
                                     <?php if ($transfer['purchase_order_id']): ?><a href="../purchases/po_details.php?id=<?= (int)$transfer['purchase_order_id']; ?>">PO #<?= (int)$transfer['purchase_order_id']; ?></a><?php endif; ?>

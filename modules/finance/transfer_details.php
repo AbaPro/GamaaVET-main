@@ -89,7 +89,7 @@ require_once '../../includes/header.php';
                             <?php if ($fromAccountUrl): ?><a href="<?= e($fromAccountUrl); ?>"><?= e(financeTransferAccountName($transfer, 'from')); ?></a>
                             <?php else: ?><?= e(financeTransferAccountName($transfer, 'from')); ?><?php endif; ?>
                         </div>
-                        <span class="badge bg-secondary"><?= e(financeTransferTypeLabel($transfer['from_type'])); ?></span>
+                        <span class="badge bg-secondary"><?= e(financeTransferSideLabel($transfer, 'from')); ?></span>
                     </div>
                     <div class="col-md-2 py-3"><i class="fas fa-arrow-right fa-2x text-primary"></i></div>
                     <div class="col-md-5">
@@ -98,13 +98,18 @@ require_once '../../includes/header.php';
                             <?php if ($toAccountUrl): ?><a href="<?= e($toAccountUrl); ?>"><?= e(financeTransferAccountName($transfer, 'to')); ?></a>
                             <?php else: ?><?= e(financeTransferAccountName($transfer, 'to')); ?><?php endif; ?>
                         </div>
-                        <span class="badge bg-secondary"><?= e(financeTransferTypeLabel($transfer['to_type'])); ?></span>
+                        <span class="badge bg-secondary"><?= e(financeTransferSideLabel($transfer, 'to')); ?></span>
                     </div>
                 </div>
                 <hr>
                 <div class="text-center">
                     <div class="text-muted text-uppercase small fw-bold">Amount</div>
                     <div class="display-6 fw-bold"><?= e(formatCurrency((float)$transfer['amount'], $transfer['currency'] ?? 'EGP')); ?></div>
+                    <?php if (financeTransferIsExchange($transfer)): ?>
+                        <div class="mt-2"><span class="badge bg-primary">Currency Exchange</span></div>
+                        <div class="h4 mt-2 mb-1 text-primary">Receiver credited <?= e(formatCurrency((float)$transfer['to_amount'], $transfer['to_currency'] ?? 'EGP')); ?></div>
+                        <div class="text-muted">Rate: 1 <?= e($transfer['currency'] ?? 'EGP'); ?> = <?= e(rtrim(rtrim(number_format((float)$transfer['exchange_rate'], 6, '.', ''), '0'), '.')); ?> <?= e($transfer['to_currency'] ?? 'EGP'); ?></div>
+                    <?php endif; ?>
                 </div>
             </div>
         </div>
