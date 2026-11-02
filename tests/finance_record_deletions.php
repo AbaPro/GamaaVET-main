@@ -9,7 +9,7 @@ function expect($condition, $message) { if (!$condition) throw new RuntimeExcept
 function value($sql) { global $pdo; return $pdo->query($sql)->fetchColumn(); }
 $cases = [
  'customer-deposit', 'customer-cash-deposit', 'customer-refund', 'customer-withdrawal', 'customer-payment', 'customer-linked-payment',
- 'vendor-deposit', 'vendor-refund', 'vendor-linked-payment', 'vendor-receipt-blocked',
+ 'vendor-deposit', 'vendor-refund', 'vendor-refund-safe', 'vendor-refund-bank', 'vendor-linked-payment', 'vendor-receipt-blocked',
  'expense-cash', 'expense-bank', 'expense-wallet', 'expense-mirror', 'expense-mirror-legacy', 'purchase-mirror', 'expense-whole',
  'purchase-cash', 'purchase-wallet', 'order-cash', 'order-bank', 'order-wallet', 'order-transfer-mirror',
  'order-cash-negative', 'order-bank-negative', 'order-cash-insufficient', 'order-bank-insufficient', 'order-cash-zero', 'order-bank-zero',
@@ -39,7 +39,7 @@ if ($mode === 'suite') {
         'order_payments' => 'id INT PRIMARY KEY, order_id INT, amount DECIMAL(15,2), payment_method VARCHAR(30), safe_id INT NULL, bank_account_id INT NULL, reference VARCHAR(100), transaction_date DATE, created_at DATETIME, created_by INT',
         'expense_payments' => 'id INT PRIMARY KEY, expense_id INT, amount DECIMAL(15,2), payment_method VARCHAR(30), safe_id INT NULL, bank_account_id INT NULL, reference VARCHAR(100), transaction_date DATE, created_at DATETIME, created_by INT',
         'customer_wallet_transactions' => 'id INT PRIMARY KEY, customer_id INT, amount DECIMAL(15,2), type VARCHAR(30), reference_type VARCHAR(50) NULL, reference_id INT NULL, payment_method VARCHAR(30) NULL, safe_id INT NULL, bank_account_id INT NULL, transaction_date DATE, created_at DATETIME',
-        'vendor_wallet_transactions' => 'id INT PRIMARY KEY, vendor_id INT, amount DECIMAL(15,2), type VARCHAR(30), reference_type VARCHAR(50) NULL, reference_id INT NULL, transaction_date DATE, created_at DATETIME',
+        'vendor_wallet_transactions' => 'id INT PRIMARY KEY, vendor_id INT, amount DECIMAL(15,2), type VARCHAR(30), reference_type VARCHAR(50) NULL, reference_id INT NULL, transaction_date DATE, created_at DATETIME, payment_method VARCHAR(20) NULL, safe_id INT NULL, bank_account_id INT NULL',
         'customer_wallet_balance_adjustments' => 'id INT PRIMARY KEY, customer_id INT, previous_balance DECIMAL(15,2), new_balance DECIMAL(15,2), created_at DATETIME',
         'finance_account_balance_adjustments' => 'id INT PRIMARY KEY, account_type VARCHAR(30), account_id INT, previous_balance DECIMAL(15,2), new_balance DECIMAL(15,2), created_at DATETIME',
         'finance_transfer_history' => 'id INT AUTO_INCREMENT PRIMARY KEY, finance_transfer_id INT, action VARCHAR(30), note TEXT, created_by INT',
@@ -71,7 +71,7 @@ $pdo->exec("INSERT INTO safes VALUES (1, 'Safe', 100, 'EGP', 1)");
 $pdo->exec("INSERT INTO bank_accounts VALUES (1, 'Bank', 100, 'EGP', 1)");
 $pdo->exec("INSERT INTO personal_accounts VALUES (1, 'Personal', 100, 1)");
 $pdo->exec("INSERT INTO customer_wallet_transactions VALUES (1, 1, 25, 'deposit', 'manual', NULL, 'cash', NULL, NULL, '2026-01-01', '2026-01-01 00:00:00')");
-$pdo->exec("INSERT INTO vendor_wallet_transactions VALUES (1, 1, 25, 'deposit', NULL, NULL, '2026-01-01', '2026-01-01 00:00:00')");
+$pdo->exec("INSERT INTO vendor_wallet_transactions (id, vendor_id, amount, type, reference_type, reference_id, transaction_date, created_at) VALUES (1, 1, 25, 'deposit', NULL, NULL, '2026-01-01', '2026-01-01 00:00:00')");
 $pdo->exec("INSERT INTO order_payments VALUES (1, 1, 25, 'cash', 1, NULL, 'REF', '2026-01-01', '2026-01-01 00:00:00', 1)");
 $pdo->exec("INSERT INTO expense_payments VALUES (1, 1, 25, 'cash', 1, NULL, 'REF', '2026-01-01', '2026-01-01 00:00:00', 1)");
 $pdo->exec("INSERT INTO purchase_order_payments (id, purchase_order_id, amount, payment_method, reference, transaction_date, created_at, created_by) VALUES (1, 1, 25, 'cash', 'REF', '2026-01-01', '2026-01-01 00:00:00', 1)");
@@ -89,6 +89,11 @@ if ($mode === 'customer-withdrawal' || $mode === 'customer-payment') {
     if ($mode === 'customer-payment') { $pdo->exec('UPDATE customer_wallet_transactions SET safe_id = 1'); $checks['SELECT balance FROM safes WHERE id = 1'] = 75; }
 }
 if ($mode === 'vendor-refund') { $pdo->exec("UPDATE vendor_wallet_transactions SET type = 'refund'"); $checks = ['SELECT wallet_balance FROM vendors WHERE id = 1' => 125]; }
+if ($mode === 'vendor-refund-safe' || $mode === 'vendor-refund-bank') {
+    $isSafe = $mode === 'vendor-refund-safe';
+    $pdo->exec("UPDATE vendor_wallet_transactions SET type = 'refund', payment_method = '" . ($isSafe ? 'cash' : 'transfer') . "', " . ($isSafe ? 'safe_id' : 'bank_account_id') . ' = 1');
+    $checks = ['SELECT wallet_balance FROM vendors WHERE id = 1' => 125, 'SELECT balance FROM ' . ($isSafe ? 'safes' : 'bank_accounts') . ' WHERE id = 1' => 75];
+}
 if ($mode === 'vendor-receipt-blocked') { $pdo->exec("UPDATE vendor_wallet_transactions SET type = 'withdrawal', reference_type = 'purchase_order', reference_id = 1"); $blocked = true; }
 if (str_starts_with($mode, 'order-') || $mode === 'customer-linked-payment' || $mode === 'no-source-permission') {
     $type = $mode === 'customer-linked-payment' || $mode === 'no-source-permission' ? 'customer_transaction' : 'order_payment';

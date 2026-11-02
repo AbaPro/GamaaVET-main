@@ -108,6 +108,7 @@ $customers = $customerStmt->fetchAll(PDO::FETCH_ASSOC);
 // Check if user has permission to view prices
 $canViewPrices = hasPermission('sales.orders.price.view');
 $canDeleteOrders = hasPermission('sales.orders.delete') && hasPermission('finance.deletions.request');
+$canEditOrders = hasPermission('sales.orders.edit');
 ?>
 
 <div class="container mt-4">
@@ -280,6 +281,9 @@ $canDeleteOrders = hasPermission('sales.orders.delete') && hasPermission('financ
                                         <a href="order_details.php?id=<?= $order['id'] ?>" class="btn btn-sm btn-info">View</a>
                                         <?php if ($order['status'] == 'new' || $balance > 0) : ?>
                                             <a href="process_payment.php?order_id=<?= $order['id'] ?>" class="btn btn-sm btn-success">Payment</a>
+                                        <?php endif; ?>
+                                        <?php if ($canEditOrders && !in_array($order['status'], ['delivered', 'returned', 'returned-refunded', 'partially-returned', 'partially-returned-refunded'], true)): ?>
+                                            <a href="create_order.php?id=<?= $order['id'] ?>" class="btn btn-sm btn-warning">Edit</a>
                                         <?php endif; ?>
                                         <a href="generate_invoice.php?id=<?= $order['id'] ?>" class="btn btn-sm btn-secondary" target="_blank">Invoice</a>
                                         <?php if ($canDeleteOrders): ?>

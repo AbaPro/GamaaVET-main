@@ -49,6 +49,10 @@ $vendorBackUrl = hasPermission('vendors.view')
 $vendorBackLabel = hasPermission('vendors.view') ? 'Back to Vendor' : 'Back to Vendor Wallets';
 $canManageVendorWallet = $canManageVendorWallet && !$isFinanceAccountClosed;
 $canSetVendorBalance = $canSetVendorBalance && !$isFinanceAccountClosed;
+// Money a vendor sends back (a refund) can be received into a safe or bank account.
+$canReceiveVendorCash = $canManageVendorWallet
+    && hasPermission('vendors.wallet.receive_cash')
+    && tableHasColumn('vendor_wallet_transactions', 'safe_id');
 $formToken = financeAccountFormToken();
 handleFinanceAccountBalanceSettlement('vendor', $vendor_id, $canSetVendorBalance, 'wallet.php?id=' . $vendor_id);
 $balanceAdjustments = financeAccountBalanceAdjustments('vendor', $vendor_id);
@@ -65,10 +69,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $notes = sanitize($_POST['notes']);
     $transactionDate = normalizeTransactionDate($_POST['transaction_date'] ?? '');
     $user_id = $_SESSION['user_id'];
+    $payment_method = (string)($_POST['payment_method'] ?? '');
+    $safe_id = $payment_method === 'cash' && !empty($_POST['safe_id']) ? (int)$_POST['safe_id'] : null;
+    $bank_account_id = $payment_method === 'transfer' && !empty($_POST['bank_account_id']) ? (int)$_POST['bank_account_id'] : null;
+    $receivesCash = $type === 'refund' && in_array($payment_method, ['cash', 'transfer'], true);
 
+    $validationError = null;
     if ($transactionDate === null) {
-        setAlert('danger', 'Enter a valid transaction date.');
+        $validationError = 'Enter a valid transaction date.';
+    } elseif (!in_array($type, ['deposit', 'withdrawal', 'payment', 'refund'], true)) {
+        $validationError = 'Select a valid transaction type.';
+    } elseif ($receivesCash && !$canReceiveVendorCash) {
+        $validationError = 'You do not have permission to receive vendor money into a safe or bank account.';
+    } elseif ($receivesCash && $payment_method === 'cash' && (!$safe_id || !isSafeInCurrentAccount($safe_id))) {
+        $validationError = 'Select a cash safe available for this brand.';
+    } elseif ($receivesCash && $payment_method === 'transfer' && (!$bank_account_id || !isBankAccountInCurrentAccount($bank_account_id))) {
+        $validationError = 'Selected bank account is not available for this brand.';
+    }
+    if ($validationError !== null) {
+        setAlert('danger', $validationError);
         redirect("wallet.php?id=$vendor_id");
+    }
+    if (!$receivesCash) {
+        $payment_method = null;
+        $safe_id = null;
+        $bank_account_id = null;
     }
 
     $attachmentError = null;
@@ -96,11 +121,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($closedAt) throw new DomainException('Reopen this finance account before recording wallet transactions.');
 
         // Insert wallet transaction
-        $transaction_sql = "INSERT INTO vendor_wallet_transactions
-                           (vendor_id, amount, type, notes, transaction_date, created_by)
-                           VALUES (?, ?, ?, ?, ?, ?)";
-        $transaction_stmt = $conn->prepare($transaction_sql);
-        $transaction_stmt->bind_param("idsssi", $vendor_id, $amount, $type, $notes, $transactionDate, $user_id);
+        if ($receivesCash) {
+            $transaction_sql = "INSERT INTO vendor_wallet_transactions
+                               (vendor_id, amount, type, notes, payment_method, safe_id, bank_account_id, transaction_date, created_by)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+            $transaction_stmt = $conn->prepare($transaction_sql);
+            $transaction_stmt->bind_param("idsssiisi", $vendor_id, $amount, $type, $notes, $payment_method, $safe_id, $bank_account_id, $transactionDate, $user_id);
+        } else {
+            $transaction_sql = "INSERT INTO vendor_wallet_transactions
+                               (vendor_id, amount, type, notes, transaction_date, created_by)
+                               VALUES (?, ?, ?, ?, ?, ?)";
+            $transaction_stmt = $conn->prepare($transaction_sql);
+            $transaction_stmt->bind_param("idsssi", $vendor_id, $amount, $type, $notes, $transactionDate, $user_id);
+        }
         $transaction_stmt->execute();
         $transaction_id = $transaction_stmt->insert_id;
         $transaction_stmt->close();
@@ -123,6 +156,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $update_stmt->execute();
         $update_stmt->close();
 
+        // Credit the safe or bank account that received the vendor's money.
+        if ($receivesCash) {
+            $accountSql = $payment_method === 'cash'
+                ? "UPDATE safes SET balance = balance + ? WHERE id = ?"
+                : "UPDATE bank_accounts SET balance = balance + ? WHERE id = ?";
+            $accountId = $payment_method === 'cash' ? $safe_id : $bank_account_id;
+            $account_stmt = $conn->prepare($accountSql);
+            $account_stmt->bind_param("di", $amount, $accountId);
+            $account_stmt->execute();
+            $account_stmt->close();
+        }
+
         // Commit transaction
         $conn->commit();
 
@@ -142,19 +187,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect("wallet.php?id=$vendor_id");
 }
 
+// Safes and bank accounts that can receive vendor money, scoped to the current brand.
+$safes_data = [];
+$banks_data = [];
+if ($canReceiveVendorCash) {
+    $safes_result = $conn->query("SELECT id, CONCAT(name, ' — ', currency) AS name FROM safes WHERE " . getSafeScopeSql() . " ORDER BY name");
+    while ($safes_result && $safe = $safes_result->fetch_assoc()) {
+        $safes_data[] = $safe;
+    }
+    $banks_result = $conn->query("SELECT id, CONCAT(bank_name, ' — ', currency) AS name FROM bank_accounts WHERE " . getBankScopeSql() . " ORDER BY bank_name");
+    while ($banks_result && $bank = $banks_result->fetch_assoc()) {
+        $banks_data[] = $bank;
+    }
+}
+
 // Show cash/bank expense payments alongside wallet movements without changing
 // wallet credit. Wallet-funded expense payments already have a wallet row.
+$walletDestinationSelect = "NULL AS destination_name";
+$walletDestinationJoin = '';
+if (tableHasColumn('vendor_wallet_transactions', 'safe_id')) {
+    $walletDestinationSelect = "CASE wt.payment_method WHEN 'cash' THEN s.name WHEN 'transfer' THEN ba.bank_name END AS destination_name";
+    $walletDestinationJoin = " LEFT JOIN safes s ON s.id = wt.safe_id AND " . getSafeScopeSql('s')
+        . " LEFT JOIN bank_accounts ba ON ba.id = wt.bank_account_id AND " . getBankScopeSql('ba');
+}
 $transactions_sql = "SELECT wt.id AS source_id, 'wallet' AS source, wt.reference_id, wt.reference_type, wt.amount, wt.type,
-                            wt.notes, wt.transaction_date, wt.created_at, u.name AS created_by_name
+                            wt.notes, wt.transaction_date, wt.created_at, u.name AS created_by_name, $walletDestinationSelect
                      FROM vendor_wallet_transactions wt
-                     LEFT JOIN users u ON wt.created_by = u.id
+                     LEFT JOIN users u ON wt.created_by = u.id$walletDestinationJoin
                      WHERE wt.vendor_id = ?
                      UNION ALL
                      SELECT ep.id AS source_id, 'expense_payment' AS source, NULL AS reference_id, NULL AS reference_type, ep.amount,
                             'expense_payment' AS type,
                             CONCAT('Expense: ', e.name, ' (', CASE ep.payment_method WHEN 'cash' THEN 'Cash' ELSE 'Bank transfer' END,
                                    IF(ep.reference IS NULL OR ep.reference = '', '', CONCAT('; Ref: ', ep.reference)), ')') AS notes,
-                            ep.transaction_date, ep.created_at, u.name AS created_by_name
+                            ep.transaction_date, ep.created_at, u.name AS created_by_name, NULL AS destination_name
                      FROM expense_payments ep
                      JOIN expenses e ON ep.expense_id = e.id
                      LEFT JOIN users u ON ep.created_by = u.id
@@ -234,6 +300,37 @@ require_once '../../includes/header.php';
                         <label for="notes" class="form-label">Notes</label>
                         <textarea class="form-control" id="notes" name="notes" rows="2"></textarea>
                     </div>
+                    <?php if ($canReceiveVendorCash): ?>
+                    <div id="refund_destination" style="display: none;">
+                        <div class="mb-3">
+                            <label for="payment_method" class="form-label">Money Received Into</label>
+                            <select class="form-select" id="payment_method" name="payment_method">
+                                <option value="">Wallet only (credit note, no cash received)</option>
+                                <option value="cash">Cash safe</option>
+                                <option value="transfer">Bank account</option>
+                            </select>
+                            <small class="text-muted">The selected safe or bank account balance increases by the refund amount.</small>
+                        </div>
+                        <div class="mb-3" id="safe_container" style="display: none;">
+                            <label for="safe_id" class="form-label">Destination Safe*</label>
+                            <select class="form-select" id="safe_id" name="safe_id">
+                                <option value="">-- Select Safe --</option>
+                                <?php foreach ($safes_data as $safe): ?>
+                                    <option value="<?php echo (int)$safe['id']; ?>"><?php echo e($safe['name']); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="mb-3" id="bank_account_container" style="display: none;">
+                            <label for="bank_account_id" class="form-label">Destination Bank Account*</label>
+                            <select class="form-select" id="bank_account_id" name="bank_account_id">
+                                <option value="">-- Select Bank Account --</option>
+                                <?php foreach ($banks_data as $bank): ?>
+                                    <option value="<?php echo (int)$bank['id']; ?>"><?php echo e($bank['name']); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    </div>
+                    <?php endif; ?>
                     <div class="mb-3">
                         <label class="form-label">Attachment (Optional)</label>
                         <input type="file" class="form-control" name="attachment[]" accept="image/jpeg,image/png,image/gif,image/webp" multiple>
@@ -319,7 +416,12 @@ require_once '../../includes/header.php';
                                     </span>
                                 </td>
                                 <td><?php echo number_format($transaction['amount'], 2); ?></td>
-                                <td><?php echo $transaction['notes'] ? htmlspecialchars($transaction['notes']) : '-'; ?></td>
+                                <td>
+                                    <?php echo $transaction['notes'] ? htmlspecialchars($transaction['notes']) : '-'; ?>
+                                    <?php if (!empty($transaction['destination_name'])): ?>
+                                        <div class="small text-muted">Received into: <?php echo e($transaction['destination_name']); ?></div>
+                                    <?php endif; ?>
+                                </td>
                                 <td>
                                     <?php
                                     $attachments = $walletAttachmentsByTxn[$transaction['source'] . '_' . $transaction['source_id']] ?? [];
@@ -357,6 +459,25 @@ document.addEventListener('DOMContentLoaded', function () {
     };
     typeSelect.addEventListener('change', updateHelp);
     updateHelp();
+
+    // Refunds can be received into a safe or bank account.
+    const destination = document.getElementById('refund_destination');
+    if (!destination) return;
+    const method = document.getElementById('payment_method');
+    const safeContainer = document.getElementById('safe_container');
+    const bankContainer = document.getElementById('bank_account_container');
+    const updateDestination = () => {
+        const isRefund = typeSelect.value === 'refund';
+        destination.style.display = isRefund ? '' : 'none';
+        if (!isRefund) method.value = '';
+        safeContainer.style.display = method.value === 'cash' ? '' : 'none';
+        bankContainer.style.display = method.value === 'transfer' ? '' : 'none';
+        document.getElementById('safe_id').required = method.value === 'cash';
+        document.getElementById('bank_account_id').required = method.value === 'transfer';
+    };
+    typeSelect.addEventListener('change', updateDestination);
+    method.addEventListener('change', updateDestination);
+    updateDestination();
 });
 </script>
 

@@ -2,18 +2,242 @@
 require_once '../../includes/auth.php';
 require_once '../../config/database.php';
 
+// ?id= opens an existing order for editing; otherwise a new order is created.
+$editOrderId = (int)($_GET['id'] ?? 0);
+$isEdit = $editOrderId > 0;
+
 // Permission check
-if (!hasPermission('sales.orders.create')) {
+if (!hasPermission($isEdit ? 'sales.orders.edit' : 'sales.orders.create')) {
     $_SESSION['error'] = "You don't have permission to access this page";
     header("Location: ../../dashboard.php");
     exit();
 }
 
+// Once an order is delivered or returned, its items and totals are final.
+const SALES_ORDER_LOCKED_STATUSES = ['delivered', 'returned', 'returned-refunded', 'partially-returned', 'partially-returned-refunded'];
+
+/**
+ * Items of an order, keyed by item id. An item is locked (quantity fixed, cannot be
+ * removed) once stock was deducted for it, it was returned, or it is being manufactured.
+ */
+function loadEditableOrderItems($orderId, $forUpdate = false) {
+    global $pdo;
+    $stmt = $pdo->prepare("SELECT oi.*, p.name AS product_name FROM order_items oi JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ? ORDER BY oi.id" . ($forUpdate ? ' FOR UPDATE' : ''));
+    $stmt->execute([$orderId]);
+    $items = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $item) {
+        $item['lock_reason'] = null;
+        $items[(int)$item['id']] = $item;
+    }
+    if (!$items) return $items;
+
+    $mfgStmt = $pdo->prepare("SELECT DISTINCT product_id FROM manufacturing_orders WHERE sales_order_id = ?");
+    $mfgStmt->execute([$orderId]);
+    $manufactured = array_flip($mfgStmt->fetchAll(PDO::FETCH_COLUMN));
+    $returnStmt = $pdo->prepare("SELECT DISTINCT order_item_id FROM order_returns WHERE order_id = ?");
+    $returnStmt->execute([$orderId]);
+    $returned = array_flip($returnStmt->fetchAll(PDO::FETCH_COLUMN));
+    $stocked = [];
+    if (tableExists('inventory_stock_logs')) {
+        $ids = array_keys($items);
+        $stockStmt = $pdo->prepare("SELECT DISTINCT source_id FROM inventory_stock_logs WHERE source_type IN ('sales_order', 'portal_order_conversion', 'quotation_conversion') AND source_id IN (" . implode(',', array_fill(0, count($ids), '?')) . ")");
+        $stockStmt->execute($ids);
+        $stocked = array_flip($stockStmt->fetchAll(PDO::FETCH_COLUMN));
+    }
+    foreach ($items as $id => &$item) {
+        if (isset($stocked[$id])) $item['lock_reason'] = 'Stock already deducted';
+        elseif (isset($returned[$id])) $item['lock_reason'] = 'Has returns';
+        elseif (isset($manufactured[(int)$item['product_id']])) $item['lock_reason'] = 'Manufacturing order exists';
+    }
+    unset($item);
+    return $items;
+}
+
+$editOrder = null;
+$editItems = [];
+if ($isEdit) {
+    if (!canAccessOrder($editOrderId)) {
+        $_SESSION['error'] = 'You do not have permission to edit this order.';
+        header('Location: order_list.php');
+        exit();
+    }
+    $orderStmt = $pdo->prepare("SELECT o.*, c.name AS customer_name, f.name AS factory_name FROM orders o JOIN customers c ON c.id = o.customer_id LEFT JOIN factories f ON f.id = o.factory_id WHERE o.id = ?");
+    $orderStmt->execute([$editOrderId]);
+    $editOrder = $orderStmt->fetch(PDO::FETCH_ASSOC);
+    if (!$editOrder) {
+        $_SESSION['error'] = 'Order not found';
+        header('Location: order_list.php');
+        exit();
+    }
+    if (in_array($editOrder['status'], SALES_ORDER_LOCKED_STATUSES, true)) {
+        $_SESSION['error'] = 'Delivered or returned orders cannot be edited.';
+        header('Location: order_details.php?id=' . $editOrderId);
+        exit();
+    }
+    $editItems = loadEditableOrderItems($editOrderId);
+}
+
 // Generate internal ID
-$internal_id = 'ORD-' . date('Ymd') . '-' . strtoupper(substr(uniqid(), -6));
+$internal_id = $isEdit ? $editOrder['internal_id'] : 'ORD-' . date('Ymd') . '-' . strtoupper(substr(uniqid(), -6));
 
 // Handle form submission
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && $isEdit) {
+    try {
+        $pdo->beginTransaction();
+
+        $lockStmt = $pdo->prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE");
+        $lockStmt->execute([$editOrderId]);
+        $current = $lockStmt->fetch(PDO::FETCH_ASSOC);
+        if (!$current || in_array($current['status'], SALES_ORDER_LOCKED_STATUSES, true)) {
+            throw new Exception('This order can no longer be edited.');
+        }
+        $customerId = (int)$current['customer_id'];
+        $existingItems = loadEditableOrderItems($editOrderId, true);
+
+        $contactId = (int)($_POST['contact_id'] ?? 0);
+        $contactStmt = $pdo->prepare("SELECT id FROM customer_contacts WHERE id = ? AND customer_id = ?");
+        $contactStmt->execute([$contactId, $customerId]);
+        if (!$contactStmt->fetchColumn()) {
+            throw new Exception('Please select a valid contact for this customer.');
+        }
+        $orderDate = normalizeTransactionDate($_POST['order_date'] ?? '');
+        if ($orderDate === null) {
+            throw new Exception('Enter a valid order date.');
+        }
+
+        $productAccessStmt = $pdo->prepare("SELECT id FROM products p WHERE id = ? AND customer_id = ? AND type = 'final' AND " . getActiveProductSql('p'));
+        $kept = [];
+        $newItems = [];
+        $itemsSubtotal = 0;
+        $freeSampleCount = 0;
+        foreach ($_POST['items'] ?? [] as $item) {
+            $itemId = (int)($item['order_item_id'] ?? 0);
+            $quantity = (int)($item['quantity'] ?? 0);
+            $unitPrice = max(0, (float)($item['price'] ?? 0));
+            $isFreeSample = !empty($item['is_free_sample']) ? 1 : 0;
+
+            if ($itemId > 0) {
+                if (!isset($existingItems[$itemId])) {
+                    throw new Exception('An order item no longer exists. Refresh and try again.');
+                }
+                $existing = $existingItems[$itemId];
+                if ($existing['lock_reason'] && $quantity !== (int)$existing['quantity']) {
+                    throw new Exception("The quantity of {$existing['product_name']} cannot change ({$existing['lock_reason']}).");
+                }
+                $productId = (int)$existing['product_id'];
+            } else {
+                $productId = (int)($item['product_id'] ?? 0);
+                $productAccessStmt->execute([$productId, $customerId]);
+                if ($productId <= 0 || !$productAccessStmt->fetchColumn() || !canAccessProduct($productId)) {
+                    throw new Exception('One or more selected products do not belong to this customer or are not available to you.');
+                }
+            }
+            if ($quantity <= 0) {
+                throw new Exception('Each item needs a quantity of at least 1. Remove items you no longer need.');
+            }
+
+            $lineTotal = $isFreeSample ? 0 : $quantity * $unitPrice;
+            if ($isFreeSample) {
+                $freeSampleCount += $quantity;
+            } else {
+                $itemsSubtotal += $lineTotal;
+            }
+            $row = [
+                'id' => $itemId,
+                'product_id' => $productId,
+                'quantity' => $quantity,
+                'unit_price' => $unitPrice,
+                'total_price' => $lineTotal,
+                'is_free_sample' => $isFreeSample,
+            ];
+            if ($itemId > 0) $kept[$itemId] = $row; else $newItems[] = $row;
+        }
+        if (!$kept && !$newItems) {
+            throw new Exception('An order needs at least one item.');
+        }
+        foreach ($existingItems as $itemId => $existing) {
+            if (!isset($kept[$itemId]) && $existing['lock_reason']) {
+                throw new Exception("{$existing['product_name']} cannot be removed ({$existing['lock_reason']}).");
+            }
+        }
+
+        $discount_percentage = max(0, min(100, (float)($_POST['discount_percentage'] ?? 0)));
+        $discount_basis = $_POST['discount_basis'] ?? 'none';
+        if (!in_array($discount_basis, ['none', 'product_quantity', 'cash', 'free_sample', 'mixed'], true)) {
+            $discount_basis = 'none';
+        }
+        $discount_product_count = max(0, (int)($_POST['discount_product_count'] ?? 0));
+        $manualDiscount = max(0, (float)($_POST['discount_cash_amount'] ?? 0));
+        $discount_amount = round(min($itemsSubtotal, $itemsSubtotal * ($discount_percentage / 100) + $manualDiscount), 2);
+
+        // Shipping is part of this form only for users allowed to edit it.
+        if (hasPermission('sales.orders.shipping.edit')) {
+            $shipping_cost_type = ($_POST['shipping_cost_type'] ?? 'none') === 'manual' ? 'manual' : 'none';
+            $shippingCost = $shipping_cost_type === 'manual' ? max(0, (float)($_POST['shipping_cost'] ?? 0)) : 0;
+        } else {
+            $shipping_cost_type = $current['shipping_cost_type'] === 'manual' ? 'manual' : 'none';
+            $shippingCost = $shipping_cost_type === 'manual' ? (float)$current['shipping_cost'] : 0;
+        }
+
+        $total_amount = round(max(0, $itemsSubtotal - $discount_amount) + $shippingCost, 2);
+        if ($total_amount + 0.005 < (float)$current['paid_amount']) {
+            throw new Exception('The new total (' . number_format($total_amount, 2) . ') is less than the amount already paid (' . number_format((float)$current['paid_amount'], 2) . '). Delete or reduce payments first.');
+        }
+
+        $priceLogs = [];
+        $updateItemStmt = $pdo->prepare("UPDATE order_items SET quantity = ?, unit_price = ?, total_price = ?, is_free_sample = ? WHERE id = ? AND order_id = ?");
+        foreach ($kept as $itemId => $item) {
+            $updateItemStmt->execute([$item['quantity'], $item['unit_price'], $item['total_price'], $item['is_free_sample'], $itemId, $editOrderId]);
+            if (!$item['is_free_sample'] && $item['unit_price'] > 0 && abs($item['unit_price'] - (float)$existingItems[$itemId]['unit_price']) >= 0.005) {
+                $priceLogs[] = [$item['product_id'], $item['unit_price'], $item['quantity'], $itemId];
+            }
+        }
+        $deleteItemStmt = $pdo->prepare("DELETE FROM order_items WHERE id = ? AND order_id = ?");
+        foreach (array_diff_key($existingItems, $kept) as $itemId => $removed) {
+            $deleteItemStmt->execute([$itemId, $editOrderId]);
+        }
+        $insertItemStmt = $pdo->prepare("INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price, is_free_sample) VALUES (?, ?, ?, ?, ?, ?)");
+        foreach ($newItems as $item) {
+            $insertItemStmt->execute([$editOrderId, $item['product_id'], $item['quantity'], $item['unit_price'], $item['total_price'], $item['is_free_sample']]);
+            if (!$item['is_free_sample'] && $item['unit_price'] > 0) {
+                $priceLogs[] = [$item['product_id'], $item['unit_price'], $item['quantity'], (int)$pdo->lastInsertId()];
+            }
+        }
+
+        $notes = $_POST['notes'] ?? null;
+        $pdo->prepare("
+            UPDATE orders SET contact_id = ?, order_date = ?, notes = ?, total_amount = ?,
+                   discount_percentage = ?, discount_basis = ?, discount_amount = ?, discount_product_count = ?,
+                   free_sample_count = ?, shipping_cost_type = ?, shipping_cost = ?
+            WHERE id = ?
+        ")->execute([
+            $contactId, $orderDate, $notes, $total_amount,
+            $discount_percentage, $discount_basis, $discount_amount, $discount_product_count,
+            $freeSampleCount, $shipping_cost_type, $shippingCost, $editOrderId
+        ]);
+
+        $pdo->commit();
+        foreach ($priceLogs as [$productId, $price, $quantity, $sourceId]) {
+            logProductPrice($productId, 'sell', $price, $quantity, 'sales_order', $sourceId, 'Sales order ' . $current['internal_id'] . ' (edited)');
+        }
+        logActivity("Edited sales order {$current['internal_id']}", [
+            'old_total' => (float)$current['total_amount'],
+            'new_total' => $total_amount,
+            'items_added' => count($newItems),
+            'items_removed' => count($existingItems) - count($kept),
+        ], 'update', 'sales_order', $editOrderId);
+        $_SESSION['success'] = 'Order updated successfully!';
+        header('Location: order_details.php?id=' . $editOrderId);
+        exit();
+    } catch (Exception $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        $_SESSION['error'] = 'Error updating order: ' . $e->getMessage();
+        header('Location: create_order.php?id=' . $editOrderId);
+        exit();
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$isEdit) {
     try {
         $pdo->beginTransaction();
 
@@ -222,6 +446,23 @@ $customerSql .= " ORDER BY c.name";
 $customerListStmt = $pdo->prepare($customerSql);
 $customerListStmt->execute($customerParams);
 $customers = $customerListStmt->fetchAll(PDO::FETCH_ASSOC);
+if ($isEdit) {
+    // The customer of an existing order cannot change.
+    $customers = [['id' => $editOrder['customer_id'], 'name' => $editOrder['customer_name']]];
+}
+$editCashDiscount = 0;
+if ($isEdit) {
+    $editSubtotal = 0;
+    foreach ($editItems as $item) {
+        if (empty($item['is_free_sample'])) $editSubtotal += (float)$item['total_price'];
+    }
+    $editCashDiscount = round(max(0, (float)$editOrder['discount_amount'] - $editSubtotal * ((float)$editOrder['discount_percentage'] / 100)), 2);
+}
+$canEditShipping = !$isEdit || hasPermission('sales.orders.shipping.edit');
+$canViewDiscount = !$isEdit || hasPermission('sales.orders.discount.view');
+$formValue = static function ($key, $default) use ($editOrder) {
+    return $editOrder !== null && isset($editOrder[$key]) ? $editOrder[$key] : $default;
+};
 
 // Get products for dropdown
 $productSql = "
@@ -261,7 +502,15 @@ require_once '../../includes/header.php';
 ?>
 
 <div class="container mt-4">
-    <h2>Create New Order</h2>
+    <h2><?= $isEdit ? 'Edit Order ' . htmlspecialchars($internal_id) : 'Create New Order' ?></h2>
+    <?php if ($isEdit): ?>
+        <div class="alert alert-info">
+            Customer and currency cannot change. Items marked <span class="badge bg-secondary">locked</span> keep their quantity because stock was already deducted, they were returned, or a manufacturing order exists for them.
+            <?php if ((float)$editOrder['paid_amount'] > 0): ?>
+                Already paid: <strong><?= number_format((float)$editOrder['paid_amount'], 2) ?> <?= htmlspecialchars($editOrder['currency'] ?? '') ?></strong> — the new total cannot be lower.
+            <?php endif; ?>
+        </div>
+    <?php endif; ?>
 
     <?php include '../../includes/messages.php'; ?>
 
@@ -281,16 +530,16 @@ require_once '../../includes/header.php';
                         <div class="mb-3">
                             <label for="order_date" class="form-label">Order Date</label>
                             <input type="date" class="form-control" id="order_date" name="order_date"
-                                value="<?= date('Y-m-d') ?>" required>
+                                value="<?= htmlspecialchars($formValue('order_date', date('Y-m-d'))) ?>" required>
                         </div>
                     </div>
                     <div class="col-md-4 mb-3">
                         <div class="mb-3">
                             <label for="customer_id" class="form-label">Customer</label>
-                            <select class="form-select" id="customer_id" name="customer_id" required>
+                            <select class="form-select" id="customer_id" name="customer_id" required <?= $isEdit ? 'disabled' : '' ?>>
                                 <option value="">Select Customer</option>
                                 <?php foreach ($customers as $customer) : ?>
-                                    <option value="<?= $customer['id'] ?>"><?= htmlspecialchars($customer['name']) ?></option>
+                                    <option value="<?= $customer['id'] ?>" <?= $isEdit ? 'selected' : '' ?>><?= htmlspecialchars($customer['name']) ?></option>
                                 <?php endforeach; ?>
                             </select>
                         </div>
@@ -316,7 +565,7 @@ require_once '../../includes/header.php';
                     <div class="col-md-4 mb-3">
                         <div class="mb-3">
                             <label for="notes" class="form-label">Notes</label>
-                            <textarea class="form-control" id="notes" name="notes" rows="2"></textarea>
+                            <textarea class="form-control" id="notes" name="notes" rows="2"><?= htmlspecialchars((string)$formValue('notes', '')) ?></textarea>
                         </div>
                     </div>
                 </div>
@@ -324,12 +573,16 @@ require_once '../../includes/header.php';
                 <div class="row">
                     <div class="col-md-3 mb-3">
                         <label for="currency" class="form-label">Currency</label>
-                        <select class="form-select" id="currency" name="currency">
+                        <select class="form-select" id="currency" name="currency" <?= $isEdit ? 'disabled' : '' ?>>
+                            <?php if ($isEdit): ?>
+                                <option value="<?= e($editOrder['currency'] ?: 'EGP') ?>" data-rate="<?= e(number_format((float)($editOrder['exchange_rate'] ?: 1), 4, '.', '')) ?>" selected><?= e($editOrder['currency'] ?: 'EGP') ?> (saved order rate)</option>
+                            <?php else: ?>
                             <?php foreach ($currencies as $cur): ?>
                                 <option value="<?= e($cur['code']) ?>" data-rate="<?= e($cur['code'] === 'EGP' ? '1.0000' : $cur['rate_to_egp']) ?>" <?= $cur['is_default'] ? 'selected' : '' ?>>
                                     <?= htmlspecialchars($cur['code']) ?> — <?= htmlspecialchars($cur['name']) ?>
                                 </option>
                             <?php endforeach; ?>
+                            <?php endif; ?>
                         </select>
                     </div>
                     <div class="col-md-3 mb-3" id="exchange_rate_field" style="display:none;">
@@ -364,6 +617,37 @@ require_once '../../includes/header.php';
                         </thead>
                         <tbody>
                             <!-- Items will be added dynamically -->
+                            <?php foreach ($editItems as $item): $locked = $item['lock_reason'] !== null; ?>
+                                <tr id="item_<?= (int)$item['product_id'] ?>">
+                                    <td>
+                                        <?= htmlspecialchars($item['product_name']) ?>
+                                        <?php if ($locked): ?><span class="badge bg-secondary ms-1" title="<?= e($item['lock_reason']) ?>">locked</span><?php endif; ?>
+                                        <input type="hidden" name="items[e<?= (int)$item['id'] ?>][order_item_id]" value="<?= (int)$item['id'] ?>">
+                                    </td>
+                                    <td>
+                                        <input type="number" class="form-control form-control-sm item-qty"
+                                               name="items[e<?= (int)$item['id'] ?>][quantity]" value="<?= (int)$item['quantity'] ?>" min="1" <?= $locked ? 'readonly' : '' ?>>
+                                    </td>
+                                    <td>
+                                        <input type="number" class="form-control form-control-sm item-price"
+                                               name="items[e<?= (int)$item['id'] ?>][price]" value="<?= e($item['unit_price']) ?>" step="0.01" min="0">
+                                    </td>
+                                    <td class="item-total" data-value="0">0.00</td>
+                                    <td>
+                                        <input type="hidden" class="free-sample-flag" name="items[e<?= (int)$item['id'] ?>][is_free_sample]" value="<?= !empty($item['is_free_sample']) ? '1' : '0' ?>">
+                                        <div class="form-check">
+                                            <input type="checkbox" class="form-check-input item-free-sample" <?= !empty($item['is_free_sample']) ? 'checked' : '' ?>>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <?php if (!$locked): ?>
+                                        <button type="button" class="btn btn-sm btn-danger remove-item">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                        <?php endif; ?>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
                         </tbody>
                     </table>
                 </div>
@@ -371,7 +655,7 @@ require_once '../../includes/header.php';
         </div>
 
         <div class="row">
-            <div class="col-md-6 mb-4">
+            <div class="col-md-6 mb-4" <?= $canViewDiscount ? '' : 'hidden' ?>>
                 <div class="card h-100">
                     <div class="card-header">Discount Information</div>
                     <div class="card-body">
@@ -379,33 +663,31 @@ require_once '../../includes/header.php';
                             <div class="col-sm-6">
                                 <label for="discount_percentage" class="form-label">Discount %</label>
                                 <input type="number" class="form-control" id="discount_percentage" name="discount_percentage"
-                                    value="0" step="0.01" min="0" max="100">
+                                    value="<?= e($formValue('discount_percentage', 0)) ?>" step="0.01" min="0" max="100">
                             </div>
                             <div class="col-sm-6">
                                 <label for="discount_basis" class="form-label">Discount Type</label>
                                 <select class="form-select" id="discount_basis" name="discount_basis">
-                                    <option value="none">No Discount</option>
-                                    <option value="product_quantity">Product Count</option>
-                                    <option value="cash">Cash Discount</option>
-                                    <option value="free_sample">Free Samples</option>
-                                    <option value="mixed">Mixed</option>
+                                    <?php foreach (['none' => 'No Discount', 'product_quantity' => 'Product Count', 'cash' => 'Cash Discount', 'free_sample' => 'Free Samples', 'mixed' => 'Mixed'] as $basis => $label): ?>
+                                        <option value="<?= $basis ?>" <?= $formValue('discount_basis', 'none') === $basis ? 'selected' : '' ?>><?= $label ?></option>
+                                    <?php endforeach; ?>
                                 </select>
                             </div>
                             <div class="col-sm-6">
                                 <label for="discount_cash_amount" class="form-label">Discount (Cash)</label>
                                 <input type="number" class="form-control" id="discount_cash_amount" name="discount_cash_amount"
-                                    value="0" step="0.01" min="0">
+                                    value="<?= e($editCashDiscount ?? 0) ?>" step="0.01" min="0">
                             </div>
                             <div class="col-sm-6">
                                 <label for="discount_product_count" class="form-label">Discounted Products</label>
                                 <input type="number" class="form-control" id="discount_product_count" name="discount_product_count"
-                                    value="0" min="0" step="1">
+                                    value="<?= e($formValue('discount_product_count', 0)) ?>" min="0" step="1">
                             </div>
                         </div>
                     </div>
                 </div>
             </div>
-            <div class="col-md-6 mb-4">
+            <div class="col-md-6 mb-4" <?= $canEditShipping ? '' : 'hidden' ?>>
                 <div class="card h-100">
                     <div class="card-header">Shipping Information</div>
                     <div class="card-body">
@@ -414,13 +696,13 @@ require_once '../../includes/header.php';
                                 <label for="shipping_cost_type" class="form-label">Shipping Cost</label>
                                 <select class="form-select" id="shipping_cost_type" name="shipping_cost_type">
                                     <option value="none">No Shipping (لا يوجد)</option>
-                                    <option value="manual">Manual (يدوي)</option>
+                                    <option value="manual" <?= $formValue('shipping_cost_type', 'none') === 'manual' ? 'selected' : '' ?>>Manual (يدوي)</option>
                                 </select>
                             </div>
                             <div class="col-sm-12">
                                 <label for="shipping_cost" class="form-label">Shipping Amount</label>
                                 <input type="number" class="form-control" id="shipping_cost" name="shipping_cost"
-                                    value="0" step="0.01" min="0" disabled>
+                                    value="<?= e($formValue('shipping_cost', 0)) ?>" step="0.01" min="0" <?= $formValue('shipping_cost_type', 'none') === 'manual' ? '' : 'disabled' ?>>
                                 <small class="text-muted d-block mt-1">Enabled only when shipping is manual.</small>
                             </div>
                         </div>
@@ -459,8 +741,8 @@ require_once '../../includes/header.php';
         </div>
 
         <div class="d-flex justify-content-between">
-            <a href="index.php" class="btn btn-secondary">Cancel</a>
-            <button type="submit" class="btn btn-primary">Create Order</button>
+            <a href="<?= $isEdit ? 'order_details.php?id=' . $editOrderId : 'index.php' ?>" class="btn btn-secondary">Cancel</a>
+            <button type="submit" class="btn btn-primary"><?= $isEdit ? 'Save Changes' : 'Create Order' ?></button>
         </div>
     </form>
 </div>
@@ -552,6 +834,9 @@ require_once '../../includes/header.php';
 </div>
 
 <script>
+    const presetContactId = <?= $isEdit ? (int)$editOrder['contact_id'] : 'null' ?>;
+    const isEditMode = <?= $isEdit ? 'true' : 'false' ?>;
+
     $(document).ready(function() {
         console.log("Document ready");
         $('#customer_id').select2({
@@ -599,7 +884,7 @@ require_once '../../includes/header.php';
                     let options = '<option value="">Select Contact</option>';
                     if (Array.isArray(resp.contacts) && resp.contacts.length) {
                         resp.contacts.forEach(c => {
-                            const selected = c.is_primary ? 'selected' : '';
+                            const selected = (presetContactId ? Number(c.id) === presetContactId : c.is_primary) ? 'selected' : '';
                             const phone = c.phone ? ` (${c.phone})` : '';
                             options += `<option value="${c.id}" ${selected}>${c.name}${phone}</option>`;
                         });
@@ -709,6 +994,11 @@ require_once '../../includes/header.php';
             if ($('#' + rowId).length) {
                 // If product already exists in table, just increase quantity
                 const qtyInput = $('#' + rowId).find('.item-qty');
+                if (qtyInput.prop('readonly')) {
+                    alert('This product is already on the order and its quantity is locked.');
+                    $('#productModal').modal('hide');
+                    return;
+                }
                 qtyInput.val(parseInt(qtyInput.val()) + 1);
                 updateRowTotal($('#' + rowId));
             } else {
@@ -847,8 +1137,15 @@ require_once '../../includes/header.php';
         });
 
         // Initialize summary on first load
+        $('#itemsTable tbody tr').each(function() {
+            updateRowTotal($(this));
+        });
         updateFreeSampleCounter();
         updateSummary();
+
+        if (isEditMode) {
+            $('#customer_id').trigger('change');
+        }
     });
 
     // Display only: the server independently loads the current configured rate.

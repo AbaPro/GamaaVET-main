@@ -107,8 +107,8 @@ function financeAccountHasFinancialHistory($type, $accountId) {
 
     $accountId = (int)$accountId;
     $column = $type === 'safe' ? 'safe_id' : 'bank_account_id';
-    foreach (['order_payments', 'customer_wallet_transactions', 'expense_payments'] as $table) {
-        if (!tableExists($table)) continue;
+    foreach (['order_payments', 'customer_wallet_transactions', 'vendor_wallet_transactions', 'expense_payments'] as $table) {
+        if (!tableExists($table) || !tableHasColumn($table, $column)) continue;
         $stmt = $conn->prepare("SELECT id FROM `$table` WHERE `$column` = ? LIMIT 1");
         $stmt->bind_param('i', $accountId);
         $stmt->execute();

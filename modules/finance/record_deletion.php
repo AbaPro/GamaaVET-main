@@ -298,6 +298,12 @@ function financeDeleteWalletTransaction($type, $row) {
         elseif (($row['payment_method'] ?? '') === 'transfer' && !empty($row['bank_account_id'])) financeReverseBalance('bank', (int)$row['bank_account_id'], -$row['amount'], $row['created_at']);
         else throw new DomainException('Wallet payment destination is missing.');
     }
+    // A vendor refund received into a safe or bank took that money in.
+    if (!$customer && $row['type'] === 'refund' && in_array($row['payment_method'] ?? '', ['cash', 'transfer'], true)) {
+        if ($row['payment_method'] === 'cash' && !empty($row['safe_id'])) financeReverseBalance('safe', (int)$row['safe_id'], -$row['amount'], $row['created_at']);
+        elseif ($row['payment_method'] === 'transfer' && !empty($row['bank_account_id'])) financeReverseBalance('bank', (int)$row['bank_account_id'], -$row['amount'], $row['created_at']);
+        else throw new DomainException('Vendor refund destination is missing.');
+    }
     $files = $customer ? [] : financeDeletionAttachmentFiles('vendor_wallet_transaction_attachments', 'vendor_wallet_transaction_id', (int)$row['id']);
     financeDeleteRow($customer ? 'customer_wallet_transactions' : 'vendor_wallet_transactions', (int)$row['id']);
     return $files;

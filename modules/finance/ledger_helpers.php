@@ -114,6 +114,40 @@ function financeAccountLedger($accountType, $accountId, $currency, $currentBalan
     }
     $walletPaymentStmt->close();
 
+    // Vendor refunds received into this account.
+    if (tableHasColumn('vendor_wallet_transactions', 'safe_id')) {
+        $vendorRefundStmt = $conn->prepare("
+            SELECT wt.id, wt.amount, wt.notes, wt.transaction_date, wt.created_at,
+                   u.name AS created_by_name, v.id AS vendor_id, v.name AS vendor_name
+            FROM vendor_wallet_transactions wt
+            JOIN vendors v ON v.id = wt.vendor_id
+            LEFT JOIN users u ON u.id = wt.created_by
+            WHERE wt.type = 'refund' AND wt.payment_method = '$method' AND wt.$methodColumn = ?
+        ");
+        $vendorRefundStmt->bind_param('i', $accountId);
+        $vendorRefundStmt->execute();
+        $vendorRefunds = $vendorRefundStmt->get_result();
+        while ($row = $vendorRefunds->fetch_assoc()) {
+            $transactions[] = [
+                'source_key' => 'vendor_refund_' . $row['id'],
+                'sort_id' => (int)$row['id'],
+                'transaction_date' => $row['transaction_date'],
+                'created_at' => $row['created_at'],
+                'type' => 'Vendor Refund',
+                'direction' => 'in',
+                'amount' => (float)$row['amount'],
+                'reference' => 'Vendor wallet transaction #' . $row['id'],
+                'details' => $row['vendor_name'],
+                'details_url' => '../vendors/wallet.php?id=' . (int)$row['vendor_id'],
+                'notes' => $row['notes'],
+                'created_by_name' => $row['created_by_name'] ?: 'System',
+                'attachments' => [],
+                'source_currency' => $currency,
+            ];
+        }
+        $vendorRefundStmt->close();
+    }
+
     // Expense payments take money out. A linked purchase-order payment is another
     // view of this same payment, so expense_payments is the canonical row here.
     $expenseScope = getAccountScopeSql('e');

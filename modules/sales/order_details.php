@@ -275,6 +275,9 @@ require_once '../../includes/header.php';
             <h4>Order #<?= htmlspecialchars($order['internal_id']) ?></h4>
             <div>
                 <a href="order_list.php" class="btn btn-sm btn-secondary">Back to List</a>
+                <?php if (hasPermission('sales.orders.edit') && !in_array($order['status'], ['delivered', 'returned', 'returned-refunded', 'partially-returned', 'partially-returned-refunded'], true)): ?>
+                    <a href="create_order.php?id=<?= (int)$order_id ?>" class="btn btn-sm btn-warning ms-2"><i class="fas fa-edit"></i> Edit Order</a>
+                <?php endif; ?>
                 <a href="generate_invoice.php?id=<?= $order_id ?>" class="btn btn-sm btn-primary ms-2" target="_blank">Print Invoice</a>
                 <a href="generate_invoice.php?id=<?= $order_id ?>&view=statement" class="btn btn-sm btn-outline-primary ms-2" target="_blank">بيان</a>
                 <?php if (hasPermission('finance.pricing.view') || hasPermission('finance.pricing.manage')): ?>
