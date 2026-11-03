@@ -14,6 +14,19 @@ if (!isset($_SESSION['role_id'])) {
 $roleId = $_SESSION['role_id'];
 $userId = $_SESSION['user_id'];
 
+// Only filter parameters survive action redirects; never replay an action.
+$filters = [];
+foreach (['read', 'type', 'severity', 'module', 'from', 'to', 'q'] as $key) {
+    $filters[$key] = is_string($_GET[$key] ?? null) ? trim($_GET[$key]) : '';
+}
+foreach (['from', 'to'] as $key) {
+    $date = DateTimeImmutable::createFromFormat('!Y-m-d', $filters[$key]);
+    if (!$date || $date->format('Y-m-d') !== $filters[$key]) $filters[$key] = '';
+}
+if (!in_array($filters['read'], ['', 'read', 'unread'], true)) $filters['read'] = '';
+$filterQuery = http_build_query(array_filter($filters, fn($value) => $value !== ''));
+$returnUrl = 'index.php' . ($filterQuery ? '?' . $filterQuery : '');
+
 if (isset($_GET['mark']) && is_numeric($_GET['mark'])) {
     $nid = (int)$_GET['mark'];
     $visibleStmt = $conn->prepare('SELECT * FROM notifications WHERE id = ? LIMIT 1');
@@ -23,7 +36,7 @@ if (isset($_GET['mark']) && is_numeric($_GET['mark'])) {
     $visibleStmt->close();
     if (!$visibleNotification || !isNotificationVisibleInCurrentChannel($visibleNotification)) {
         setAlert('danger', 'Notification not found.');
-        redirect('index.php');
+        redirect($returnUrl);
     }
     $roleSlug = $_SESSION['role_slug'] ?? null;
     
@@ -37,7 +50,7 @@ if (isset($_GET['mark']) && is_numeric($_GET['mark'])) {
     
     $stmt->execute();
     $stmt->close();
-    redirect('index.php');
+    redirect($returnUrl);
 }
 if (isset($_GET['ticket']) && is_numeric($_GET['ticket']) && hasPermission('tickets.create')) {
     $nid = (int)$_GET['ticket'];
@@ -60,7 +73,7 @@ if (isset($_GET['ticket']) && is_numeric($_GET['ticket']) && hasPermission('tick
         $ms->execute();
         $ms->close();
         setAlert('success', 'Ticket created.');
-        redirect('index.php');
+        redirect($returnUrl);
     }
 }
 
@@ -78,6 +91,31 @@ if (($_SESSION['login_region'] ?? 'factory') !== 'factory' || userHasRestrictedF
     $notifications = array_values(array_filter($notifications, 'isNotificationVisibleInCurrentChannel'));
 }
 
+// Build choices only from notifications this user is authorized to see.
+$filterOptions = ['type' => [], 'severity' => [], 'module' => []];
+foreach ($notifications as $notification) {
+    foreach ($filterOptions as $key => &$options) {
+        $value = (string)($notification[$key] ?? '');
+        if ($value !== '') $options[$value] = $value;
+    }
+    unset($options);
+}
+foreach ($filterOptions as &$options) natcasesort($options);
+unset($options);
+$totalVisible = count($notifications);
+$notifications = array_values(array_filter($notifications, function ($n) use ($filters) {
+    if ($filters['read'] === 'read' && !(int)$n['is_read']) return false;
+    if ($filters['read'] === 'unread' && (int)$n['is_read']) return false;
+    foreach (['type', 'severity', 'module'] as $key) {
+        if ($filters[$key] !== '' && ($n[$key] ?? '') !== $filters[$key]) return false;
+    }
+    $day = substr($n['created_at'], 0, 10);
+    if ($filters['from'] !== '' && $day < $filters['from']) return false;
+    if ($filters['to'] !== '' && $day > $filters['to']) return false;
+    if ($filters['q'] !== '' && mb_stripos(($n['title'] ?? '') . ' ' . ($n['message'] ?? ''), $filters['q']) === false) return false;
+    return true;
+}));
+
 $page_title = 'Notifications';
 require_once '../../includes/header.php';
 ?>
@@ -86,6 +124,47 @@ require_once '../../includes/header.php';
   <h2>Notifications</h2>
   <a href="../../dashboard.php" class="btn btn-secondary">Back</a>
  </div>
+
+<form method="get" class="card card-body mb-3">
+  <div class="row g-3 align-items-end">
+    <div class="col-md-3">
+      <label class="form-label" for="notification-search">Search title or message</label>
+      <input class="form-control" id="notification-search" name="q" value="<?= htmlspecialchars($filters['q']); ?>" placeholder="Search notifications">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label" for="notification-read">Read status</label>
+      <select class="form-select" id="notification-read" name="read">
+        <?php foreach (['' => 'All notifications', 'unread' => 'Unread', 'read' => 'Read'] as $value => $label): ?>
+          <option value="<?= $value; ?>" <?= $filters['read'] === $value ? 'selected' : ''; ?>><?= $label; ?></option>
+        <?php endforeach; ?>
+      </select>
+    </div>
+    <?php foreach ($filterOptions as $key => $options): ?>
+      <div class="col-md-2">
+        <label class="form-label" for="notification-<?= $key; ?>"><?= ucfirst($key); ?></label>
+        <select class="form-select" id="notification-<?= $key; ?>" name="<?= $key; ?>">
+          <option value="">All</option>
+          <?php foreach ($options as $value): ?>
+            <option value="<?= htmlspecialchars($value); ?>" <?= $filters[$key] === $value ? 'selected' : ''; ?>><?= htmlspecialchars(ucwords(str_replace('_', ' ', $value))); ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+    <?php endforeach; ?>
+    <div class="col-md-3">
+      <label class="form-label" for="notification-from">From date</label>
+      <input class="form-control" type="date" id="notification-from" name="from" value="<?= htmlspecialchars($filters['from']); ?>">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label" for="notification-to">To date</label>
+      <input class="form-control" type="date" id="notification-to" name="to" value="<?= htmlspecialchars($filters['to']); ?>">
+    </div>
+    <div class="col-md-6 d-flex gap-2">
+      <button class="btn btn-primary" type="submit">Apply filters</button>
+      <a class="btn btn-outline-secondary" href="index.php">Reset</a>
+    </div>
+  </div>
+  <div class="text-muted small mt-3"><?= count($notifications); ?> of <?= $totalVisible; ?> notifications</div>
+</form>
 
 <div class="card">
   <div class="table-responsive">
@@ -103,7 +182,7 @@ require_once '../../includes/header.php';
       </thead>
       <tbody>
         <?php if (empty($notifications)): ?>
-          <tr><td colspan="7" class="text-center text-muted py-4">No notifications</td></tr>
+          <tr><td colspan="7" class="text-center text-muted py-4">No notifications match your filters.</td></tr>
         <?php else: ?>
           <?php
             // Prepare checker for existing open ticket for product notifications
@@ -148,7 +227,7 @@ require_once '../../includes/header.php';
               </td>
               <td class="d-flex gap-2">
                 <?php if ((int)$n['is_read'] === 0): ?>
-                  <a class="btn btn-sm btn-outline-secondary" href="?mark=<?= (int)$n['id'] ?>">Mark read</a>
+                  <a class="btn btn-sm btn-outline-secondary" href="<?= htmlspecialchars($returnUrl . ($filterQuery ? '&' : '?') . 'mark=' . (int)$n['id']); ?>">Mark read</a>
                 <?php endif; ?>
                 <?php
                   $viewLink = null;
@@ -178,7 +257,7 @@ require_once '../../includes/header.php';
                   }
                 ?>
                 <?php if ($showCreate): ?>
-                  <a class="btn btn-sm btn-outline-primary" href="?ticket=<?= (int)$n['id'] ?>">Create Ticket</a>
+                  <a class="btn btn-sm btn-outline-primary" href="<?= htmlspecialchars($returnUrl . ($filterQuery ? '&' : '?') . 'ticket=' . (int)$n['id']); ?>">Create Ticket</a>
                 <?php endif; ?>
               </td>
             </tr>

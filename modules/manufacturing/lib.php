@@ -2,6 +2,14 @@
 require_once __DIR__ . "/sourcing.php";
 require_once __DIR__ . "/packaging.php";
 
+function manufacturing_add_report_brand($pdf): void {
+    $logo = ROOT_PATH . '/' . getBrandLogoFile('factory');
+    if (is_file($logo)) {
+        $pdf->Image($logo, 15, 12, 22, 18, 'PNG', '', '', true, 300, '', false, false, 0, 'CM');
+        $pdf->SetY(35);
+    }
+}
+
 // Embed local uploads so PDF rendering does not depend on the current URL or cwd.
 // Explicit dimensions keep TCPDF from laying out full-resolution photos over tables.
 function manufacturing_report_image_html(string $path, string $label = 'Attached image'): string {
@@ -911,6 +919,7 @@ function manufacturing_create_pdf_document($order, $stepKey, $htmlContent) {
     $pdf->setRTL(false); // Set to true only if entire document is RTL
     
     $pdf->AddPage();
+    manufacturing_add_report_brand($pdf);
     $pdf->writeHTML($htmlContent, true, false, true, false, '');
     $pdf->Output($filePath, 'F');
 
@@ -1591,6 +1600,7 @@ function manufacturing_generate_full_order_pdf($conn, $orderId) {
     
     $pdf->SetFont('aealarabiya', '', 11);
     $pdf->AddPage();
+    manufacturing_add_report_brand($pdf);
     $pdf->writeHTML($htmlContent, true, false, true, false, '');
     
     $pdf->Output($filePath, 'F');
