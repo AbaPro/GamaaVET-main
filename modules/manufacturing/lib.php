@@ -1,5 +1,35 @@
 <?php
 require_once __DIR__ . "/sourcing.php";
+require_once __DIR__ . "/packaging.php";
+
+// Embed local uploads so PDF rendering does not depend on the current URL or cwd.
+// Explicit dimensions keep TCPDF from laying out full-resolution photos over tables.
+function manufacturing_report_image_html(string $path, string $label = 'Attached image'): string {
+    $root = realpath(__DIR__ . '/../../assets/uploads');
+    $file = realpath(__DIR__ . '/../../' . ltrim($path, '/'));
+    if (!$root || !$file || !str_starts_with($file, $root . DIRECTORY_SEPARATOR) || !is_file($file)) {
+        return htmlspecialchars($label) . ' (image unavailable)';
+    }
+    $info = @getimagesize($file);
+    if (!$info || !in_array($info['mime'], ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], true)) {
+        return htmlspecialchars($label) . ' (unsupported image)';
+    }
+    $image = @imagecreatefromstring(file_get_contents($file));
+    if (!$image) return htmlspecialchars($label) . ' (image unavailable)';
+    $scale = min(1, 1000 / max($info[0], $info[1]));
+    $width = max(1, (int)round($info[0] * $scale));
+    $height = max(1, (int)round($info[1] * $scale));
+    $thumb = imagecreatetruecolor($width, $height);
+    imagefill($thumb, 0, 0, imagecolorallocate($thumb, 255, 255, 255));
+    imagecopyresampled($thumb, $image, 0, 0, 0, 0, $width, $height, $info[0], $info[1]);
+    ob_start();
+    imagejpeg($thumb, null, 85);
+    $bytes = ob_get_clean();
+    imagedestroy($thumb);
+    imagedestroy($image);
+    $displayScale = min(1, 220 / $width, 160 / $height);
+    return '<img src="data:image/jpeg;base64,' . base64_encode($bytes) . '" width="' . (int)round($width * $displayScale) . '" height="' . (int)round($height * $displayScale) . '" alt="' . htmlspecialchars($label, ENT_QUOTES, 'UTF-8') . '">';
+}
 
 /**
  * Provides reusable helpers for the manufacturing module.
@@ -209,7 +239,8 @@ function manufacturing_convert_to_relative_path($fullPath) {
     return $fullPath;
 }
 
-function manufacturing_build_step_document_html($order, $orderStep, $formula, $components, $notes, $statusLabel, $conn = null, $canViewComponentName = true) {
+function manufacturing_build_step_document_html($order, $orderStep, $formula, $components, $notes, $statusLabel, $conn = null, $canViewComponentName = null) {
+    $canViewComponentName = ($canViewComponentName ?? true) && hasPermission('manufacturing.component.name.view');
     $orderNumber = htmlspecialchars($order['order_number'] ?? 'UNKNOWN');
     $customerName = htmlspecialchars($order['customer_name'] ?? 'Unknown provider');
     
@@ -314,9 +345,8 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
             $html .= '<h4>Preparation & Mixing Images</h4>';
             $html .= '<table><thead><tr><th>Image</th><th>File</th></tr></thead><tbody>';
             while ($image = $prepImageResult->fetch_assoc()) {
-                $imagePath = htmlspecialchars($image['file_path']);
                 $imageName = htmlspecialchars($image['original_name'] ?: basename($image['file_path']));
-                $html .= '<tr><td><img src="' . $imagePath . '" style="max-width:140px;max-height:100px;"></td><td>' . $imageName . '</td></tr>';
+                $html .= '<tr><td>' . manufacturing_report_image_html($image['file_path'], $image['original_name'] ?: 'Attached image') . '</td><td>' . $imageName . '</td></tr>';
             }
             $html .= '</tbody></table>';
         }
@@ -439,6 +469,7 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
                 $finalProductCount = '';
                 $cartonCount = '';
                 $unitsPerCarton = '';
+                $lastCartonUnits = '';
                 $printsIssued = '';
                 $printsUsed = '';
                 $printsReturned = '';
@@ -453,6 +484,7 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
                     if ($item['item_key'] === 'final_product_count') $finalProductCount = $item['item_value'];
                     if ($item['item_key'] === 'carton_count') $cartonCount = $item['item_value'];
                     if ($item['item_key'] === 'units_per_carton') $unitsPerCarton = $item['item_value'];
+                    if ($item['item_key'] === 'last_carton_units') $lastCartonUnits = $item['item_value'];
                     if ($item['item_key'] === 'prints_issued') $printsIssued = $item['item_value'];
                     if ($item['item_key'] === 'prints_used') $printsUsed = $item['item_value'];
                     if ($item['item_key'] === 'prints_returned') $printsReturned = $item['item_value'];
@@ -465,6 +497,7 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
                 $html .= '<tr><td style="text-align:right;"><strong>عدد المنتج النهائي:</strong></td><td>' . htmlspecialchars($finalProductCount ?: '_____') . '</td></tr>';
                 $html .= '<tr><td style="text-align:right;"><strong>عدد الكراتين:</strong></td><td>' . htmlspecialchars($cartonCount ?: '_____') . '</td></tr>';
                 $html .= '<tr><td style="text-align:right;"><strong>وحدات/كرتونة:</strong></td><td>' . htmlspecialchars($unitsPerCarton ?: '_____') . '</td></tr>';
+                $html .= '<tr><td><strong>كسور في اخر كرتونة:</strong></td><td>' . htmlspecialchars($lastCartonUnits === '' ? '—' : $lastCartonUnits) . '</td></tr>';
                 $html .= '<tr><td style="text-align:right;"><strong>مطابقة ' . htmlspecialchars($customMaterialName) . ':</strong></td><td>مصروف ' . htmlspecialchars($printsIssued ?: '___') . ' / مستخدم ' . htmlspecialchars($printsUsed ?: '___') . ' / راجع ' . htmlspecialchars($printsReturned ?: '___') . '</td></tr>';
                 $html .= '<tr><td style="text-align:right;"><strong>إعادة ' . htmlspecialchars($customMaterialName) . ' للمخزن:</strong></td><td>' . $printsReturnedToStock . '</td></tr>';
                 $html .= '<tr><td style="text-align:right;"><strong>أي كسر تم تسجيله:</strong></td><td>' . $breakageRecorded . ' العدد: ' . htmlspecialchars($breakageCount ?: '___') . '</td></tr>';
@@ -504,7 +537,7 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
                     }
                     
                     $html .= '<tr>';
-                    $html .= '<td style="text-align:right;"><strong>' . $matLabel . '</strong></td>';
+                    $html .= '<td style="text-align:right;"><strong>' . htmlspecialchars($matLabel) . '</strong></td>';
                     $html .= '<td style="text-align:center;">' . htmlspecialchars($issued ?: '0') . '</td>';
                     $html .= '<td style="text-align:center;">' . htmlspecialchars($used ?: '0') . '</td>';
                     $html .= '<td style="text-align:center;">' . htmlspecialchars($returned ?: '0') . '</td>';
@@ -528,9 +561,8 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
                 $html .= '<h4>Packaging & Labeling Images</h4>';
                 $html .= '<table><thead><tr><th>Image</th><th>File</th></tr></thead><tbody>';
                 while ($image = $packImageResult->fetch_assoc()) {
-                    $imagePath = htmlspecialchars($image['file_path']);
                     $imageName = htmlspecialchars($image['original_name'] ?: basename($image['file_path']));
-                    $html .= '<tr><td><img src="' . $imagePath . '" style="max-width:140px;max-height:100px;"></td><td>' . $imageName . '</td></tr>';
+                    $html .= '<tr><td>' . manufacturing_report_image_html($image['file_path'], $image['original_name'] ?: 'Attached image') . '</td><td>' . $imageName . '</td></tr>';
                 }
                 $html .= '</tbody></table>';
             }
@@ -564,12 +596,14 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
                 $html .= '<h5 style="margin-top:15px;">تفاصيل الشحن (Dispatch Details)</h5>';
                 $html .= '<table border="1" cellpadding="5" style="width:100%; border-collapse:collapse; margin-bottom:15px;">';
                 $html .= '<tbody>';
-                foreach ($dispatchData['details'] as $item) {
-                    $val = htmlspecialchars($item['item_value'] ?: '______');
-                    $html .= '<tr>';
-                    $html .= '<td style="width:50%; text-align:right;"><strong>' . htmlspecialchars($item['item_text']) . '</strong></td>';
-                    $html .= '<td style="width:50%; text-align:center;">' . $val . '</td>';
-                    $html .= '</tr>';
+                $countsStmt = $conn->prepare("SELECT item_key, item_value FROM manufacturing_packaging_checklist WHERE manufacturing_order_id = ? AND section_name = 'after'");
+                $countsStmt->bind_param('i', $orderId);
+                $countsStmt->execute();
+                $counts = array_column($countsStmt->get_result()->fetch_all(MYSQLI_ASSOC), 'item_value', 'item_key');
+                $countsStmt->close();
+                foreach (manufacturing_packaging_count_labels() as $key => $label) {
+                    $value = $counts[$key] ?? '';
+                    $html .= '<tr><td width="60%">' . htmlspecialchars($label) . '</td><td width="40%">' . htmlspecialchars($value === '' ? '—' : $value) . '</td></tr>';
                 }
                 $html .= '</tbody></table>';
             }
@@ -605,11 +639,7 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
                     $html .= '<h5 style="margin-top:15px;">' . htmlspecialchars($item['item_text']) . '</h5>';
                     $html .= '<div style="margin-bottom:15px;">';
                     foreach ($photos as $photo) {
-                        $absolute = __DIR__ . '/../../' . $photo['path'];
-                        if (!is_file($absolute)) {
-                            continue;
-                        }
-                        $html .= '<img src="' . htmlspecialchars($absolute) . '" style="max-height:140px; margin:4px; border:1px solid #ccc;">';
+                        $html .= manufacturing_report_image_html($photo['path'], $photo['original_name'] ?? 'Load photo') . '<br>';
                     }
                     $html .= '</div>';
                 }
@@ -681,7 +711,7 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
                     }
                     
                     $html .= '<tr>';
-                    $html .= '<td style="text-align:right;"><strong>' . $matLabel . '</strong></td>';
+                    $html .= '<td style="text-align:right;"><strong>' . htmlspecialchars($matLabel) . '</strong></td>';
                     $html .= '<td style="text-align:center;">' . htmlspecialchars($issued ?: '0') . ($issuedNote ? '<br><small>' . htmlspecialchars($issuedNote) . '</small>' : '') . '</td>';
                     $html .= '<td style="text-align:center;">' . htmlspecialchars($used ?: '0') . ($usedNote ? '<br><small>' . htmlspecialchars($usedNote) . '</small>' : '') . '</td>';
                     $html .= '<td style="text-align:center;">' . htmlspecialchars($returned ?: '0') . ($returnedNote ? '<br><small>' . htmlspecialchars($returnedNote) . '</small>' : '') . '</td>';
@@ -741,7 +771,7 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
             if (!empty($deliveryInfo['photo_path'])) {
                 $html .= '<tr>';
                 $html .= '<td style="text-align:right;"><strong>صورة التسليم (Delivery Photo)</strong></td>';
-                $html .= '<td style="text-align:center;">Photo attached: ' . htmlspecialchars(basename($deliveryInfo['photo_path'])) . '</td>';
+                $html .= '<td style="text-align:center;">' . manufacturing_report_image_html($deliveryInfo['photo_path'], 'Delivery photo') . '</td>';
                 $html .= '</tr>';
             }
             
@@ -757,10 +787,10 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
         $html .= '<table><thead><tr><th>Component</th><th>Quantity / Ratio</th><th>Unit</th><th>Notes</th></tr></thead><tbody>';
         if (is_array($components) && count($components) > 0) {
             foreach ($components as $component) {
-                $componentName = htmlspecialchars($component['name'] ?? 'TBD');
+                $componentName = $canViewComponentName ? htmlspecialchars($component['name'] ?? 'TBD') : 'Hidden';
                 $quantity = htmlspecialchars($component['quantity'] ?? ($component['ratio'] ?? ''));
                 $unit = htmlspecialchars($component['unit'] ?? 'N/A');
-                $componentNotes = htmlspecialchars($component['notes'] ?? '-');
+                $componentNotes = $canViewComponentName ? htmlspecialchars($component['notes'] ?? '-') : '-';
                 $html .= "<tr><td>{$componentName}</td><td>{$quantity}</td><td>{$unit}</td><td>{$componentNotes}</td></tr>";
             }
         } else {
@@ -863,7 +893,7 @@ function manufacturing_create_pdf_document($order, $stepKey, $htmlContent) {
     $orderNumber = $order['order_number'] ?? 'order';
     $storageDir = manufacturing_get_storage_path_for_step($orderNumber, $stepKey);
     $timestamp = date('YmdHis');
-    $fileName = "{$orderNumber}_{$stepKey}_{$timestamp}.pdf";
+    $fileName = "{$orderNumber}_{$stepKey}_{$timestamp}_" . bin2hex(random_bytes(6)) . '.pdf';
     $filePath = $storageDir . '/' . $fileName;
 
     require_once __DIR__ . '/../../tcpdf/tcpdf.php';
@@ -921,7 +951,91 @@ function manufacturing_get_documents_by_step($conn, $stepId) {
     return $documents;
 }
 
+/**
+ * Warehouses at the order's location that can receive its finished product,
+ * plus the one to preselect (the saved choice, else the first finished-product store).
+ */
+function manufacturing_get_finished_goods_inventories($conn, array $order) {
+    $locationId = (int)($order['location_id'] ?? 0);
+    $productId = (int)($order['product_id'] ?? 0);
+    if ($locationId <= 0 || $productId <= 0) {
+        return ['inventories' => [], 'default_id' => 0];
+    }
+
+    $stmt = $conn->prepare("SELECT i.id, i.name FROM inventories i
+        WHERE i.location_id = ? AND i.is_active = 1 AND " . getInventoryChannelScopeSql('i') . "
+        ORDER BY i.name");
+    $stmt->bind_param('i', $locationId);
+    $stmt->execute();
+    $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+
+    $inventories = [];
+    foreach ($rows as $row) {
+        if (canAddProductToInventory((int)$row['id'], $productId)) {
+            $inventories[(int)$row['id']] = $row['name'];
+        }
+    }
+
+    $defaultId = (int)($order['inventory_id'] ?? 0);
+    if (!isset($inventories[$defaultId])) {
+        $defaultId = 0;
+        foreach ($inventories as $id => $name) {
+            if (stripos($name, 'FP') === 0 || mb_strpos($name, 'منتج نهائي') !== false) {
+                $defaultId = $id;
+                break;
+            }
+        }
+    }
+
+    return ['inventories' => $inventories, 'default_id' => $defaultId];
+}
+
+/**
+ * Add the order's finished product to stock. Call inside the transaction that
+ * marks the order completed. Runs once per order (finished_goods_added_at guard).
+ * Returns the stock-log row to write after commit, or null if already stocked.
+ */
+function manufacturing_add_finished_goods(PDO $pdo, array $order, int $inventoryId) {
+    $orderId = (int)$order['id'];
+    $productId = (int)($order['product_id'] ?? 0);
+    $quantity = (float)($order['number_of_bottles'] ?? 0);
+    if ($productId <= 0 || $quantity <= 0 || $inventoryId <= 0) {
+        throw new RuntimeException('The order needs a final product, a number of bottles and a warehouse before it can be completed.');
+    }
+
+    $mark = $pdo->prepare("UPDATE manufacturing_orders
+        SET inventory_id = ?, finished_goods_quantity = ?, finished_goods_added_at = NOW()
+        WHERE id = ? AND finished_goods_added_at IS NULL");
+    $mark->execute([$inventoryId, $quantity, $orderId]);
+    if ($mark->rowCount() !== 1) {
+        return null;
+    }
+
+    $before = $pdo->prepare("SELECT quantity FROM inventory_products WHERE inventory_id = ? AND product_id = ? FOR UPDATE");
+    $before->execute([$inventoryId, $productId]);
+    $quantityBefore = (float)($before->fetchColumn() ?: 0);
+    $pdo->prepare("INSERT INTO inventory_products (inventory_id, product_id, quantity) VALUES (?, ?, ?)
+        ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)")
+        ->execute([$inventoryId, $productId, $quantity]);
+
+    return [$inventoryId, $productId, $quantity, $quantityBefore, $quantityBefore + $quantity];
+}
+
+function manufacturing_log_finished_goods($log, array $order) {
+    if (!$log) {
+        return;
+    }
+    [$inventoryId, $productId, $quantity, $before, $after] = $log;
+    logInventoryStockChange($inventoryId, $productId, $quantity, $before, $after,
+        'manufacturing_output', (int)$order['id'], null, null,
+        'Finished product added to stock when manufacturing order ' . $order['order_number'] . ' was completed');
+}
+
 function manufacturing_determine_order_status_from_steps(array $steps) {
+    if (empty($steps)) {
+        return 'pending';
+    }
     $allCompleted = true;
     $anyInProgress = false;
     
@@ -961,12 +1075,10 @@ function manufacturing_get_next_step_label(array $steps) {
 
 function manufacturing_order_status_badge($status) {
     switch ($status) {
-        case 'getting':
-            return ['label' => 'Getting', 'class' => 'bg-info'];
-        case 'preparing':
-            return ['label' => 'Preparing', 'class' => 'bg-warning text-dark'];
-        case 'delivering':
-            return ['label' => 'Delivering', 'class' => 'bg-primary'];
+        case 'pending':
+            return ['label' => 'Pending', 'class' => 'bg-secondary'];
+        case 'in_progress':
+            return ['label' => 'In Progress', 'class' => 'bg-info'];
         case 'completed':
             return ['label' => 'Completed', 'class' => 'bg-success'];
         case 'cancelled':
@@ -1122,7 +1234,7 @@ function manufacturing_detect_order_audit_notes($conn, $order, $steps) {
         $notes[] = [
             'severity' => 'danger',
             'title' => 'Missing material quantity',
-            'detail' => $row['component_name'] . ' needs ' . $row['required_quantity'] . ' ' . $row['unit'] . ', available ' . $row['available_qty'] . '.'
+            'detail' => (hasPermission('manufacturing.component.name.view') ? $row['component_name'] : 'Hidden material') . ' needs ' . $row['required_quantity'] . ' ' . $row['unit'] . ', available ' . $row['available_qty'] . '.'
         ];
     }
     $missingStmt->close();
@@ -1135,7 +1247,7 @@ function manufacturing_detect_order_audit_notes($conn, $order, $steps) {
         $notes[] = [
             'severity' => $row['receipt_status'] === 'rejected' ? 'danger' : 'warning',
             'title' => 'Receipt item not approved',
-            'detail' => $row['component_name'] . ' is ' . ($row['receipt_status'] ?: 'pending') . '.'
+            'detail' => (hasPermission('manufacturing.component.name.view') ? $row['component_name'] : 'Hidden material') . ' is ' . ($row['receipt_status'] ?: 'pending') . '.'
         ];
     }
     $receiptStmt->close();
@@ -1217,7 +1329,7 @@ function manufacturing_detect_order_audit_notes($conn, $order, $steps) {
 function manufacturing_build_full_report_html($conn, $orderId) {
     // Get Order Details
     $orderStmt = $conn->prepare("
-        SELECT mo.*, c.name AS customer_name, f.name AS formula_name, f.description AS formula_description, f.components_json, f.batch_size AS formula_batch_size,
+        SELECT mo.*, c.name AS customer_name, f.name AS formula_name, f.description AS formula_description, f.components_json, f.batch_size AS formula_batch_size, f.batch_unit,
                l.name AS location_name, l.address AS location_address, p.name AS product_name, p.sku AS product_sku,
                bs.name AS bottle_size_name, bs.size AS bottle_size_value, bs.unit AS bottle_size_unit, bs.type AS bottle_size_type,
                creator.name AS created_by_name
@@ -1266,11 +1378,12 @@ function manufacturing_build_full_report_html($conn, $orderId) {
 
     $stepPeople = manufacturing_get_step_people($conn, array_column($steps, 'id'));
     $auditNotes = manufacturing_detect_order_audit_notes($conn, $order, $steps);
-    $relatedPOs = manufacturing_get_related_purchase_orders($conn, $orderId);
+    $relatedPOs = hasPermission('manufacturing.component.name.view') ? manufacturing_get_related_purchase_orders($conn, $orderId) : [];
 
     $orderNumber = htmlspecialchars($order['order_number'] ?? 'UNKNOWN');
     $customerName = htmlspecialchars($order['customer_name'] ?? 'Unknown provider');
-    $formulaName = htmlspecialchars($order['formula_name'] ?? 'Custom formula');
+    $canViewComponentName = hasPermission('manufacturing.component.name.view');
+    $formulaName = $canViewComponentName ? htmlspecialchars($order['formula_name'] ?? 'Custom formula') : 'Protected Formula';
     $priority = htmlspecialchars(ucfirst($order['priority'] ?? 'normal'));
     $dueDate = $order['due_date'] ? htmlspecialchars($order['due_date']) : 'TBD';
 
@@ -1347,7 +1460,7 @@ function manufacturing_build_full_report_html($conn, $orderId) {
     $html .= '<div class="section-header">1. Material Formulation</div>';
     $html .= '<table><thead><tr><th>Component Name</th><th style="width:20%; text-align:center;">Quantity / Ratio</th><th style="width:15%; text-align:center;">Unit</th></tr></thead><tbody>';
     foreach ($formulaComponents as $comp) {
-        $html .= "<tr><td>" . htmlspecialchars($comp['name'] ?? 'TBD') . "</td><td style=\"text-align:center;\">" . htmlspecialchars($comp['quantity'] ?? ($comp['ratio'] ?? '0')) . "</td><td style=\"text-align:center;\">" . htmlspecialchars($comp['unit'] ?? '-') . "</td></tr>";
+        $html .= "<tr><td>" . ($canViewComponentName ? htmlspecialchars($comp['name'] ?? 'TBD') : 'Hidden') . "</td><td style=\"text-align:center;\">" . htmlspecialchars($comp['quantity'] ?? ($comp['ratio'] ?? '0')) . "</td><td style=\"text-align:center;\">" . htmlspecialchars($comp['unit'] ?? '-') . "</td></tr>";
     }
     $html .= '</tbody></table>';
 
@@ -1426,7 +1539,7 @@ function manufacturing_generate_full_order_pdf($conn, $orderId) {
     $storageDir = manufacturing_get_storage_base_path() . '/reports';
     if (!is_dir($storageDir)) mkdir($storageDir, 0777, true);
     
-    $fileName = "Full_Report_{$orderNumber}.pdf";
+    $fileName = "Full_Report_{$orderNumber}_" . bin2hex(random_bytes(6)) . '.pdf';
     $filePath = $storageDir . '/' . $fileName;
 
     require_once __DIR__ . '/../../tcpdf/tcpdf.php';

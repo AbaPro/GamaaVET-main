@@ -77,16 +77,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $batchSize    = isset($_POST['batch_size'])    ? floatval($_POST['batch_size']) : 0;
     $dueDate      = $_POST['due_date'] ?? null;
     $orderNotes   = trim($_POST['notes'] ?? '');
-    $status       = $_POST['status'] ?? 'getting';
+    // Status is driven by the steps on the order page; this form can only cancel.
+    $status = !empty($_POST['cancel_order']) ? 'cancelled' : $order['status'];
 
     $allowedPriorities = ['normal', 'rush', 'critical'];
     if (!in_array($priority, $allowedPriorities, true)) {
         $priority = 'normal';
-    }
-
-    $allowedStatuses = ['getting', 'preparing', 'delivering', 'completed', 'cancelled'];
-    if (!in_array($status, $allowedStatuses, true)) {
-        $status = 'getting';
     }
 
     $productIsValid = false;
@@ -204,7 +200,6 @@ if ($customerResult) {
 }
 
 $priorities = ['normal' => 'Normal', 'rush' => 'Rush', 'critical' => 'Critical'];
-$statuses = ['getting' => 'Getting', 'preparing' => 'Preparing', 'delivering' => 'Delivering', 'completed' => 'Completed', 'cancelled' => 'Cancelled'];
 
 ?>
 
@@ -299,13 +294,16 @@ $statuses = ['getting' => 'Getting', 'preparing' => 'Preparing', 'delivering' =>
                 </div>
                 <div class="col-md-3">
                     <label class="form-label">Status</label>
-                    <select class="form-select" name="status">
-                        <?php foreach ($statuses as $value => $label): ?>
-                            <option value="<?php echo $value; ?>" <?php echo (isset($old['status']) ? $old['status'] : $order['status']) === $value ? 'selected' : ''; ?>>
-                                <?php echo $label; ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
+                    <?php $statusBadge = manufacturing_order_status_badge($order['status']); ?>
+                    <div><span class="badge <?php echo $statusBadge['class']; ?>"><?php echo e($statusBadge['label']); ?></span></div>
+                    <?php if ($order['status'] !== 'cancelled'): ?>
+                        <div class="form-check mt-2">
+                            <input class="form-check-input" type="checkbox" name="cancel_order" value="1" id="cancel_order"
+                                   onchange="if (this.checked && !confirm('Cancel this manufacturing order? Raw materials already taken out at sourcing will be returned to stock, and the order cannot be restarted.')) this.checked = false;">
+                            <label class="form-check-label text-danger" for="cancel_order">Cancel this order</label>
+                        </div>
+                    <?php endif; ?>
+                    <small class="text-muted d-block">The order is completed by finishing its steps on the order page.</small>
                 </div>
                 <div class="col-md-3">
                     <label class="form-label">Due Date</label>

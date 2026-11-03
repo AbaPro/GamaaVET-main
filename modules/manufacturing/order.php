@@ -58,7 +58,7 @@ $orderResult = $orderStmt->get_result();
 $order = $orderResult->fetch_assoc();
 $orderStmt->close();
 
-if (!$order) {
+if (!$order || !canAccessCustomer((int)$order['customer_id'])) {
     setAlert('danger', 'Manufacturing order not found.');
     redirect('index.php');
 }
@@ -233,6 +233,13 @@ $ensureCustomMaterialStmt->bind_param("i", $orderId);
 $ensureCustomMaterialStmt->execute();
 $ensureCustomMaterialStmt->close();
 
+$ensurePartialCarton = $conn->prepare("INSERT IGNORE INTO manufacturing_packaging_checklist
+    (manufacturing_order_id, section_name, item_key, item_text, item_type, item_order)
+    VALUES (?, 'after', 'last_carton_units', 'كسور في اخر كرتونة', 'number', 12)");
+$ensurePartialCarton->bind_param('i', $orderId);
+$ensurePartialCarton->execute();
+$ensurePartialCarton->close();
+
 // Initialize Dispatch Prep checklist if not exists
 $checkDispatchStmt = $conn->prepare("SELECT COUNT(*) as cnt FROM manufacturing_dispatch_checklist WHERE manufacturing_order_id = ?");
 $checkDispatchStmt->bind_param("i", $orderId);
@@ -270,11 +277,12 @@ if ($dispatchCount == 0) {
 
 // Backfill for orders created before the dispatch custom-material field existed.
 $ensureDispatchMaterialStmt = $conn->prepare("
-    INSERT IGNORE INTO manufacturing_dispatch_checklist
+    INSERT INTO manufacturing_dispatch_checklist
         (manufacturing_order_id, section_name, item_key, item_text, item_type, item_value, item_order)
-    VALUES (?, 'details', 'custom_material_name', 'اسم المادة', 'text', 'مطبوعات', 3)
+    SELECT ?, 'details', 'custom_material_name', 'اسم المادة', 'text', 'مطبوعات', 3
+    WHERE NOT EXISTS (SELECT 1 FROM manufacturing_dispatch_checklist WHERE manufacturing_order_id = ? AND item_key = 'custom_material_name')
 ");
-$ensureDispatchMaterialStmt->bind_param("i", $orderId);
+$ensureDispatchMaterialStmt->bind_param("ii", $orderId, $orderId);
 $ensureDispatchMaterialStmt->execute();
 $ensureDispatchMaterialStmt->close();
 
@@ -303,6 +311,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
+    // Orders whose steps are all completed but whose status never became completed.
+    if (($_POST['action'] ?? '') === 'complete_order') {
+        if (!hasPermission('manufacturing.view_step_delivering')) {
+            setAlert('danger', 'You do not have permission to complete this order.');
+            redirect('order.php?id=' . $orderId);
+        }
+        $inventoryId = (int)($_POST['finished_goods_inventory_id'] ?? 0);
+        $options = manufacturing_get_finished_goods_inventories($conn, $order);
+        $finishedGoodsLog = null;
+        try {
+            if (!isset($options['inventories'][$inventoryId])) {
+                throw new DomainException('Choose the warehouse that receives the finished product.');
+            }
+            $pdo->beginTransaction();
+            $lock = $pdo->prepare('SELECT status FROM manufacturing_orders WHERE id = ? FOR UPDATE');
+            $lock->execute([$orderId]);
+            if (in_array($lock->fetchColumn(), ['completed', 'cancelled'], true)) {
+                throw new DomainException('This order is already completed or cancelled.');
+            }
+            $open = $pdo->prepare("SELECT COUNT(*) FROM manufacturing_order_steps WHERE manufacturing_order_id = ? AND status <> 'completed'");
+            $open->execute([$orderId]);
+            if ((int)$open->fetchColumn() > 0) {
+                throw new DomainException('All steps must be completed first.');
+            }
+            $pdo->prepare("UPDATE manufacturing_orders SET status = 'completed', updated_at = NOW() WHERE id = ?")->execute([$orderId]);
+            $finishedGoodsLog = manufacturing_add_finished_goods($pdo, $order, $inventoryId);
+            $pdo->commit();
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            setAlert('danger', 'Cannot complete the order: ' . $e->getMessage());
+            redirect('order.php?id=' . $orderId);
+        }
+        manufacturing_log_finished_goods($finishedGoodsLog, $order);
+        logActivity("Completed manufacturing order {$order['order_number']}", ['order_id' => $orderId, 'inventory_id' => $inventoryId], 'update', 'manufacturing_order', $orderId);
+        setAlert('success', 'Order completed and the finished product was added to stock.');
+        redirect('order.php?id=' . $orderId);
+    }
+
     $stepKey = $_POST['step_key'] ?? '';
     $action = $_POST['action'] ?? 'update';
     $statusInput = $_POST['status'] ?? '';
@@ -322,9 +368,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect('order.php?id=' . $orderId);
     }
 
+    if (!hasPermission('manufacturing.view_step_' . $stepKey)) {
+        setAlert('danger', 'You do not have permission to update this step.');
+        redirect('order.php?id=' . $orderId);
+    }
+
     if ($stepRow['status'] === 'completed') {
         setAlert('danger', 'This manufacturing step is completed and locked. Completed steps cannot be changed.');
         redirect('order.php?id=' . $orderId);
+    }
+
+    if ($order['status'] === 'cancelled') {
+        setAlert('danger', 'This manufacturing order is cancelled. Its steps cannot be changed.');
+        redirect('order.php?id=' . $orderId);
+    }
+
+    // Will this save finish the last open step? Then the finished product goes into stock,
+    // so check the receiving warehouse before anything is written.
+    $finishedGoodsInventoryId = 0;
+    $finishedGoodsQuantity = (float)($order['number_of_bottles'] ?? 0);
+    $completesOrder = false;
+    if ($action !== 'regenerate' && trim($_POST['status'] ?? '') === 'completed' && $order['status'] !== 'completed') {
+        $openStepsStmt = $pdo->prepare("SELECT COUNT(*) FROM manufacturing_order_steps WHERE manufacturing_order_id = ? AND id <> ? AND status <> 'completed'");
+        $openStepsStmt->execute([$orderId, $stepRow['id']]);
+        $completesOrder = (int)$openStepsStmt->fetchColumn() === 0;
+    }
+    if ($completesOrder) {
+        if (empty($order['product_id']) || $finishedGoodsQuantity <= 0) {
+            setAlert('danger', 'Cannot complete the order: it needs a final product and a number of bottles to add to stock.');
+            redirect('order.php?id=' . $orderId);
+        }
+        $finishedGoodsOptions = manufacturing_get_finished_goods_inventories($conn, $order);
+        $finishedGoodsInventoryId = (int)($_POST['finished_goods_inventory_id'] ?? 0);
+        if (!isset($finishedGoodsOptions['inventories'][$finishedGoodsInventoryId])) {
+            setAlert('danger', 'Cannot complete the order: choose the warehouse that receives the finished product.');
+            redirect('order.php?id=' . $orderId);
+        }
     }
 
     // Store component notes for sourcing step (always save notes regardless of status)
@@ -498,26 +577,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($stepKey === 'packaging') {
         $packagingValues = $_POST['packaging_values'] ?? [];
         
-        if (is_array($packagingValues)) {
-            $clearCheckboxStmt = $conn->prepare("
-                UPDATE manufacturing_packaging_checklist
-                SET item_value = ''
-                WHERE manufacturing_order_id = ? AND item_type = 'checkbox'
-            ");
-            $clearCheckboxStmt->bind_param("i", $orderId);
-            $clearCheckboxStmt->execute();
-            $clearCheckboxStmt->close();
-
-            foreach ($packagingValues as $itemKey => $value) {
-                if ($itemKey === 'custom_material_name' && trim($value) === '') {
-                    $value = 'مطبوعات';
-                }
-                // In packaging step, we only update values. Notes are handled in Dispatch Prep.
-                $updatePackagingStmt = $conn->prepare("UPDATE manufacturing_packaging_checklist SET item_value = ? WHERE item_key = ? AND manufacturing_order_id = ?");
-                $updatePackagingStmt->bind_param("ssi", $value, $itemKey, $orderId);
-                $updatePackagingStmt->execute();
-                $updatePackagingStmt->close();
-            }
+        try {
+            if (!is_array($packagingValues)) throw new InvalidArgumentException('Invalid packaging values.');
+            manufacturing_validate_packaging_counts($packagingValues);
+        } catch (InvalidArgumentException $ex) {
+            setAlert('danger', $ex->getMessage());
+            redirect('order.php?id=' . $orderId);
         }
 
         if (!empty($_FILES['packaging_images']) && is_array($_FILES['packaging_images']['name'])
@@ -555,6 +620,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         
         if (is_array($dispatchValues)) {
             foreach ($dispatchValues as $itemKey => $value) {
+                if (array_key_exists($itemKey, manufacturing_packaging_count_labels())) continue;
                 // Skip if it's an image item, as it's handled separately via $_FILES
                 $checkTypeStmt = $conn->prepare("SELECT item_type FROM manufacturing_dispatch_checklist WHERE item_key = ? AND manufacturing_order_id = ? LIMIT 1");
                 $checkTypeStmt->bind_param("si", $itemKey, $orderId);
@@ -921,6 +987,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         $pdo->beginTransaction();
 
+        if ($stepKey === 'packaging') {
+            $lock = $pdo->prepare('SELECT status FROM manufacturing_order_steps WHERE id = ? FOR UPDATE');
+            $lock->execute([$stepRow['id']]);
+            if ($lock->fetchColumn() === 'completed') throw new RuntimeException('This step has already been completed.');
+            $pdo->prepare("UPDATE manufacturing_packaging_checklist SET item_value = '' WHERE manufacturing_order_id = ? AND item_type = 'checkbox'")->execute([$orderId]);
+            $saveValue = $pdo->prepare('UPDATE manufacturing_packaging_checklist SET item_value = ? WHERE item_key = ? AND manufacturing_order_id = ?');
+            foreach ($packagingValues as $itemKey => $value) {
+                if (!is_scalar($value)) throw new InvalidArgumentException('Invalid packaging value.');
+                if ($itemKey === 'custom_material_name' && trim((string)$value) === '') $value = 'مطبوعات';
+                $saveValue->execute([$value, $itemKey, $orderId]);
+            }
+            $adjustmentNote = manufacturing_reconcile_finished_count($pdo, $orderId, (int)($packagingValues['final_product_count'] ?? 0));
+            if ($adjustmentNote) $notesInput = trim($notesInput . "\n" . $adjustmentNote);
+        }
+
+
         if ($hasStepUserColumns) {
             $updateStep = $pdo->prepare("
                 UPDATE manufacturing_order_steps 
@@ -952,19 +1034,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ]);
         }
 
-        $orderStepsStmt = $conn->prepare("SELECT step_key, status FROM manufacturing_order_steps WHERE manufacturing_order_id = ?");
-        $orderStepsStmt->bind_param('i', $orderId);
-        $orderStepsStmt->execute();
-        $stepsForStatus = [];
-        $result = $orderStepsStmt->get_result();
-        while ($row = $result->fetch_assoc()) {
-            $stepsForStatus[] = $row;
-        }
-        $orderStepsStmt->close();
+        // Read through $pdo: the step update above is not committed yet, so the
+        // separate mysqli connection would still see the old step status.
+        $orderStepsStmt = $pdo->prepare("SELECT step_key, status FROM manufacturing_order_steps WHERE manufacturing_order_id = ?");
+        $orderStepsStmt->execute([$orderId]);
+        $stepsForStatus = $orderStepsStmt->fetchAll(PDO::FETCH_ASSOC);
 
         $overallStatus = manufacturing_determine_order_status_from_steps($stepsForStatus);
+        if ($overallStatus === 'completed' && !$completesOrder) {
+            // Never mark completed without stocking the finished product.
+            $overallStatus = 'in_progress';
+        }
         $updateOrder = $pdo->prepare("UPDATE manufacturing_orders SET status = ?, updated_at = NOW() WHERE id = ?");
         $updateOrder->execute([$overallStatus, $orderId]);
+
+        // Order just became completed: add the finished product to the chosen warehouse, once.
+        $finishedGoodsLog = null;
+        if ($overallStatus === 'completed') {
+            $finishedGoodsLog = manufacturing_add_finished_goods($pdo, $order, $finishedGoodsInventoryId);
+        }
 
         // Auto-sync linked sales order status.
         // Uses the MINIMUM (least advanced) status across ALL manufacturing orders
@@ -1024,6 +1112,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdo->rollBack();
         setAlert('danger', 'Unable to save the step: ' . $ex->getMessage());
         redirect('order.php?id=' . $orderId);
+    }
+
+    manufacturing_log_finished_goods($finishedGoodsLog, $order);
+
+    if ($stepKey === 'packaging') {
+        $refresh = $pdo->prepare('SELECT number_of_bottles, batch_size, notes FROM manufacturing_orders WHERE id = ?');
+        $refresh->execute([$orderId]);
+        $order = array_merge($order, $refresh->fetch(PDO::FETCH_ASSOC));
+        $formulaComponents = manufacturing_recalculate_components($order, $formulaComponentsRaw);
     }
 
     $docMessage = '';
@@ -1145,6 +1242,29 @@ $isCompletedOrder = $order['status'] === 'completed';
     </div>
 </div>
 
+<?php if (!empty($steps) && $completedSteps === count($steps) && !in_array($order['status'], ['completed', 'cancelled'], true)
+          && hasPermission('manufacturing.view_step_delivering')): ?>
+    <?php $finishedGoodsOptions = manufacturing_get_finished_goods_inventories($conn, $order); ?>
+    <div class="alert alert-warning">
+        <form method="post" class="d-flex flex-wrap align-items-center gap-2 mb-0">
+            <input type="hidden" name="action" value="complete_order">
+            <span><strong>All steps are completed but the order is not.</strong>
+                Complete it to add <?= (int)($order['number_of_bottles'] ?? 0); ?> × <?= e($order['product_name'] ?? '—'); ?> to stock:</span>
+            <?php if (empty($finishedGoodsOptions['inventories'])): ?>
+                <span class="text-danger">no warehouse at <?= e($order['location_name'] ?? 'this location'); ?> can receive this product.</span>
+            <?php else: ?>
+                <select class="form-select form-select-sm w-auto" name="finished_goods_inventory_id" required>
+                    <option value="">Select warehouse</option>
+                    <?php foreach ($finishedGoodsOptions['inventories'] as $invId => $invName): ?>
+                        <option value="<?= (int)$invId; ?>" <?= $invId === $finishedGoodsOptions['default_id'] ? 'selected' : ''; ?>><?= e($invName); ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <button type="submit" class="btn btn-success btn-sm"><i class="fas fa-check me-1"></i> Complete order</button>
+            <?php endif; ?>
+        </form>
+    </div>
+<?php endif; ?>
+
 <div class="row g-3 mb-4">
     <div class="col-lg-4">
         <div class="card h-100">
@@ -1162,6 +1282,18 @@ $isCompletedOrder = $order['status'] === 'completed';
                 <p class="mb-1"><strong>Batch size:</strong> <?= $batchDisplay; ?></p>
                 <?php if (!empty($order['number_of_bottles'])): ?>
                 <p class="mb-1"><strong>Number of Bottles:</strong> <?= (int)$order['number_of_bottles']; ?></p>
+                <?php endif; ?>
+                <?php if (!empty($order['finished_goods_added_at'])): ?>
+                    <?php
+                    $fgInvStmt = $conn->prepare('SELECT name FROM inventories WHERE id = ?');
+                    $fgInvStmt->bind_param('i', $order['inventory_id']);
+                    $fgInvStmt->execute();
+                    $fgInvName = $fgInvStmt->get_result()->fetch_column() ?: '—';
+                    $fgInvStmt->close();
+                    ?>
+                    <p class="mb-1 text-success"><strong>Added to stock:</strong>
+                        <?= rtrim(rtrim(number_format((float)$order['finished_goods_quantity'], 2, '.', ''), '0'), '.'); ?>
+                        into <?= e($fgInvName); ?> on <?= date('d/m/Y H:i', strtotime($order['finished_goods_added_at'])); ?></p>
                 <?php endif; ?>
                 <p class="mb-1"><strong>Bottle Size:</strong>
                     <?php if ($order['bottle_size_name']): ?>
@@ -1904,6 +2036,7 @@ $isCompletedOrder = $order['status'] === 'completed';
                                         </div>
                                         
                                         <!-- After Packaging -->
+                                        <p class="small text-muted">A final count above the ordered quantity updates the order quantity and linked sales total at the existing unit price, with a note on both orders.</p>
                                         <h6 class="mt-4 mb-3 text-primary">بعد التعبئة</h6>
                                         <div class="row g-3 mb-3">
                                             <?php foreach ($packagingSections['after'] as $item): ?>
@@ -1924,7 +2057,7 @@ $isCompletedOrder = $order['status'] === 'completed';
                                                         <input type="number" class="form-control form-control-sm" 
                                                                name="packaging_values[<?= htmlspecialchars($item['item_key']); ?>]" 
                                                                value="<?= htmlspecialchars($item['item_value'] ?? ''); ?>"
-                                                               placeholder="0" required>
+                                                               placeholder="0" min="0" step="1" <?= $item['item_key'] === 'last_carton_units' ? '' : 'required'; ?>>
                                                     </div>
                                                 <?php elseif ($item['item_type'] === 'text'): ?>
                                                     <div class="col-md-12">
@@ -2114,22 +2247,15 @@ $isCompletedOrder = $order['status'] === 'completed';
                                         <!-- Dispatch Details -->
                                         <h6 class="mt-4 mb-3 text-primary">تفاصيل الشحن (Dispatch Details)</h6>
                                         <div class="row g-3 mb-3">
-                                            <?php foreach ($dispatchSections['details'] as $item): ?>
-                                                <?php
-                                                // The material name is edited inline in the material tracking
-                                                // table below, so it is not repeated here.
-                                                if ($item['item_key'] === 'custom_material_name') {
-                                                    continue;
-                                                }
-                                                ?>
-                                                <div class="col-md-4">
-                                                    <label class="form-label"><?= htmlspecialchars($item['item_text']); ?></label>
-                                                    <input type="number" class="form-control form-control-sm"
-                                                           name="dispatch_values[<?= htmlspecialchars($item['item_key']); ?>]"
-                                                           value="<?= htmlspecialchars($item['item_value'] ?? ''); ?>"
-                                                           placeholder="0" required>
+                                            <?php
+                                            $finishedCounts = array_column($pkgSections['after'], 'item_value', 'item_key');
+                                            foreach (manufacturing_packaging_count_labels() as $key => $label): ?>
+                                                <div class="col-md-3">
+                                                    <label class="form-label"><?= htmlspecialchars($label); ?></label>
+                                                    <input class="form-control form-control-sm" value="<?= htmlspecialchars($finishedCounts[$key] ?? ''); ?>" readonly>
                                                 </div>
                                             <?php endforeach; ?>
+                                            <div class="small text-muted">Counts from Packaging &amp; Labeling, including units in the last partial carton.</div>
                                         </div>
                                         
                                         <!-- Before Loading -->
@@ -2413,6 +2539,36 @@ $isCompletedOrder = $order['status'] === 'completed';
                                         <label class="form-label">Notes for Excel/PDF handoff</label>
                                         <textarea name="notes" class="form-control" rows="3" placeholder="Detail what should travel to the next team."><?= e($stepRow['notes']); ?></textarea>
                                     </div>
+                                    <?php
+                                    // Last open step: completing it completes the order and stocks the finished product.
+                                    $isLastOpenStep = $stepRow['status'] !== 'completed'
+                                        && count(array_filter($steps, fn($s) => $s['status'] !== 'completed' && (int)$s['id'] !== (int)$stepRow['id'])) === 0;
+                                    ?>
+                                    <?php if ($isLastOpenStep && !$isCompletedOrder): ?>
+                                        <?php $finishedGoodsOptions = manufacturing_get_finished_goods_inventories($conn, $order); ?>
+                                        <div class="col-12">
+                                            <div class="border rounded p-3 bg-light">
+                                                <label class="form-label fw-semibold mb-1">Finished goods warehouse</label>
+                                                <p class="text-muted small mb-2">
+                                                    Completing this step completes the order and adds
+                                                    <strong><?= (int)($order['number_of_bottles'] ?? 0); ?></strong> ×
+                                                    <strong><?= e($order['product_name'] ?? '—'); ?></strong> to the warehouse below.
+                                                </p>
+                                                <?php if (empty($finishedGoodsOptions['inventories'])): ?>
+                                                    <div class="text-danger small">
+                                                        No warehouse at <?= e($order['location_name'] ?? 'this location'); ?> can receive this product, so the order cannot be completed yet.
+                                                    </div>
+                                                <?php else: ?>
+                                                    <select class="form-select form-select-sm" name="finished_goods_inventory_id" style="max-width: 420px;">
+                                                        <option value="">Select warehouse</option>
+                                                        <?php foreach ($finishedGoodsOptions['inventories'] as $invId => $invName): ?>
+                                                            <option value="<?= (int)$invId; ?>" <?= $invId === $finishedGoodsOptions['default_id'] ? 'selected' : ''; ?>><?= e($invName); ?></option>
+                                                        <?php endforeach; ?>
+                                                    </select>
+                                                <?php endif; ?>
+                                            </div>
+                                        </div>
+                                    <?php endif; ?>
                                 </div>
                                 <div class="d-flex gap-2">
                                     <button type="submit" name="action" value="update" class="btn btn-primary btn-sm">
@@ -2445,7 +2601,7 @@ $isCompletedOrder = $order['status'] === 'completed';
                                                         <?php endif; ?>
                                                     </div>
                                                 </div>
-                                                <a href="<?= manufacturing_get_document_url($document['file_path']); ?>" target="_blank" class="btn btn-sm btn-outline-primary">
+                                                <a href="<?= $document['type'] === 'pdf' ? 'view_report.php?id=' . $orderId . '&amp;step=' . urlencode($stepRow['step_key']) : manufacturing_get_document_url($document['file_path']); ?>" target="_blank" class="btn btn-sm btn-outline-primary">
                                                     <i class="fas fa-download"></i>
                                                 </a>
                                             </li>

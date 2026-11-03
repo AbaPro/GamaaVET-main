@@ -166,7 +166,7 @@ if (!empty($stepIds)) {
         <select class="form-select" name="status">
             <option value="">All statuses</option>
             <?php
-            $statusOptions = ['getting' => 'Getting', 'preparing' => 'Preparing', 'delivering' => 'Delivering', 'completed' => 'Completed', 'cancelled' => 'Cancelled'];
+            $statusOptions = ['pending' => 'Pending', 'in_progress' => 'In Progress', 'completed' => 'Completed', 'cancelled' => 'Cancelled'];
             foreach ($statusOptions as $code => $label):
             ?>
                 <option value="<?php echo $code; ?>" <?php echo $statusFilter === $code ? 'selected' : ''; ?>>
