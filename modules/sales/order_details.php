@@ -44,7 +44,7 @@ $isDelivered = $order['status'] === 'delivered';
 // Fetch order items
 $stmt = $pdo->prepare("
     SELECT oi.*, p.name AS product_name, p.sku, p.barcode, p.type,
-           (SELECT COALESCE(SUM(quantity), 0) FROM inventory_products WHERE product_id = p.id) as current_stock
+           (SELECT COALESCE(SUM(ip.quantity), 0) FROM inventory_products ip JOIN inventories si ON si.id = ip.inventory_id WHERE ip.product_id = p.id AND (si.system_key IS NULL OR si.system_key <> 'manufacturing_waste')) as current_stock
     FROM order_items oi
     JOIN products p ON oi.product_id = p.id
     WHERE oi.order_id = ?

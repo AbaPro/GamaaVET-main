@@ -10,7 +10,7 @@ function manufacturing_packaging_count_labels(): array {
 }
 
 function manufacturing_validate_packaging_counts(array $values): void {
-    foreach (manufacturing_packaging_count_labels() as $key => $label) {
+    foreach (manufacturing_packaging_count_labels() + ['breakage_count' => 'الكسر: العدد'] as $key => $label) {
         $value = $values[$key] ?? '';
         if ($value === '') continue;
         if (!is_scalar($value) || !preg_match('/^\d+$/D', (string)$value) || (float)$value > 2147483647) {

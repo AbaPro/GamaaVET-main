@@ -963,7 +963,7 @@ function manufacturing_get_finished_goods_inventories($conn, array $order) {
     }
 
     $stmt = $conn->prepare("SELECT i.id, i.name FROM inventories i
-        WHERE i.location_id = ? AND i.is_active = 1 AND " . getInventoryChannelScopeSql('i') . "
+        WHERE i.location_id = ? AND i.is_active = 1 AND i.system_key IS NULL AND " . getInventoryChannelScopeSql('i') . "
         ORDER BY i.name");
     $stmt->bind_param('i', $locationId);
     $stmt->execute();
@@ -997,17 +997,39 @@ function manufacturing_get_finished_goods_inventories($conn, array $order) {
  * Returns the stock-log row to write after commit, or null if already stocked.
  */
 function manufacturing_add_finished_goods(PDO $pdo, array $order, int $inventoryId) {
+    if (!$pdo->inTransaction()) throw new LogicException('Manufacturing stock-in requires a transaction.');
     $orderId = (int)$order['id'];
+    $fresh = $pdo->prepare('SELECT * FROM manufacturing_orders WHERE id = ? FOR UPDATE');
+    $fresh->execute([$orderId]);
+    $order = $fresh->fetch(PDO::FETCH_ASSOC);
+    if (!$order || $order['status'] !== 'completed') throw new RuntimeException('Only completed orders can be stocked.');
+    if (!empty($order['finished_goods_added_at'])) return null;
     $productId = (int)($order['product_id'] ?? 0);
-    $quantity = (float)($order['number_of_bottles'] ?? 0);
-    if ($productId <= 0 || $quantity <= 0 || $inventoryId <= 0) {
+    $countsStmt = $pdo->prepare("SELECT item_key, item_value FROM manufacturing_packaging_checklist WHERE manufacturing_order_id = ? AND item_key IN ('final_product_count', 'breakage_count')");
+    $countsStmt->execute([$orderId]);
+    $counts = $countsStmt->fetchAll(PDO::FETCH_KEY_PAIR);
+    $finalCount = $counts['final_product_count'] ?? '';
+    $breakage = $counts['breakage_count'] ?? '';
+    foreach ([$finalCount, $breakage] as $value) {
+        if ($value !== '' && (!preg_match('/^\d+$/D', (string)$value) || (float)$value > 2147483647)) {
+            throw new RuntimeException('Final product count and breakage must be non-negative whole numbers.');
+        }
+    }
+    // Final count is usable output; breakage is a separate count of the same final product.
+    // Legacy orders without a recorded final count retain their ordered bottle quantity.
+    $quantity = $finalCount !== '' ? (float)$finalCount : (float)($order['number_of_bottles'] ?? 0);
+    $wasteQuantity = $breakage !== '' ? (float)$breakage : 0;
+    if ($productId <= 0 || $quantity < 0 || $quantity + $wasteQuantity <= 0 || $inventoryId <= 0) {
         throw new RuntimeException('The order needs a final product, a number of bottles and a warehouse before it can be completed.');
     }
+    $destination = $pdo->prepare('SELECT id FROM inventories WHERE id = ? AND system_key IS NULL AND is_active = 1');
+    $destination->execute([$inventoryId]);
+    if (!$destination->fetchColumn()) throw new RuntimeException('Choose a normal active warehouse for usable finished products.');
 
     $mark = $pdo->prepare("UPDATE manufacturing_orders
-        SET inventory_id = ?, finished_goods_quantity = ?, finished_goods_added_at = NOW()
+        SET inventory_id = ?, finished_goods_quantity = ?, finished_goods_waste_quantity = ?, finished_goods_added_at = NOW()
         WHERE id = ? AND finished_goods_added_at IS NULL");
-    $mark->execute([$inventoryId, $quantity, $orderId]);
+    $mark->execute([$inventoryId, $quantity, $wasteQuantity, $orderId]);
     if ($mark->rowCount() !== 1) {
         return null;
     }
@@ -1018,6 +1040,22 @@ function manufacturing_add_finished_goods(PDO $pdo, array $order, int $inventory
     $pdo->prepare("INSERT INTO inventory_products (inventory_id, product_id, quantity) VALUES (?, ?, ?)
         ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)")
         ->execute([$inventoryId, $productId, $quantity]);
+
+    if ($wasteQuantity > 0) {
+        // Lock the shared warehouse before reading/updating its quantities and audit log.
+        $wasteInventory = $pdo->query("SELECT id FROM inventories WHERE system_key = 'manufacturing_waste' AND is_active = 1 AND direct_sale IS NULL FOR UPDATE")->fetchColumn();
+        if (!$wasteInventory) throw new RuntimeException('The fixed waste inventory is missing. Apply the manufacturing waste inventory migration.');
+        $before->execute([$wasteInventory, $productId]);
+        $wasteBefore = (float)($before->fetchColumn() ?: 0);
+        $pdo->prepare("INSERT INTO inventory_products (inventory_id, product_id, quantity) VALUES (?, ?, ?)
+            ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)")
+            ->execute([$wasteInventory, $productId, $wasteQuantity]);
+        $pdo->prepare("INSERT INTO inventory_stock_logs
+            (inventory_id, product_id, change_quantity, quantity_before, quantity_after, source_type, source_id, notes, created_by)
+            VALUES (?, ?, ?, ?, ?, 'manufacturing_waste', ?, ?, ?)")
+            ->execute([$wasteInventory, $productId, $wasteQuantity, $wasteBefore, $wasteBefore + $wasteQuantity,
+                $orderId, 'الكسر: العدد — ' . $order['order_number'], $_SESSION['user_id'] ?? null]);
+    }
 
     return [$inventoryId, $productId, $quantity, $quantityBefore, $quantityBefore + $quantity];
 }

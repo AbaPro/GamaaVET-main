@@ -63,6 +63,13 @@ if (!$order || !canAccessCustomer((int)$order['customer_id'])) {
     redirect('index.php');
 }
 
+$outputCountsStmt = $pdo->prepare("SELECT item_key, item_value FROM manufacturing_packaging_checklist WHERE manufacturing_order_id = ? AND item_key IN ('final_product_count', 'breakage_count')");
+$outputCountsStmt->execute([$orderId]);
+$outputCounts = $outputCountsStmt->fetchAll(PDO::FETCH_KEY_PAIR);
+$usableOutputCount = isset($outputCounts['final_product_count']) && $outputCounts['final_product_count'] !== ''
+    ? (float)$outputCounts['final_product_count'] : (float)($order['number_of_bottles'] ?? 0);
+$damagedOutputCount = (float)($outputCounts['breakage_count'] ?? 0);
+
 $formulaComponentsRaw = json_decode($order['components_json'] ?? '[]', true);
 if (!is_array($formulaComponentsRaw)) {
     $formulaComponentsRaw = [];
@@ -386,7 +393,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Will this save finish the last open step? Then the finished product goes into stock,
     // so check the receiving warehouse before anything is written.
     $finishedGoodsInventoryId = 0;
-    $finishedGoodsQuantity = (float)($order['number_of_bottles'] ?? 0);
+    $finishedGoodsQuantity = $usableOutputCount;
     $completesOrder = false;
     if ($action !== 'regenerate' && trim($_POST['status'] ?? '') === 'completed' && $order['status'] !== 'completed') {
         $openStepsStmt = $pdo->prepare("SELECT COUNT(*) FROM manufacturing_order_steps WHERE manufacturing_order_id = ? AND id <> ? AND status <> 'completed'");
@@ -394,7 +401,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $completesOrder = (int)$openStepsStmt->fetchColumn() === 0;
     }
     if ($completesOrder) {
-        if (empty($order['product_id']) || $finishedGoodsQuantity <= 0) {
+        if (empty($order['product_id']) || $finishedGoodsQuantity + $damagedOutputCount <= 0) {
             setAlert('danger', 'Cannot complete the order: it needs a final product and a number of bottles to add to stock.');
             redirect('order.php?id=' . $orderId);
         }
@@ -1249,7 +1256,7 @@ $isCompletedOrder = $order['status'] === 'completed';
         <form method="post" class="d-flex flex-wrap align-items-center gap-2 mb-0">
             <input type="hidden" name="action" value="complete_order">
             <span><strong>All steps are completed but the order is not.</strong>
-                Complete it to add <?= (int)($order['number_of_bottles'] ?? 0); ?> × <?= e($order['product_name'] ?? '—'); ?> to stock:</span>
+                Complete it to add <?= (int)$usableOutputCount; ?> × <?= e($order['product_name'] ?? '—'); ?> to stock:</span>
             <?php if (empty($finishedGoodsOptions['inventories'])): ?>
                 <span class="text-danger">no warehouse at <?= e($order['location_name'] ?? 'this location'); ?> can receive this product.</span>
             <?php else: ?>
@@ -1294,6 +1301,10 @@ $isCompletedOrder = $order['status'] === 'completed';
                     <p class="mb-1 text-success"><strong>Added to stock:</strong>
                         <?= rtrim(rtrim(number_format((float)$order['finished_goods_quantity'], 2, '.', ''), '0'), '.'); ?>
                         into <?= e($fgInvName); ?> on <?= date('d/m/Y H:i', strtotime($order['finished_goods_added_at'])); ?></p>
+                    <?php if (($order['finished_goods_waste_quantity'] ?? 0) > 0): ?>
+                        <p class="mb-1 text-warning"><strong>مخزن الهالك:</strong>
+                            <?= (int)$order['finished_goods_waste_quantity']; ?> damaged units of the final product (الكسر: العدد).</p>
+                    <?php endif; ?>
                 <?php endif; ?>
                 <p class="mb-1"><strong>Bottle Size:</strong>
                     <?php if ($order['bottle_size_name']): ?>
@@ -2036,7 +2047,7 @@ $isCompletedOrder = $order['status'] === 'completed';
                                         </div>
                                         
                                         <!-- After Packaging -->
-                                        <p class="small text-muted">A final count above the ordered quantity updates the order quantity and linked sales total at the existing unit price, with a note on both orders.</p>
+                                        <p class="small text-muted">A final count above the ordered quantity updates the order quantity and linked sales total at the existing unit price, with a note on both orders. عدد المنتج النهائي is usable output; الكسر: العدد is transferred separately to مخزن الهالك when the order completes.</p>
                                         <h6 class="mt-4 mb-3 text-primary">بعد التعبئة</h6>
                                         <div class="row g-3 mb-3">
                                             <?php foreach ($packagingSections['after'] as $item): ?>
@@ -2551,8 +2562,9 @@ $isCompletedOrder = $order['status'] === 'completed';
                                                 <label class="form-label fw-semibold mb-1">Finished goods warehouse</label>
                                                 <p class="text-muted small mb-2">
                                                     Completing this step completes the order and adds
-                                                    <strong><?= (int)($order['number_of_bottles'] ?? 0); ?></strong> ×
+                                                    <strong><?= (int)$usableOutputCount; ?></strong> ×
                                                     <strong><?= e($order['product_name'] ?? '—'); ?></strong> to the warehouse below.
+                                                    <?= (int)$damagedOutputCount; ?> damaged units will go separately to مخزن الهالك.
                                                 </p>
                                                 <?php if (empty($finishedGoodsOptions['inventories'])): ?>
                                                     <div class="text-danger small">

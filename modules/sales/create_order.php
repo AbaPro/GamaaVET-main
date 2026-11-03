@@ -808,9 +808,9 @@ require_once '../../includes/header.php';
                                     <?php
                                     $stock = $pdo->query(
                                         "
-                                        SELECT SUM(quantity) 
-                                        FROM inventory_products 
-                                        WHERE product_id = " . (int)$product['id']
+                                        SELECT SUM(ip.quantity)
+                                        FROM inventory_products ip JOIN inventories si ON si.id = ip.inventory_id
+                                        WHERE (si.system_key IS NULL OR si.system_key <> 'manufacturing_waste') AND ip.product_id = " . (int)$product['id']
                                     )->fetchColumn();
                                     echo $stock ? number_format($stock, 2) : '0.00';
                                     ?>

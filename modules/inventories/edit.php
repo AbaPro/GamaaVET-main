@@ -15,6 +15,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect('index.php');
     }
 
+    $fixed = $pdo->prepare('SELECT system_key FROM inventories WHERE id = ?');
+    $fixed->execute([$id]);
+    if ($fixed->fetchColumn()) {
+        setAlert('danger', 'This is a fixed system inventory and cannot be renamed, moved or deactivated.');
+        redirect('index.php');
+    }
+
     $name = sanitize($_POST['name']);
     $locationId = isset($_POST['location_id']) ? (int)$_POST['location_id'] : 0;
     $description = sanitize($_POST['description']);

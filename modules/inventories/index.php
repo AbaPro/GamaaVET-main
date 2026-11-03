@@ -27,6 +27,13 @@ if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
         setAlert('danger', 'Inventory not found in the currently selected region.');
         redirect('index.php');
     }
+
+    $fixed = $pdo->prepare('SELECT system_key FROM inventories WHERE id = ?');
+    $fixed->execute([$id]);
+    if ($fixed->fetchColumn()) {
+        setAlert('danger', 'This fixed system inventory cannot be deleted.');
+        redirect('index.php');
+    }
     
     // Check if inventory has products
     $check_sql = "SELECT COUNT(*) as count FROM inventory_products WHERE inventory_id = ?";
@@ -120,7 +127,7 @@ $result = $stmt->get_result();
                             <tr>
                                 <td><?php echo $row['id']; ?></td>
                                 <td><?php echo htmlspecialchars($row['name']); ?></td>
-                                <td><?php echo isset($locations[$row['location_id']]) ? htmlspecialchars($locations[$row['location_id']]['name']) : 'N/A'; ?></td>
+                                <td><?php echo ($row['system_key'] ?? '') === 'manufacturing_waste' ? 'All manufacturing locations' : (isset($locations[$row['location_id']]) ? htmlspecialchars($locations[$row['location_id']]['name']) : 'N/A'); ?></td>
                                 <?php if ($login_region !== 'factory'): ?>
                                     <td><?php echo htmlspecialchars($row['region'] ?: 'N/A'); ?></td>
                                 <?php endif; ?>
@@ -134,6 +141,7 @@ $result = $stmt->get_result();
                                     <a href="view.php?id=<?php echo $row['id']; ?>" class="btn btn-sm btn-outline-primary">
                                         <i class="fas fa-eye"></i> View
                                     </a>
+                                    <?php if (empty($row['system_key'])): ?>
                                     <button class="btn btn-sm btn-outline-warning edit-inventory" 
                                             data-id="<?php echo $row['id']; ?>"
                                             data-name="<?php echo htmlspecialchars($row['name']); ?>"
@@ -148,6 +156,9 @@ $result = $stmt->get_result();
                                        onclick="return confirm('Are you sure you want to delete this inventory?')">
                                         <i class="fas fa-trash"></i> Delete
                                     </a>
+                                    <?php else: ?>
+                                        <span class="badge bg-secondary">Fixed inventory</span>
+                                    <?php endif; ?>
                                 </td>
                             </tr>
                         <?php endwhile; ?>
