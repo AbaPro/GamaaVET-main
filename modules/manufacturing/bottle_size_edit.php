@@ -2,7 +2,7 @@
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
 
-if (!hasPermission('manufacturing.view')) {
+if (!hasPermission('manufacturing.view') || !hasPermission('manufacturing.bottle_sizes.view') || !hasPermission('manufacturing.bottle_sizes.manage')) {
     setAlert('danger', 'Access denied.');
     redirect('../../dashboard.php');
 }

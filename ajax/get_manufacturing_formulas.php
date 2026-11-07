@@ -1,13 +1,14 @@
 <?php
 require_once __DIR__ . '/../includes/auth.php';
-require_once __DIR__ . '/../includes/functions.php';
+require_once __DIR__ . '/../includes/formula_access.php';
 
 $providerId = isset($_GET['provider_id']) ? (int)$_GET['provider_id'] : 0;
 
 header('Content-Type: application/json');
+header('Cache-Control: private, no-store');
 
 if (($_SESSION['login_region'] ?? 'factory') !== 'factory'
-    || (!hasPermission('manufacturing.view') && !hasPermission('manufacturing.orders.create'))) {
+    || (!hasPermission('manufacturing.orders.create') && !canViewManufacturingFormula())) {
     http_response_code(403);
     echo json_encode(['success' => false, 'message' => 'Factory access required.', 'formulas' => []]);
     exit;
@@ -38,10 +39,17 @@ $stmt->execute();
 $result = $stmt->get_result();
 $formulas = [];
 while ($row = $result->fetch_assoc()) {
+    if (!canViewManufacturingFormula()) {
+        $formulas[] = ['id' => $row['id'], 'name' => $row['name']];
+        continue;
+    }
     $components = json_decode($row['components_json'] ?? '[]', true);
     $sampleImages = json_decode($row['sample_images_json'] ?? '[]', true);
     $row['components'] = is_array($components) ? $components : [];
-    $row['sample_images'] = is_array($sampleImages) ? $sampleImages : [];
+    $row['sample_images'] = [];
+    foreach (is_array($sampleImages) ? $sampleImages : [] as $sample) {
+        if (!empty($sample['path'])) $row['sample_images'][] = ['path' => manufacturingFormulaSampleUrl((int)$row['id'], $sample['path'])];
+    }
     unset($row['components_json']);
     unset($row['sample_images_json']);
     $formulas[] = $row;

@@ -211,8 +211,8 @@ $canViewComponentName = hasPermission('manufacturing.component.name.view');
                                         <div class="d-flex flex-wrap gap-1 mt-2">
                                             <?php foreach (array_slice($sampleImages, 0, 3) as $sampleImage): ?>
                                                 <?php if (empty($sampleImage['path'])) continue; ?>
-                                                <a href="../../<?= htmlspecialchars($sampleImage['path']); ?>" target="_blank">
-                                                    <img src="../../<?= htmlspecialchars($sampleImage['path']); ?>" class="rounded border" style="width:42px;height:42px;object-fit:cover;" alt="Formula sample">
+                                                <a href="<?= htmlspecialchars(manufacturingFormulaSampleUrl((int)$formula['id'], $sampleImage['path'])); ?>" target="_blank">
+                                                    <img src="<?= htmlspecialchars(manufacturingFormulaSampleUrl((int)$formula['id'], $sampleImage['path'])); ?>" class="rounded border" style="width:42px;height:42px;object-fit:cover;" alt="Formula sample">
                                                 </a>
                                             <?php endforeach; ?>
                                         </div>

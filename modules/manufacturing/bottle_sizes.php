@@ -3,7 +3,7 @@ require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
 require_once __DIR__ . '/deletion_approval.php';
 
-if (!hasPermission('manufacturing.view')) {
+if (!hasPermission('manufacturing.view') || !hasPermission('manufacturing.bottle_sizes.view')) {
     setAlert('danger', 'Access denied.');
     redirect('../../dashboard.php');
 }
@@ -47,9 +47,9 @@ if ($result) {
             <i class="fas fa-arrow-left me-1"></i> Back to Orders
         </a>
         <?= activityLogLink('bottle_size'); ?>
-        <a href="bottle_size_edit.php" class="btn btn-primary">
+        <?php if (hasPermission('manufacturing.bottle_sizes.manage')): ?><a href="bottle_size_edit.php" class="btn btn-primary">
             <i class="fas fa-plus me-2"></i> New Bottle Size
-        </a>
+        </a><?php endif; ?>
     </div>
 </div>
 
@@ -111,10 +111,10 @@ if ($result) {
                                 </td>
                                 <td>
                                     <div class="btn-group">
-                                        <a href="bottle_size_edit.php?id=<?= $size['id']; ?>" class="btn btn-sm btn-outline-warning">
+                                        <?php if (hasPermission('manufacturing.bottle_sizes.manage')): ?><a href="bottle_size_edit.php?id=<?= $size['id']; ?>" class="btn btn-sm btn-outline-warning">
                                             <i class="fas fa-edit me-1"></i> Edit
-                                        </a>
-                                        <?php if (canRequestManufacturingDeletion()): ?>
+                                        </a><?php endif; ?>
+                                        <?php if (canRequestManufacturingDeletion() && hasPermission('manufacturing.bottle_sizes.manage')): ?>
                                             <a href="javascript:void(0)" class="btn btn-sm btn-outline-danger"
                                                onclick="confirmDelete(<?= $size['id']; ?>, '<?= htmlspecialchars($size['name']); ?>')">
                                                 <i class="fas fa-trash me-1"></i> Request Deletion

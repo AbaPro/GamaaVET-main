@@ -1,6 +1,9 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+require_once __DIR__ . '/request.php';
+
+inventoryValidateRequest();
 
 if (!hasPermission('inventories.edit')) {
     setAlert('danger', 'You do not have permission to access this page.');
@@ -16,7 +19,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     $product_id = sanitize($_POST['product_id']);
-    $quantity = sanitize($_POST['quantity']);
+    $quantity = $_POST['quantity'] ?? '';
+    if (!is_scalar($quantity) || !is_numeric($quantity) || !is_finite((float)$quantity) || (float)$quantity < 0 || (float)$quantity > 9999999999.99) {
+        setAlert('danger', 'Enter a valid non-negative stock quantity.');
+        redirect("view.php?id=$inventory_id");
+    }
+    $quantity = (float)$quantity;
     if (!canAddProductToInventory($inventory_id, $product_id)) {
         setAlert('danger', 'This product is not available in the selected channel.');
         redirect("view.php?id=$inventory_id");

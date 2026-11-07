@@ -1,20 +1,23 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+require_once __DIR__ . '/request.php';
+
+inventoryValidateRequest();
 
 if (!hasPermission('inventories.delete')) {
     setAlert('danger', 'You do not have permission to access this page.');
     redirect('../../dashboard.php');
 }
 
-if (!isset($_GET['inventory_id']) || !is_numeric($_GET['inventory_id']) || 
-    !isset($_GET['product_id']) || !is_numeric($_GET['product_id'])) {
+if (!isset($_POST['inventory_id']) || !is_numeric($_POST['inventory_id']) ||
+    !isset($_POST['product_id']) || !is_numeric($_POST['product_id'])) {
     setAlert('danger', 'Invalid request parameters.');
     redirect('index.php');
 }
 
-$inventory_id = (int)$_GET['inventory_id'];
-$product_id = sanitize($_GET['product_id']);
+$inventory_id = (int)$_POST['inventory_id'];
+$product_id = sanitize($_POST['product_id']);
 
 if (!canAccessInventory($inventory_id) || !canAccessProduct($product_id)) {
     setAlert('danger', 'Inventory not found in the currently selected region.');

@@ -479,7 +479,7 @@ foreach ($bottleSizes as $bs) {
             html += '<div class="d-flex flex-wrap gap-2 my-2">';
             formula.sample_images.forEach(function (image) {
                 if (!image.path) return;
-                const imagePath = '../../' + escapeForAttr(image.path);
+                const imagePath = escapeForAttr(image.path);
                 html += '<a href="' + imagePath + '" target="_blank"><img src="' + imagePath + '" class="rounded border" style="width:64px;height:64px;object-fit:cover;" alt="Formula sample"></a>';
             });
             html += '</div>';

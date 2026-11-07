@@ -9,7 +9,7 @@ $productId = isset($_GET['product_id']) ? (int)$_GET['product_id'] : 0;
 header('Content-Type: application/json');
 
 if (($_SESSION['login_region'] ?? 'factory') !== 'factory'
-    || (!hasPermission('manufacturing.view') && !hasPermission('manufacturing.orders.create'))) {
+    || (!hasPermission('manufacturing.packaging_options.view') && !hasPermission('manufacturing.orders.create'))) {
     http_response_code(403);
     echo json_encode(['success' => false, 'message' => 'Factory access required.', 'options' => []]);
     exit;

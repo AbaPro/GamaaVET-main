@@ -5,7 +5,7 @@ require_once __DIR__ . '/lib.php';
 require_once __DIR__ . '/sourcing_planning.php';
 
 if (($_SESSION['login_region'] ?? 'factory') !== 'factory'
-    || !hasPermission('manufacturing.view') || !hasPermission('manufacturing.view_step_sourcing')) {
+    || !hasPermission('manufacturing.view') || !canAccessManufacturingStep('sourcing')) {
     http_response_code(403);
     exit('Access denied.');
 }

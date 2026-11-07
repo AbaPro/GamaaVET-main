@@ -1,0 +1,4 @@
+RewriteEngine On
+# Sensitive uploads must pass PHP authorization; old/copied static links are denied.
+RewriteRule ^assets/uploads/manufacturing/formula_samples(?:/|$) - [F,NC,L]
+RewriteRule ^assets/uploads/manufacturing/.*\.(pdf|xlsx?|xlsm)$ - [F,NC,L]

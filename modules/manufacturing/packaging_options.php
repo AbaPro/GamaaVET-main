@@ -3,7 +3,7 @@ require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
 require_once __DIR__ . '/deletion_approval.php';
 
-if (!hasPermission('manufacturing.view')) {
+if (!hasPermission('manufacturing.view') || !hasPermission('manufacturing.packaging_options.view')) {
     setAlert('danger', 'Access denied.');
     redirect('../../dashboard.php');
 }
@@ -80,9 +80,9 @@ if ($result) {
             <i class="fas fa-arrow-left me-1"></i> Back to Orders
         </a>
         <?= activityLogLink('packaging_option'); ?>
-        <a href="packaging_option_edit.php" class="btn btn-primary">
+        <?php if (hasPermission('manufacturing.packaging_options.manage')): ?><a href="packaging_option_edit.php" class="btn btn-primary">
             <i class="fas fa-plus me-2"></i> New Packaging Option
-        </a>
+        </a><?php endif; ?>
     </div>
 </div>
 
@@ -179,10 +179,10 @@ if ($result) {
                                 <td><?= date('Y-m-d', strtotime($opt['created_at'])); ?></td>
                                 <td>
                                     <div class="btn-group">
-                                        <a href="packaging_option_edit.php?id=<?= $opt['id']; ?>" class="btn btn-sm btn-outline-warning">
+                                        <?php if (hasPermission('manufacturing.packaging_options.manage')): ?><a href="packaging_option_edit.php?id=<?= $opt['id']; ?>" class="btn btn-sm btn-outline-warning">
                                             <i class="fas fa-edit me-1"></i> Edit
-                                        </a>
-                                        <?php if (canRequestManufacturingDeletion()): ?>
+                                        </a><?php endif; ?>
+                                        <?php if (canRequestManufacturingDeletion() && hasPermission('manufacturing.packaging_options.manage')): ?>
                                             <a href="javascript:void(0)" class="btn btn-sm btn-outline-danger"
                                                onclick="confirmDelete(<?= $opt['id']; ?>, '<?= htmlspecialchars($opt['name']); ?>')">
                                                 <i class="fas fa-trash me-1"></i> Request Deletion

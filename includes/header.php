@@ -134,10 +134,10 @@
                 ['label' => 'Orders List', 'icon' => 'fa-list', 'url' => 'modules/manufacturing/', 'show' => true],
                 ['label' => 'Sourcing & Procurement', 'icon' => 'fa-boxes-stacked', 'url' => 'modules/manufacturing/sourcing_list.php', 'show' => hasPermission('manufacturing.view_step_sourcing')],
                 ['label' => 'Deletion Requests', 'icon' => 'fa-check-circle', 'url' => 'modules/manufacturing/deletion_requests.php', 'show' => hasPermission('manufacturing.deletions.request') || hasPermission('manufacturing.deletions.approve')],
-                ['label' => 'Formulas', 'icon' => 'fa-flask', 'url' => 'modules/manufacturing/formulas.php', 'show' => true],
+                ['label' => 'Formulas', 'icon' => 'fa-flask', 'url' => 'modules/manufacturing/formulas.php', 'show' => hasPermission('manufacturing.formula.view_all')],
                 ['label' => 'Formula Templates', 'icon' => 'fa-layer-group', 'url' => 'modules/manufacturing/formula_templates.php', 'show' => hasPermission('manufacturing.formula.view_all')],
-                ['label' => 'Bottle Sizes', 'icon' => 'fa-wine-bottle', 'url' => 'modules/manufacturing/bottle_sizes.php', 'show' => true],
-                ['label' => 'Packaging Options', 'icon' => 'fa-box', 'url' => 'modules/manufacturing/packaging_options.php', 'show' => true],
+                ['label' => 'Bottle Sizes', 'icon' => 'fa-wine-bottle', 'url' => 'modules/manufacturing/bottle_sizes.php', 'show' => hasPermission('manufacturing.bottle_sizes.view')],
+                ['label' => 'Packaging Options', 'icon' => 'fa-box', 'url' => 'modules/manufacturing/packaging_options.php', 'show' => hasPermission('manufacturing.packaging_options.view')],
                 ['label' => 'New Order', 'icon' => 'fa-plus', 'url' => 'modules/manufacturing/create.php', 'show' => hasPermission('manufacturing.orders.create')],
             ]],
             ['key' => 'users', 'label' => 'Users', 'icon' => 'fa-users', 'show' => ($canManageUsers || $canViewActivityLogs) && $isFactory, 'items' => [

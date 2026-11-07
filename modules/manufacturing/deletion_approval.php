@@ -41,6 +41,13 @@ function canRequestManufacturingDeletion() {
 }
 
 function manufacturingDeletionCheckAccess($type) {
+    if (in_array($type, ['formula', 'template'], true) && !canViewManufacturingFormula()) {
+        throw new DomainException('Formula access and unlocked formulas are required.');
+    }
+    $resource = ['bottle_size' => 'bottle_sizes', 'packaging_option' => 'packaging_options'][$type] ?? null;
+    if ($resource && (!hasPermission('manufacturing.' . $resource . '.view') || !hasPermission('manufacturing.' . $resource . '.manage'))) {
+        throw new DomainException('Resource management permission is required.');
+    }
     if (($_SESSION['login_region'] ?? 'factory') !== 'factory'
         || !hasPermission('manufacturing.view') || !hasPermission('manufacturing.delete')) {
         throw new DomainException('Manufacturing deletion permission is required.');

@@ -1,6 +1,8 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+require_once __DIR__ . '/request.php';
+require_once '../../includes/formula_access.php';
 
 if (!hasPermission('inventories.view')) {
     setAlert('danger', 'You do not have permission to access this page.');
@@ -169,6 +171,9 @@ $ariaSort = static function (string $column) use ($sortBy, $sortDir): string {
     </h2>
     <div>
         <?= activityLogLink('inventory', $inventory_id); ?>
+        <?php if (($inventory['system_key'] ?? '') === 'manufacturing_waste' && canViewManufacturingAudit()): ?>
+        <a href="../manufacturing/waste_reconciliation.php" class="btn btn-outline-warning">Legacy waste reconciliation</a>
+        <?php endif; ?>
         <a href="upload.php?inventory_id=<?php echo $inventory_id; ?>" class="btn btn-outline-primary">
             <i class="fas fa-file-upload"></i> Bulk Upload
         </a>
@@ -222,9 +227,9 @@ $ariaSort = static function (string $column) use ($sortBy, $sortDir): string {
     <div class="card-header d-flex justify-content-between align-items-center">
         <h5 class="card-title mb-0">Inventory Items</h5>
         <div id="bulkActions" class="d-none">
-            <button type="button" class="btn btn-sm btn-danger" id="btnBulkDelete">
+            <?php if (hasPermission('inventories.delete')): ?><button type="button" class="btn btn-sm btn-danger" id="btnBulkDelete">
                 <i class="fas fa-trash me-1"></i> Bulk Remove (<span id="selectedCount">0</span>)
-            </button>
+            </button><?php endif; ?>
         </div>
     </div>
     <div class="card-body">
@@ -346,19 +351,19 @@ $ariaSort = static function (string $column) use ($sortBy, $sortDir): string {
                                     <?php endif; ?>
                                 </td>
                                 <td>
-                                    <button class="btn btn-sm btn-outline-primary edit-product" 
+                                    <?php if (hasPermission('inventories.edit')): ?><button type="button" class="btn btn-sm btn-outline-primary edit-product"
                                             data-id="<?php echo $product['id']; ?>"
                                             data-name="<?php echo htmlspecialchars($product['name']); ?>"
                                             data-quantity="<?php echo $product['quantity']; ?>">
                                         <i class="fas fa-edit"></i> Edit
                                     </button>
-                                    <button type="button" class="btn btn-sm btn-outline-danger remove-product"
+                                    <?php endif; ?><?php if (hasPermission('inventories.delete')): ?><button type="button" class="btn btn-sm btn-outline-danger remove-product"
                                             data-product-id="<?php echo $product['id']; ?>"
                                             data-product-name="<?php echo htmlspecialchars($product['name']); ?>"
                                             data-inventory-id="<?php echo $inventory_id; ?>"
-                                            onclick="event.stopPropagation()">
+>
                                         <i class="fas fa-trash"></i> Remove
-                                    </button>
+                                    </button><?php endif; ?>
                                 </td>
                             </tr>
                         <?php endwhile; ?>
@@ -433,6 +438,7 @@ $ariaSort = static function (string $column) use ($sortBy, $sortDir): string {
                             <option value="">-- Select Product --</option>
                             <?php
                             $eligibleProductScope = getProductChannelScopeSql('p', 'c', 'f');
+                            if (($inventory['system_key'] ?? '') === 'manufacturing_waste') $eligibleProductScope .= " AND p.type = 'material'";
                             $all_products = $conn->query("SELECT p.id, p.name, p.sku, p.type, p.unit, p.customer_id
                                                           FROM products p
                                                           LEFT JOIN customers c ON c.id = p.customer_id
@@ -469,6 +475,7 @@ $ariaSort = static function (string $column) use ($sortBy, $sortDir): string {
     <div class="modal-dialog">
         <div class="modal-content">
             <form action="update_product.php" method="POST">
+<input type="hidden" name="inventory_request_token" value="<?= htmlspecialchars(inventoryRequestToken()); ?>">
                 <input type="hidden" name="inventory_id" value="<?php echo $inventory_id; ?>">
                 <input type="hidden" id="edit_product_id" name="product_id">
                 <div class="modal-header">
@@ -508,7 +515,11 @@ $ariaSort = static function (string $column) use ($sortBy, $sortDir): string {
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <a href="#" id="confirmRemoveBtn" class="btn btn-danger">Remove</a>
+                <form action="delete_product.php" method="post">
+<input type="hidden" name="inventory_request_token" value="<?= htmlspecialchars(inventoryRequestToken()); ?>">
+<input type="hidden" id="remove_inventory_id" name="inventory_id">
+<input type="hidden" id="remove_product_id" name="product_id">
+<button type="submit" id="confirmRemoveBtn" class="btn btn-danger">Remove</button></form>
             </div>
         </div>
     </div>
@@ -565,15 +576,17 @@ $(document).ready(function() {
         var productId = $(this).data('product-id');
         var productName = $(this).data('product-name');
         var inventoryId = $(this).data('inventory-id');
-        var deleteUrl = 'delete_product.php?inventory_id=' + inventoryId + '&product_id=' + productId;
+        $('#remove_inventory_id').val(inventoryId);
+        $('#remove_product_id').val(productId);
 
         $('#removeProductName').text(productName);
-        $('#confirmRemoveBtn').attr('href', deleteUrl);
-        $('#removeProductModal').modal('show');
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('removeProductModal')).show();
     });
 
     // Handle edit button click
-    $('.edit-product').click(function() {
+    $(document).on('click', '.edit-product', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
         var id = $(this).data('id');
         var name = $(this).data('name');
         var quantity = $(this).data('quantity');
@@ -582,7 +595,7 @@ $(document).ready(function() {
         $('#edit_product_name').val(name);
         $('#edit_quantity').val(quantity);
         
-        $('#editProductModal').modal('show');
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('editProductModal')).show();
     });
 
     $('#filter_type, #filter_customer, #product_search').on('change keyup', applyProductFilters);
@@ -650,6 +663,10 @@ $(document).ready(function() {
                 invInput.name = 'inventory_id';
                 invInput.value = '<?= $inventory_id ?>';
                 form.appendChild(invInput);
+                const token = document.createElement('input');
+                token.type = 'hidden'; token.name = 'inventory_request_token';
+                token.value = <?= json_encode(inventoryRequestToken()); ?>;
+                form.appendChild(token);
 
                 selectedIds.forEach(id => {
                     const input = document.createElement('input');

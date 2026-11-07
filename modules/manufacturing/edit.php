@@ -3,7 +3,7 @@ require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
 require_once 'lib.php';
 
-if (!hasPermission('manufacturing.edit')) {
+if (!hasPermission('manufacturing.edit') || !canViewManufacturingTechnicalDetails()) {
     setAlert('danger', 'You do not have permission to access this page.');
     redirect('../../dashboard.php');
 }

@@ -129,12 +129,12 @@ if (!empty($stepIds)) {
         <?php if (hasPermission('manufacturing.view_step_sourcing')): ?>
         <a href="sourcing_list.php" class="btn btn-outline-primary"><i class="fas fa-boxes-stacked me-1"></i> Sourcing &amp; Procurement</a>
         <?php endif; ?>
-        <a href="formulas.php" class="btn btn-outline-primary">
+        <?php if (hasPermission('manufacturing.formula.view_all')): ?><a href="formulas.php" class="btn btn-outline-primary">
             <i class="fas fa-flask me-2"></i> Manage Formulas
-        </a>
-        <a href="create.php" class="btn btn-primary">
+        </a><?php endif; ?>
+        <?php if (hasPermission('manufacturing.orders.create')): ?><a href="create.php" class="btn btn-primary">
             <i class="fas fa-plus me-2"></i> New Manufacturing Order
-        </a>
+        </a><?php endif; ?>
         <a href="instructions.html" class="btn btn-outline-secondary" target="_blank">
             <i class="fas fa-book me-1"></i> Workflow instructions
         </a>
@@ -187,7 +187,7 @@ if (!empty($stepIds)) {
 <div class="card">
     <div class="card-body p-0">
         <div class="table-responsive">
-            <table class="table table-hover mb-0 js-datatable" id="manufacturingTable" data-table-order='[[0,"desc"]]' data-table-non-orderable='[7,8,9,10]'>
+            <table class="table table-hover mb-0 js-datatable" id="manufacturingTable" data-table-order='[[0,"desc"]]' data-table-non-orderable='<?= canViewManufacturingAudit() ? '[7,8,9,10]' : '[7,8,9]'; ?>'>
                 <thead class="table-light">
                     <tr>
                         <th>Order #</th>
@@ -197,7 +197,7 @@ if (!empty($stepIds)) {
                         <th>Priority</th>
                         <th>Status</th>
                         <th>Next Step</th>
-                        <th>Points to Check</th>
+                        <?php if (canViewManufacturingAudit()): ?><th>Points to Check</th><?php endif; ?>
                         <th>Progress</th>
                         <th>Docs</th>
                         <th>Actions</th>
@@ -226,13 +226,13 @@ if (!empty($stepIds)) {
                                 <td><?= htmlspecialchars($order['order_number']); ?></td>
                                 <td><?= htmlspecialchars($order['customer_name']); ?></td>
                                 <td><?= htmlspecialchars($order['product_name'] ?? $order['packaging_product_name'] ?? 'N/A'); ?></td>
-                                <td><?= htmlspecialchars($order['formula_name']); ?></td>
+                                <td><?= canViewManufacturingFormula() ? htmlspecialchars($order['formula_name']) : 'Protected formula'; ?></td>
                                 <td><?= ucfirst(htmlspecialchars($order['priority'])); ?></td>
                                 <td>
                                     <span class="badge <?= $badge['class']; ?> text-uppercase"><?= $badge['label']; ?></span>
                                 </td>
                                 <td><?= htmlspecialchars($nextStepLabel); ?></td>
-                                <td>
+                                <?php if (canViewManufacturingAudit()): ?><td>
                                     <?php if (!empty($auditNotes)): ?>
                                         <span class="badge <?= $dangerCount > 0 ? 'bg-danger' : 'bg-warning text-dark'; ?>">
                                             <?= count($auditNotes); ?> point<?= count($auditNotes) === 1 ? '' : 's'; ?>
@@ -240,7 +240,7 @@ if (!empty($stepIds)) {
                                     <?php else: ?>
                                         <span class="badge bg-success">Clear</span>
                                     <?php endif; ?>
-                                </td>
+                                </td><?php endif; ?>
                                 <td>
                                     <div class="progress" style="height:6px;">
                                         <div class="progress-bar" role="progressbar" style="width: <?= $progressPercent; ?>%;" aria-valuenow="<?= $progressPercent; ?>" aria-valuemin="0" aria-valuemax="100"></div>
@@ -255,7 +255,7 @@ if (!empty($stepIds)) {
                                         <a href="order.php?id=<?= $order['id']; ?>" class="btn btn-sm btn-outline-primary">
                                             <i class="fas fa-eye me-1"></i> View
                                         </a>
-                                        <?php if ($order['status'] !== 'completed'): ?>
+                                        <?php if ($order['status'] !== 'completed' && hasPermission('manufacturing.edit') && canViewManufacturingTechnicalDetails()): ?>
                                             <a href="edit.php?id=<?= $order['id']; ?>" class="btn btn-sm btn-outline-warning">
                                                 <i class="fas fa-edit me-1"></i> Edit
                                             </a>
@@ -298,7 +298,7 @@ if (!empty($stepIds)) {
                     emptyTable: 'No manufacturing orders found.'
                 },
                 columnDefs: [
-                    { orderable: false, targets: [7, 8, 9, 10] }
+                    { orderable: false, targets: <?= canViewManufacturingAudit() ? '[7, 8, 9, 10]' : '[7, 8, 9]'; ?> }
                 ]
             });
         }

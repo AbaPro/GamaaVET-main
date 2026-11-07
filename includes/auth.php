@@ -27,7 +27,7 @@ if (isset($_POST['login'])) {
         if (password_verify($password, $user['password'])) {
             session_regenerate_id(true);
             // Do not carry another account's role or permissions into this login.
-            unset($_SESSION['role_id'], $_SESSION['role_slug'], $_SESSION['user_role'], $_SESSION['permissions'], $_SESSION['login_region']);
+            unset($_SESSION['role_id'], $_SESSION['role_slug'], $_SESSION['user_role'], $_SESSION['permissions'], $_SESSION['login_region'], $_SESSION['formula_unlocked'], $_SESSION['formula_password_version']);
             $_SESSION['user_id'] = $user['id'];
             $_SESSION['user_name'] = $user['name'];
             $_SESSION['user_email'] = $user['email'];

@@ -96,12 +96,14 @@ try {
     $photos = $conn->real_escape_string(json_encode([['path' => $imagePath, 'original_name' => 'Load image']]));
     $conn->query("INSERT INTO manufacturing_dispatch_checklist (manufacturing_order_id,section_name,item_key,item_text,item_type,item_value) VALUES ($id,'before_loading','load_photographed','Load photo','image','$photos')");
     $conn->query("INSERT INTO manufacturing_delivery_info (manufacturing_order_id,photo_path) VALUES ($id,'$imagePath')");
+    $_SESSION['permissions'] = ['manufacturing.orders.technical_details.view', 'manufacturing.view_step_packaging', 'manufacturing.view_step_dispatch', 'manufacturing.view_step_delivering'];
     $html = manufacturing_build_full_report_html($conn, $id);
     checkPackaging(!str_contains($html, 'SECRET-MATERIAL-REGRESSION') && !str_contains($html, 'SECRET-FORMULA-REGRESSION'), 'Unauthorized final report and audit hide material and formula names');
     checkPackaging(!str_contains($html, '999999') && !str_contains($html, 'Repeated material'), 'Dispatch report ignores stale counts and repeated custom-material rows');
-    checkPackaging(substr_count($html, 'data:image/jpeg;base64,') === 4, 'Preparation, packaging, dispatch and delivery embed actual images');
+    checkPackaging(substr_count($html, 'data:image/jpeg;base64,') === 3, 'Only permitted packaging, dispatch and delivery steps embed images');
     checkPackaging(substr_count($html, 'كسور في اخر كرتونة') === 2, 'Partial-carton field appears in packaging and dispatch reports');
-    $_SESSION['permissions'] = ['manufacturing.component.name.view'];
+    $_SESSION['permissions'] = ['manufacturing.component.name.view', 'manufacturing.formula.view_all', 'manufacturing.orders.technical_details.view', 'manufacturing.view_step_preparation', 'manufacturing.view_step_packaging', 'manufacturing.view_step_dispatch', 'manufacturing.view_step_delivering'];
+    $_SESSION['formula_unlocked'] = true; $_SESSION['formula_password_version'] = formulaPasswordVersion();
     $html = manufacturing_build_full_report_html($conn, $id);
     checkPackaging(str_contains($html, 'SECRET-MATERIAL-REGRESSION</td><td style="text-align:center;">10</td>'), 'Final report converts 2000 × 100ml against 100L formula to 10kg');
     require_once __DIR__ . '/../tcpdf/tcpdf.php';

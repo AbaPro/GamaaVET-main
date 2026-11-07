@@ -3,6 +3,11 @@ require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
 require_once 'lib.php';
 
+header('Cache-Control: private, no-store');
+if (($_SESSION['login_region'] ?? 'factory') !== 'factory' || !hasPermission('manufacturing.view')) {
+    http_response_code(403); exit('Manufacturing access required.');
+}
+$format = ($_GET['format'] ?? 'pdf') === 'excel' ? 'excel' : 'pdf';
 $stepKey = $_GET['step'] ?? '';
 $definitions = manufacturing_get_step_definitions();
 if (!is_string($stepKey) || ($stepKey !== '' && !isset($definitions[$stepKey]))) {
@@ -10,7 +15,7 @@ if (!is_string($stepKey) || ($stepKey !== '' && !isset($definitions[$stepKey])))
     redirect('index.php');
 }
 // Step downloads are rendered for the viewer rather than reusing another user's export.
-if ($stepKey === '' ? !hasPermission('manufacturing.view_report') : !hasPermission('manufacturing.view_step_' . $stepKey)) {
+if ($stepKey === '' ? (!hasPermission('manufacturing.view_report') || !canViewManufacturingTechnicalDetails()) : !canAccessManufacturingStep($stepKey)) {
     setAlert('danger', 'You do not have permission to view this report.');
     redirect('index.php');
 }
@@ -51,12 +56,12 @@ try {
         if (!$step) throw new RuntimeException('Step not found.');
         $components = manufacturing_recalculate_components($order, json_decode($order['components_json'] ?? '[]', true));
         $html = manufacturing_build_step_document_html($order, $step, ['name' => $order['formula_name']], $components, $step['notes'], manufacturing_get_step_label($stepKey), $conn);
-        $payload = manufacturing_create_pdf_document($order, $stepKey, $html);
+        $payload = $format === 'excel' ? manufacturing_create_excel_document($order, $stepKey, $html) : manufacturing_create_pdf_document($order, $stepKey, $html);
         $pdfPath = __DIR__ . '/../../' . $payload['relative_path'];
     }
     
     if (file_exists($pdfPath)) {
-        header('Content-Type: application/pdf');
+        header('Content-Type: ' . ($format === 'excel' && $stepKey !== '' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'application/pdf'));
         header('Content-Disposition: inline; filename="' . basename($pdfPath) . '"');
         header('Content-Transfer-Encoding: binary');
         header('Accept-Ranges: bytes');

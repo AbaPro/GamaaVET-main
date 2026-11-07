@@ -528,8 +528,8 @@ if ($formula && !empty($formula['sample_images_json'])) {
                                 <?php if (empty($image['path'])) continue; ?>
                                 <div class="col-md-4">
                                     <div class="border rounded p-2 h-100">
-                                        <a href="../../<?= htmlspecialchars($image['path']); ?>" target="_blank">
-                                            <img src="../../<?= htmlspecialchars($image['path']); ?>" class="img-fluid rounded mb-2" alt="Formula sample">
+                                        <a href="<?= htmlspecialchars(manufacturingFormulaSampleUrl((int)$formula['id'], $image['path'])); ?>" target="_blank">
+                                            <img src="<?= htmlspecialchars(manufacturingFormulaSampleUrl((int)$formula['id'], $image['path'])); ?>" class="img-fluid rounded mb-2" alt="Formula sample">
                                         </a>
                                         <div class="form-check small">
                                             <input class="form-check-input" type="checkbox" name="remove_sample_images[]" value="<?= htmlspecialchars($image['path']); ?>" id="remove_sample_<?= md5($image['path']); ?>">

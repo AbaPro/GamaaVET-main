@@ -50,3 +50,43 @@ function areFormulasUnlocked() {
     }
     return true;
 }
+
+// Use the same policy for HTML, JSON, media and generated handoff documents.
+function canViewManufacturingFormula() {
+    return hasPermission('manufacturing.formula.view_all') && areFormulasUnlocked();
+}
+
+function canViewManufacturingTechnicalDetails() {
+    return hasPermission('manufacturing.orders.technical_details.view');
+}
+
+function canViewManufacturingAudit() {
+    return hasPermission('manufacturing.audit.view') && canViewManufacturingTechnicalDetails()
+        && canViewManufacturingFormula();
+}
+
+function canAccessManufacturingStep($step) {
+    if (!hasPermission('manufacturing.view_step_' . $step)) return false;
+    if (in_array($step, ['sourcing', 'receipt', 'preparation'], true)) {
+        return canViewManufacturingTechnicalDetails() && canViewManufacturingFormula();
+    }
+    return !in_array($step, ['quality', 'packaging'], true) || canViewManufacturingTechnicalDetails();
+}
+
+function manufacturingCsrfToken() {
+    if (empty($_SESSION['manufacturing_csrf'])) $_SESSION['manufacturing_csrf'] = bin2hex(random_bytes(32));
+    return $_SESSION['manufacturing_csrf'];
+}
+
+function manufacturingValidateCsrf() {
+    $token = $_POST['manufacturing_csrf'] ?? '';
+    if (!is_string($token) || !hash_equals(manufacturingCsrfToken(), $token)) {
+        http_response_code(403);
+        exit('Invalid request token. Refresh the page and try again.');
+    }
+}
+
+function manufacturingFormulaSampleUrl($formulaId, $path) {
+    return rtrim(BASE_URL, '/') . '/modules/manufacturing/formula_sample.php?id=' . (int)$formulaId
+        . '&image=' . hash('sha256', (string)$path);
+}

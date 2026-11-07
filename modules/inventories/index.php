@@ -1,6 +1,7 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../includes/functions.php';
+require_once __DIR__ . '/request.php';
 
 if (!hasPermission('inventories.view')) {
     setAlert('danger', 'You do not have permission to access this page.');
@@ -8,20 +9,13 @@ if (!hasPermission('inventories.view')) {
 }
 
 $page_title = 'Inventory Management';
-require_once '../../includes/header.php';
 
-// Fetch all locations
-$locations = [];
-$locationsResult = $conn->query("SELECT id, name, address FROM locations WHERE is_active = 1 ORDER BY name");
-if ($locationsResult) {
-    while ($locRow = $locationsResult->fetch_assoc()) {
-        $locations[$locRow['id']] = $locRow;
-    }
-}
 
 // Handle delete request
-if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
-    $id = (int)$_GET['delete'];
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete'])) {
+    inventoryValidateRequest();
+    if (!hasPermission('inventories.delete')) { http_response_code(403); exit('Inventory deletion permission required.'); }
+    $id = (int)$_POST['delete'];
 
     if (!canAccessInventory($id)) {
         setAlert('danger', 'Inventory not found in the currently selected region.');
@@ -65,6 +59,16 @@ if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
 // Fetch inventories belonging to the currently selected login channel.
 $login_region = $_SESSION['login_region'] ?? 'factory';
 $inventoryScope = getInventoryChannelScopeSql('i');
+$locations = [];
+$filterLocations = [];
+$locationRows = $pdo->query("SELECT DISTINCT l.id, l.name, l.address FROM locations l JOIN inventories i ON i.location_id = l.id WHERE $inventoryScope ORDER BY l.name");
+foreach ($locationRows->fetchAll(PDO::FETCH_ASSOC) as $loc) $filterLocations[$loc['id']] = $loc;
+foreach ($pdo->query('SELECT id, name, address FROM locations ORDER BY name')->fetchAll(PDO::FETCH_ASSOC) as $loc) $locations[$loc['id']] = $loc;
+$locationFilter = $_GET['location_id'] ?? '';
+if (!is_string($locationFilter) || ($locationFilter !== '' && $locationFilter !== 'shared' && (!ctype_digit($locationFilter) || !isset($filterLocations[(int)$locationFilter])))) {
+    http_response_code(400); exit('Invalid location filter.');
+}
+$locationCondition = $locationFilter === 'shared' ? ' AND i.location_id IS NULL' : ($locationFilter !== '' ? ' AND i.location_id = ?' : '');
 $sql = "
     SELECT i.*, COALESCE(ip.product_count, 0) AS product_count
     FROM inventories i
@@ -73,13 +77,17 @@ $sql = "
         FROM inventory_products
         GROUP BY inventory_id
     ) ip ON ip.inventory_id = i.id
-    WHERE $inventoryScope
+    WHERE $inventoryScope $locationCondition
     ORDER BY i.name
 ";
 
 $stmt = $conn->prepare($sql);
+if ($locationFilter !== '' && $locationFilter !== 'shared') {
+    $locationId = (int)$locationFilter; $stmt->bind_param('i', $locationId);
+}
 $stmt->execute();
 $result = $stmt->get_result();
+require_once '../../includes/header.php';
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -104,6 +112,16 @@ $result = $stmt->get_result();
     </div>
 </div>
 
+<form method="get" class="d-flex gap-2 align-items-center mb-3">
+<label for="inventoryLocation">Location</label>
+<select id="inventoryLocation" name="location_id" class="form-select w-auto">
+<option value="">All locations</option>
+<option value="shared" <?= $locationFilter === 'shared' ? 'selected' : ''; ?>>Unassigned / shared</option>
+<?php foreach ($filterLocations as $loc): ?>
+<option value="<?= (int)$loc['id']; ?>" <?= (string)$locationFilter === (string)$loc['id'] ? 'selected' : ''; ?>><?= htmlspecialchars($loc['name']); ?></option>
+<?php endforeach; ?>
+</select><button class="btn btn-primary" type="submit">Apply</button><a href="index.php" class="btn btn-outline-secondary">Reset</a>
+</form>
 <div class="card">
     <div class="card-body">
         <div class="table-responsive">
@@ -142,7 +160,7 @@ $result = $stmt->get_result();
                                         <i class="fas fa-eye"></i> View
                                     </a>
                                     <?php if (empty($row['system_key'])): ?>
-                                    <button class="btn btn-sm btn-outline-warning edit-inventory" 
+                                    <?php if (hasPermission('inventories.edit')): ?><button type="button" class="btn btn-sm btn-outline-warning edit-inventory"
                                             data-id="<?php echo $row['id']; ?>"
                                             data-name="<?php echo htmlspecialchars($row['name']); ?>"
                                             data-location-id="<?php echo $row['location_id']; ?>"
@@ -152,10 +170,14 @@ $result = $stmt->get_result();
                                             data-active="<?php echo $row['is_active']; ?>">
                                         <i class="fas fa-edit"></i> Edit
                                     </button>
-                                    <a href="index.php?delete=<?php echo $row['id']; ?>" class="btn btn-sm btn-outline-danger" 
-                                       onclick="return confirm('Are you sure you want to delete this inventory?')">
-                                        <i class="fas fa-trash"></i> Delete
-                                    </a>
+                                    <?php endif; ?>
+                                    <?php if (hasPermission('inventories.delete')): ?>
+                                    <form action="index.php" method="post" class="d-inline" onsubmit="return confirm('Are you sure you want to delete this inventory?')">
+                                        <input type="hidden" name="inventory_request_token" value="<?= htmlspecialchars(inventoryRequestToken()); ?>">
+                                        <input type="hidden" name="delete" value="<?= (int)$row['id']; ?>">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger"><i class="fas fa-trash"></i> Delete</button>
+                                    </form>
+                                    <?php endif; ?>
                                     <?php else: ?>
                                         <span class="badge bg-secondary">Fixed inventory</span>
                                     <?php endif; ?>
@@ -307,7 +329,8 @@ $result = $stmt->get_result();
 <script>
 $(document).ready(function() {
     // Handle edit button click
-    $('.edit-inventory').click(function() {
+    $(document).on('click', '.edit-inventory', function(e) {
+        e.preventDefault(); e.stopPropagation();
         var id = $(this).data('id');
         var name = $(this).data('name');
         var locationId = $(this).data('location-id');
@@ -324,7 +347,7 @@ $(document).ready(function() {
         $('#edit_direct_sale').val(direct_sale);
         $('#edit_is_active').prop('checked', is_active == 1);
         
-        $('#editInventoryModal').modal('show');
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('editInventoryModal')).show();
     });
 });
 </script>

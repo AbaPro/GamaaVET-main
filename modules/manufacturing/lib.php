@@ -1,12 +1,14 @@
 <?php
 require_once __DIR__ . "/sourcing.php";
 require_once __DIR__ . "/packaging.php";
+require_once __DIR__ . "/waste.php";
+require_once __DIR__ . "/../../includes/formula_access.php";
 
 function manufacturing_add_report_brand($pdf): void {
     $logo = ROOT_PATH . '/' . getBrandLogoFile('factory');
     if (is_file($logo)) {
-        $pdf->Image($logo, 15, 12, 22, 18, 'PNG', '', '', true, 300, '', false, false, 0, 'CM');
-        $pdf->SetY(35);
+        $pdf->Image($logo, 15, 12, 15, 12, 'PNG', '', '', true, 300, '', false, false, 0, 'CM');
+        $pdf->SetY(29);
     }
 }
 
@@ -248,13 +250,14 @@ function manufacturing_convert_to_relative_path($fullPath) {
 }
 
 function manufacturing_build_step_document_html($order, $orderStep, $formula, $components, $notes, $statusLabel, $conn = null, $canViewComponentName = null) {
+    if (!canAccessManufacturingStep($orderStep['step_key'])) return '<p>Step details are restricted.</p>';
     $canViewComponentName = ($canViewComponentName ?? true) && hasPermission('manufacturing.component.name.view');
     $orderNumber = htmlspecialchars($order['order_number'] ?? 'UNKNOWN');
     $customerName = htmlspecialchars($order['customer_name'] ?? 'Unknown provider');
     
     // Hide formula name if component names should be hidden
     $formulaNameRaw = $formula['name'] ?? 'Custom formula';
-    $formulaName = $canViewComponentName ? htmlspecialchars($formulaNameRaw) : 'Protected Formula';
+    $formulaName = canViewManufacturingFormula() && $canViewComponentName ? htmlspecialchars($formulaNameRaw) : 'Protected Formula';
     
     $priority = htmlspecialchars(ucfirst($order['priority'] ?? 'normal'));
     $dueDate = $order['due_date'] ? htmlspecialchars($order['due_date']) : 'TBD';
@@ -268,7 +271,7 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
     $html .= '<table><tbody>';
     $html .= "<tr><th>Order</th><td>{$orderNumber}</td><th>Provider</th><td>{$customerName}</td></tr>";
     $html .= "<tr><th>Formula</th><td>{$formulaName}</td><th>Priority</th><td>{$priority}</td></tr>";
-    $html .= "<tr><th>Batch Size</th><td>" . htmlspecialchars($order['batch_size'] ?? '0') . "</td><th>Due Date</th><td>{$dueDate}</td></tr>";
+    if (canViewManufacturingTechnicalDetails()) $html .= "<tr><th>Batch Size</th><td>" . htmlspecialchars($order['batch_size'] ?? '0') . "</td><th>Due Date</th><td>{$dueDate}</td></tr>";
     $html .= "<tr><th>Current Status</th><td colspan=\"3\">" . htmlspecialchars(ucfirst($orderStep['status'])) . "</td></tr>";
     $html .= '</tbody></table>';
 
@@ -789,9 +792,9 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
         $deliveryStmt->close();
     }
 
-    if ($stepKey === 'sourcing' && $conn) {
+    if ($stepKey === 'sourcing' && $conn && canViewManufacturingFormula()) {
         $html .= manufacturing_sourcing_document_html((int)$order['id'], $canViewComponentName);
-    } else {
+    } elseif (canViewManufacturingFormula()) {
         $html .= '<table><thead><tr><th>Component</th><th>Quantity / Ratio</th><th>Unit</th><th>Notes</th></tr></thead><tbody>';
         if (is_array($components) && count($components) > 0) {
             foreach ($components as $component) {
@@ -839,7 +842,7 @@ function manufacturing_create_excel_document($order, $stepKey, $htmlContent) {
     require_once __DIR__ . '/../../includes/libs/SimpleXLSXGen.php';
     require_once __DIR__ . '/../../includes/export_helpers.php';
     $timestamp = date('YmdHis');
-    $fileName = preg_replace('/[^\p{L}\p{N}._-]+/u', '_', "{$orderNumber}_{$stepKey}_{$timestamp}") . '.xlsx';
+    $fileName = preg_replace('/[^\p{L}\p{N}._-]+/u', '_', "{$orderNumber}_{$stepKey}_{$timestamp}_" . bin2hex(random_bytes(6))) . '.xlsx';
     $filePath = $storageDir . '/' . $fileName;
 
     // Produce a real workbook, retaining the same sections as the PDF handoff.
@@ -1006,6 +1009,7 @@ function manufacturing_get_finished_goods_inventories($conn, array $order) {
  * Returns the stock-log row to write after commit, or null if already stocked.
  */
 function manufacturing_add_finished_goods(PDO $pdo, array $order, int $inventoryId) {
+    if (!hasPermission('manufacturing.orders.complete')) throw new DomainException('Order completion permission required.');
     if (!$pdo->inTransaction()) throw new LogicException('Manufacturing stock-in requires a transaction.');
     $orderId = (int)$order['id'];
     $fresh = $pdo->prepare('SELECT * FROM manufacturing_orders WHERE id = ? FOR UPDATE');
@@ -1024,15 +1028,15 @@ function manufacturing_add_finished_goods(PDO $pdo, array $order, int $inventory
             throw new RuntimeException('Final product count and breakage must be non-negative whole numbers.');
         }
     }
-    // Final count is usable output; breakage is a separate count of the same final product.
+    // Final count is usable output; breakage is a metric, never a material stock movement.
     // Legacy orders without a recorded final count retain their ordered bottle quantity.
     $quantity = $finalCount !== '' ? (float)$finalCount : (float)($order['number_of_bottles'] ?? 0);
     $wasteQuantity = $breakage !== '' ? (float)$breakage : 0;
     if ($productId <= 0 || $quantity < 0 || $quantity + $wasteQuantity <= 0 || $inventoryId <= 0) {
         throw new RuntimeException('The order needs a final product, a number of bottles and a warehouse before it can be completed.');
     }
-    $destination = $pdo->prepare('SELECT id FROM inventories WHERE id = ? AND system_key IS NULL AND is_active = 1');
-    $destination->execute([$inventoryId]);
+    $destination = $pdo->prepare('SELECT id FROM inventories WHERE id = ? AND system_key IS NULL AND is_active = 1 AND (location_id <=> ?) FOR UPDATE');
+    $destination->execute([$inventoryId, $order['location_id'] ?? null]);
     if (!$destination->fetchColumn()) throw new RuntimeException('Choose a normal active warehouse for usable finished products.');
 
     $mark = $pdo->prepare("UPDATE manufacturing_orders
@@ -1050,21 +1054,7 @@ function manufacturing_add_finished_goods(PDO $pdo, array $order, int $inventory
         ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)")
         ->execute([$inventoryId, $productId, $quantity]);
 
-    if ($wasteQuantity > 0) {
-        // Lock the shared warehouse before reading/updating its quantities and audit log.
-        $wasteInventory = $pdo->query("SELECT id FROM inventories WHERE system_key = 'manufacturing_waste' AND is_active = 1 AND direct_sale IS NULL FOR UPDATE")->fetchColumn();
-        if (!$wasteInventory) throw new RuntimeException('The fixed waste inventory is missing. Apply the manufacturing waste inventory migration.');
-        $before->execute([$wasteInventory, $productId]);
-        $wasteBefore = (float)($before->fetchColumn() ?: 0);
-        $pdo->prepare("INSERT INTO inventory_products (inventory_id, product_id, quantity) VALUES (?, ?, ?)
-            ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)")
-            ->execute([$wasteInventory, $productId, $wasteQuantity]);
-        $pdo->prepare("INSERT INTO inventory_stock_logs
-            (inventory_id, product_id, change_quantity, quantity_before, quantity_after, source_type, source_id, notes, created_by)
-            VALUES (?, ?, ?, ?, ?, 'manufacturing_waste', ?, ?, ?)")
-            ->execute([$wasteInventory, $productId, $wasteQuantity, $wasteBefore, $wasteBefore + $wasteQuantity,
-                $orderId, 'الكسر: العدد — ' . $order['order_number'], $_SESSION['user_id'] ?? null]);
-    }
+    manufacturing_post_material_waste($pdo, $order);
 
     return [$inventoryId, $productId, $quantity, $quantityBefore, $quantityBefore + $quantity];
 }
@@ -1244,6 +1234,7 @@ function manufacturing_get_image_original_date($relativePath) {
 }
 
 function manufacturing_detect_order_audit_notes($conn, $order, $steps) {
+    if (!canViewManufacturingAudit()) return [];
     $notes = [];
     $orderId = (int)$order['id'];
 
@@ -1425,12 +1416,12 @@ function manufacturing_build_full_report_html($conn, $orderId) {
 
     $stepPeople = manufacturing_get_step_people($conn, array_column($steps, 'id'));
     $auditNotes = manufacturing_detect_order_audit_notes($conn, $order, $steps);
-    $relatedPOs = hasPermission('manufacturing.component.name.view') ? manufacturing_get_related_purchase_orders($conn, $orderId) : [];
+    $relatedPOs = canViewManufacturingFormula() && hasPermission('manufacturing.component.name.view') ? manufacturing_get_related_purchase_orders($conn, $orderId) : [];
 
     $orderNumber = htmlspecialchars($order['order_number'] ?? 'UNKNOWN');
     $customerName = htmlspecialchars($order['customer_name'] ?? 'Unknown provider');
     $canViewComponentName = hasPermission('manufacturing.component.name.view');
-    $formulaName = $canViewComponentName ? htmlspecialchars($order['formula_name'] ?? 'Custom formula') : 'Protected Formula';
+    $formulaName = canViewManufacturingFormula() && $canViewComponentName ? htmlspecialchars($order['formula_name'] ?? 'Custom formula') : 'Protected Formula';
     $priority = htmlspecialchars(ucfirst($order['priority'] ?? 'normal'));
     $dueDate = $order['due_date'] ? htmlspecialchars($order['due_date']) : 'TBD';
 
@@ -1473,7 +1464,7 @@ function manufacturing_build_full_report_html($conn, $orderId) {
     $html .= '<table><tbody>';
     $html .= "<tr><td class=\"col-label\">Order Number</td><td>{$orderNumber}</td><td class=\"col-label\">Provider / Client</td><td>{$customerName}</td></tr>";
     $html .= "<tr><td class=\"col-label\">Formula Name</td><td>{$formulaName}</td><td class=\"col-label\">Overall Priority</td><td>{$priority}</td></tr>";
-    $html .= "<tr><td class=\"col-label\">Batch Size</td><td>" . htmlspecialchars($order['batch_size'] ?? '0') . "</td><td class=\"col-label\">Due Date</td><td>{$dueDate}</td></tr>";
+    if (canViewManufacturingTechnicalDetails()) $html .= "<tr><td class=\"col-label\">Batch Size</td><td>" . htmlspecialchars($order['batch_size'] ?? '0') . "</td><td class=\"col-label\">Due Date</td><td>{$dueDate}</td></tr>";
     $html .= "<tr><td class=\"col-label\">Target Product</td><td>" . htmlspecialchars($order['product_name'] ?? 'N/A') . "</td><td class=\"col-label\">Product SKU</td><td>" . htmlspecialchars($order['product_sku'] ?? 'N/A') . "</td></tr>";
     $html .= "<tr><td class=\"col-label\">Production Site</td><td>" . htmlspecialchars($order['location_name'] ?? 'N/A') . "</td><td class=\"col-label\">Current Stage</td><td>" . htmlspecialchars(ucfirst($order['status'])) . "</td></tr>";
     $html .= "<tr><td class=\"col-label\">Created By</td><td>" . htmlspecialchars($order['created_by_name'] ?? 'Unknown') . "</td><td class=\"col-label\">Created At</td><td>" . htmlspecialchars($order['created_at'] ?? '-') . "</td></tr>";
@@ -1481,6 +1472,7 @@ function manufacturing_build_full_report_html($conn, $orderId) {
     $html .= '</tbody></table>';
     $html .= '</div>';
 
+    if (canViewManufacturingAudit()) {
     $html .= '<div class="section-header">Points to Check / Audit Notes</div>';
     if (!empty($auditNotes)) {
         $html .= '<table><thead><tr><th>Severity</th><th>Point</th><th>Details</th></tr></thead><tbody>';
@@ -1492,6 +1484,7 @@ function manufacturing_build_full_report_html($conn, $orderId) {
         $html .= '<div class="notes-box">No audit warnings were detected automatically.</div>';
     }
 
+    }
     $html .= '<div class="section-header">Related Purchase Orders</div>';
     if (!empty($relatedPOs)) {
         $html .= '<table><thead><tr><th>PO #</th><th>Vendor</th><th>Date</th><th>Status</th><th>Matching Products</th></tr></thead><tbody>';
@@ -1503,6 +1496,7 @@ function manufacturing_build_full_report_html($conn, $orderId) {
         $html .= '<div class="notes-box">No related purchase orders were found for the sourced materials.</div>';
     }
 
+    if (canViewManufacturingFormula()) {
     // Formula Components
     $html .= '<div class="section-header">1. Material Formulation</div>';
     $html .= '<table><thead><tr><th>Component Name</th><th style="width:20%; text-align:center;">Quantity / Ratio</th><th style="width:15%; text-align:center;">Unit</th></tr></thead><tbody>';
@@ -1511,9 +1505,11 @@ function manufacturing_build_full_report_html($conn, $orderId) {
     }
     $html .= '</tbody></table>';
 
+    }
     $stepCounter = 2;
     // Step Details
     foreach ($steps as $step) {
+        if (!canAccessManufacturingStep($step['step_key'])) continue;
         $html .= '<div class="page-break"></div>';
         
         $stepLabel = manufacturing_get_step_label($step['step_key']);
@@ -1575,6 +1571,7 @@ function manufacturing_build_full_report_html($conn, $orderId) {
  * Generates the full PDF report and returns the absolute path.
  */
 function manufacturing_generate_full_order_pdf($conn, $orderId) {
+    if (!hasPermission('manufacturing.view_report') || !canViewManufacturingTechnicalDetails()) throw new RuntimeException('Full report access required.');
     $orderStmt = $conn->prepare("SELECT order_number FROM manufacturing_orders WHERE id = ?");
     $orderStmt->bind_param('i', $orderId);
     $orderStmt->execute();

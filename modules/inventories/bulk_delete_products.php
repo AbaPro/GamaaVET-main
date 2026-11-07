@@ -2,9 +2,12 @@
 require_once '../../includes/auth.php';
 require_once '../../config/database.php';
 require_once '../../includes/functions.php';
+require_once __DIR__ . '/request.php';
+
+inventoryValidateRequest();
 
 // Permission check
-if (!hasPermission('inventories.view')) {
+if (!hasPermission('inventories.delete')) {
     setAlert('danger', "You don't have permission to manage inventories");
     header("Location: index.php");
     exit();

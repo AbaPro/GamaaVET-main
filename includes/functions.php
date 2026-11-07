@@ -1721,6 +1721,7 @@ function canAddProductToInventory($inventoryId, $productId) {
             WHERE p.id = ?
               AND $inventoryScope
               AND $productScope
+              AND (COALESCE(i.system_key, '') <> 'manufacturing_waste' OR p.type = 'material')
               AND " . getActiveProductSql('p') . "
             LIMIT 1";
     $stmt = $conn->prepare($sql);

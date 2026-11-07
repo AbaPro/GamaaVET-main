@@ -5,6 +5,11 @@ require_once __DIR__ . '/deletion_approval.php';
 require_once '../../includes/formula_access.php';
 require_once 'lib.php';
 
+if (($_SESSION['login_region'] ?? 'factory') !== 'factory' || !hasPermission('manufacturing.view')) {
+    http_response_code(403);
+    exit('Manufacturing access required.');
+}
+
 /**
  * Format a quantity+unit, appending the other unit in parentheses:
  *   ml → also show L,  L → also show ml,  kg → also show g,  g → also show kg.
@@ -308,6 +313,7 @@ if ($deliveryCount == 0) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    manufacturingValidateCsrf();
     if (isset($_POST['unlock_formula_password'])) {
         if (unlockFormulas($_POST['unlock_formula_password'])) {
             setAlert('success', 'Formula view unlocked.');
@@ -318,9 +324,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
+    if (($_POST['action'] ?? '') === 'save_material_waste') {
+        try {
+            $quantities = $_POST['material_waste'] ?? [];
+            if (!is_array($quantities)) throw new DomainException('Invalid material waste entries.');
+            $pdo->beginTransaction();
+            manufacturing_save_material_waste($pdo, $orderId, $quantities);
+            $pdo->commit();
+            logActivity('Recorded material waste', ['order_id' => $orderId], 'update', 'manufacturing_order', $orderId);
+            setAlert('success', 'Material waste saved. It will be added to the waste warehouse when an authorized user completes this order.');
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            setAlert('danger', $e->getMessage());
+        }
+        redirect('order.php?id=' . $orderId);
+    }
+
     // Orders whose steps are all completed but whose status never became completed.
     if (($_POST['action'] ?? '') === 'complete_order') {
-        if (!hasPermission('manufacturing.view_step_delivering')) {
+        if (!hasPermission('manufacturing.orders.complete')) {
             setAlert('danger', 'You do not have permission to complete this order.');
             redirect('order.php?id=' . $orderId);
         }
@@ -375,7 +397,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect('order.php?id=' . $orderId);
     }
 
-    if (!hasPermission('manufacturing.view_step_' . $stepKey)) {
+    if (!canAccessManufacturingStep($stepKey)) {
         setAlert('danger', 'You do not have permission to update this step.');
         redirect('order.php?id=' . $orderId);
     }
@@ -398,7 +420,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action !== 'regenerate' && trim($_POST['status'] ?? '') === 'completed' && $order['status'] !== 'completed') {
         $openStepsStmt = $pdo->prepare("SELECT COUNT(*) FROM manufacturing_order_steps WHERE manufacturing_order_id = ? AND id <> ? AND status <> 'completed'");
         $openStepsStmt->execute([$orderId, $stepRow['id']]);
-        $completesOrder = (int)$openStepsStmt->fetchColumn() === 0;
+        $completesOrder = (int)$openStepsStmt->fetchColumn() === 0 && hasPermission('manufacturing.orders.complete');
     }
     if ($completesOrder) {
         if (empty($order['product_id']) || $finishedGoodsQuantity + $damagedOutputCount <= 0) {
@@ -993,11 +1015,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     try {
         $pdo->beginTransaction();
+        $orderLock = $pdo->prepare('SELECT status FROM manufacturing_orders WHERE id = ? FOR UPDATE');
+        $orderLock->execute([$orderId]);
+        if (in_array($orderLock->fetchColumn(), ['completed', 'cancelled'], true)) throw new RuntimeException('This order is locked.');
+        $currentStepLock = $pdo->prepare('SELECT status FROM manufacturing_order_steps WHERE id = ? FOR UPDATE');
+        $currentStepLock->execute([$stepRow['id']]);
+        if ($currentStepLock->fetchColumn() === 'completed') throw new RuntimeException('This step is already completed.');
 
         if ($stepKey === 'packaging') {
-            $lock = $pdo->prepare('SELECT status FROM manufacturing_order_steps WHERE id = ? FOR UPDATE');
-            $lock->execute([$stepRow['id']]);
-            if ($lock->fetchColumn() === 'completed') throw new RuntimeException('This step has already been completed.');
             $pdo->prepare("UPDATE manufacturing_packaging_checklist SET item_value = '' WHERE manufacturing_order_id = ? AND item_type = 'checkbox'")->execute([$orderId]);
             $saveValue = $pdo->prepare('UPDATE manufacturing_packaging_checklist SET item_value = ? WHERE item_key = ? AND manufacturing_order_id = ?');
             foreach ($packagingValues as $itemKey => $value) {
@@ -1220,14 +1245,14 @@ $isCompletedOrder = $order['status'] === 'completed';
 <div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-3">
     <div>
         <h2>Manufacturing Order <?= htmlspecialchars($order['order_number']); ?></h2>
-        <p class="text-muted mb-0">Provider: <?= htmlspecialchars($order['customer_name']); ?> | Product: <?= htmlspecialchars($order['product_name'] ?? 'N/A'); ?> | Formula: <?= htmlspecialchars($order['formula_name']); ?></p>
+        <p class="text-muted mb-0">Provider: <?= htmlspecialchars($order['customer_name']); ?> | Product: <?= htmlspecialchars($order['product_name'] ?? 'N/A'); ?> | Formula: <?= canViewManufacturingFormula() ? htmlspecialchars($order['formula_name']) : 'Protected formula'; ?></p>
     </div>
     <div class="d-flex gap-2">
         <span class="badge <?= $orderBadge['class']; ?> text-uppercase">
             <?= $orderBadge['label']; ?>
         </span>
         <?= activityLogLink('manufacturing_order', $orderId); ?>
-        <?php if (!$isCompletedOrder): ?>
+        <?php if (!$isCompletedOrder && hasPermission('manufacturing.edit') && canViewManufacturingTechnicalDetails()): ?>
             <a href="edit.php?id=<?= $orderId; ?>" class="btn btn-outline-primary">
                 <i class="fas fa-edit me-1"></i> Edit
             </a>
@@ -1238,7 +1263,7 @@ $isCompletedOrder = $order['status'] === 'completed';
                 <i class="fas fa-trash me-1"></i> Request Deletion
             </button>
         <?php endif; ?>
-        <?php if ($progressPercent === 100 && hasPermission('manufacturing.view_report')): ?>
+        <?php if ($progressPercent === 100 && hasPermission('manufacturing.view_report') && canViewManufacturingTechnicalDetails()): ?>
             <a href="view_report.php?id=<?= $orderId; ?>" class="btn btn-success" target="_blank">
                 <i class="fas fa-file-pdf me-1"></i> Full Report
             </a>
@@ -1250,10 +1275,11 @@ $isCompletedOrder = $order['status'] === 'completed';
 </div>
 
 <?php if (!empty($steps) && $completedSteps === count($steps) && !in_array($order['status'], ['completed', 'cancelled'], true)
-          && hasPermission('manufacturing.view_step_delivering')): ?>
+          && hasPermission('manufacturing.orders.complete')): ?>
     <?php $finishedGoodsOptions = manufacturing_get_finished_goods_inventories($conn, $order); ?>
     <div class="alert alert-warning">
         <form method="post" class="d-flex flex-wrap align-items-center gap-2 mb-0">
+<input type="hidden" name="manufacturing_csrf" value="<?= htmlspecialchars(manufacturingCsrfToken()); ?>">
             <input type="hidden" name="action" value="complete_order">
             <span><strong>All steps are completed but the order is not.</strong>
                 Complete it to add <?= (int)$usableOutputCount; ?> × <?= e($order['product_name'] ?? '—'); ?> to stock:</span>
@@ -1281,6 +1307,7 @@ $isCompletedOrder = $order['status'] === 'completed';
                 <p class="mb-1"><strong>Priority:</strong> <?= ucfirst(htmlspecialchars($order['priority'])); ?></p>
                 <p class="mb-1"><strong>Location:</strong> <?= $order['location_name'] ? htmlspecialchars($order['location_name']) . ' - ' . htmlspecialchars($order['location_address'])  : '<span class="text-muted">Not set</span>'; ?></p>
                 <p class="mb-1"><strong>Due Date:</strong> <?= $order['due_date'] ? htmlspecialchars($order['due_date']) : '<span class="text-muted">Not set</span>'; ?></p>
+                <?php if (canViewManufacturingTechnicalDetails()): ?>
                 <?php
                 $batchSizeVal  = (float)$order['batch_size'];
                 $batchUnit     = $order['bottle_size_unit'] ?? '';
@@ -1302,8 +1329,8 @@ $isCompletedOrder = $order['status'] === 'completed';
                         <?= rtrim(rtrim(number_format((float)$order['finished_goods_quantity'], 2, '.', ''), '0'), '.'); ?>
                         into <?= e($fgInvName); ?> on <?= date('d/m/Y H:i', strtotime($order['finished_goods_added_at'])); ?></p>
                     <?php if (($order['finished_goods_waste_quantity'] ?? 0) > 0): ?>
-                        <p class="mb-1 text-warning"><strong>مخزن الهالك:</strong>
-                            <?= (int)$order['finished_goods_waste_quantity']; ?> damaged units of the final product (الكسر: العدد).</p>
+                        <p class="mb-1 text-warning"><strong>Production breakage:</strong>
+                            <?= (int)$order['finished_goods_waste_quantity']; ?> damaged units recorded (الكسر: العدد); material waste is recorded separately.</p>
                     <?php endif; ?>
                 <?php endif; ?>
                 <p class="mb-1"><strong>Bottle Size:</strong>
@@ -1322,6 +1349,7 @@ $isCompletedOrder = $order['status'] === 'completed';
                     <?php endif; ?>
                 </p>
                 <p class="mb-1"><strong>Notes:</strong><br><?= nl2br(htmlspecialchars($order['notes'] ?? 'No notes provided.')); ?></p>
+                <?php endif; ?>
                 <div class="mt-3">
                     <div class="progress" style="height:10px;">
                         <div class="progress-bar" role="progressbar" style="width: <?= $progressPercent; ?>%;" aria-valuenow="<?= $progressPercent; ?>" aria-valuemin="0" aria-valuemax="100"></div>
@@ -1345,6 +1373,7 @@ $isCompletedOrder = $order['status'] === 'completed';
                 <?php elseif (!areFormulasUnlocked()): ?>
                     <p class="text-muted small mb-3">Formula is locked. Enter password to view.</p>
                     <form method="post">
+<input type="hidden" name="manufacturing_csrf" value="<?= htmlspecialchars(manufacturingCsrfToken()); ?>">
                         <div class="input-group">
                             <input type="password" name="unlock_formula_password" class="form-control" placeholder="Password" required>
                             <button class="btn btn-primary" type="submit">Unlock</button>
@@ -1414,6 +1443,7 @@ $isCompletedOrder = $order['status'] === 'completed';
             <div class="card-header">Handoff documentation</div>
             <div class="card-body">
                 <p class="mb-1"><strong>Total files:</strong> <?= $totalDocuments; ?> (Excel + PDF per step)</p>
+                <?php if (canViewManufacturingFormula()): ?>
                 <p class="mb-1"><strong>Formula description:</strong> <?= htmlspecialchars($order['formula_description'] ?? 'No description'); ?></p>
                 <?php if (!empty($formulaSampleImages)): ?>
                     <div class="mt-3">
@@ -1421,12 +1451,13 @@ $isCompletedOrder = $order['status'] === 'completed';
                         <div class="d-flex flex-wrap gap-2">
                             <?php foreach ($formulaSampleImages as $sampleImage): ?>
                                 <?php if (empty($sampleImage['path'])) continue; ?>
-                                <a href="../../<?= htmlspecialchars($sampleImage['path']); ?>" target="_blank">
-                                    <img src="../../<?= htmlspecialchars($sampleImage['path']); ?>" class="rounded border" style="width:64px;height:64px;object-fit:cover;" alt="Formula sample">
+                                <a href="<?= htmlspecialchars(manufacturingFormulaSampleUrl((int)$order['formula_id'], $sampleImage['path'])); ?>" target="_blank">
+                                    <img src="<?= htmlspecialchars(manufacturingFormulaSampleUrl((int)$order['formula_id'], $sampleImage['path'])); ?>" class="rounded border" style="width:64px;height:64px;object-fit:cover;" alt="Formula sample">
                                 </a>
                             <?php endforeach; ?>
                         </div>
                     </div>
+                <?php endif; ?>
                 <?php endif; ?>
                 <p class="text-muted small mb-0">Every save regenerates the Excel and PDF that travel with the order to the next internal team.</p>
             </div>
@@ -1442,7 +1473,7 @@ $isCompletedOrder = $order['status'] === 'completed';
                 <?php
                 // Check permission for this specific step
                 $stepPermissionKey = 'manufacturing.view_step_' . $stepKey;
-                if (!hasPermission($stepPermissionKey)) {
+                if (!canAccessManufacturingStep($stepKey)) {
                     continue; // Skip this step if user doesn't have permission
                 }
                 $stepData = $stepsByKey[$stepKey] ?? null;
@@ -1469,6 +1500,34 @@ $isCompletedOrder = $order['status'] === 'completed';
     </div>
 </div>
 
+<?php if (hasPermission('manufacturing.waste.manage') && canViewManufacturingTechnicalDetails() && canViewManufacturingFormula()): ?>
+<?php
+$wasteStmt = $pdo->prepare("SELECT msc.id, msc.component_name, msc.source, msc.required_quantity, msc.unit,
+    COALESCE(mw.quantity, 0) AS waste_quantity, mw.posted_at
+    FROM manufacturing_sourcing_components msc JOIN products p ON p.id = msc.product_id AND p.type = 'material'
+    LEFT JOIN manufacturing_material_waste mw ON mw.manufacturing_order_id = msc.manufacturing_order_id AND mw.sourcing_component_id = msc.id
+    WHERE msc.manufacturing_order_id = ? AND msc.deducted_at IS NOT NULL ORDER BY msc.source, msc.id");
+$wasteStmt->execute([$orderId]); $wasteRows = $wasteStmt->fetchAll(PDO::FETCH_ASSOC);
+?>
+<div class="card mb-4">
+<div class="card-header">Material waste / هالك الخامات</div>
+<div class="card-body">
+<p class="text-muted">Record actual ingredient or packaging waste against each consumed material. These quantities are already consumed and will enter مخزن الهالك at order completion. Final-product breakage does not automatically create material waste.</p>
+<form method="post">
+<input type="hidden" name="manufacturing_csrf" value="<?= htmlspecialchars(manufacturingCsrfToken()); ?>">
+<input type="hidden" name="action" value="save_material_waste">
+<div class="table-responsive"><table class="table"><thead><tr><th>Material</th><th>Source</th><th>Consumed</th><th>Unit</th><th>Actual waste</th></tr></thead><tbody>
+<?php foreach ($wasteRows as $wr): ?>
+<tr><td><?= htmlspecialchars($wr['component_name']); ?></td><td><?= htmlspecialchars($wr['source']); ?></td><td><?= htmlspecialchars($wr['required_quantity']); ?></td><td><?= htmlspecialchars($wr['unit']); ?></td>
+<td><input type="number" class="form-control" min="0" max="<?= htmlspecialchars($wr['required_quantity']); ?>" step="0.0001" name="material_waste[<?= (int)$wr['id']; ?>]" value="<?= htmlspecialchars($wr['waste_quantity']); ?>" <?= in_array($order['status'], ['completed', 'cancelled'], true) ? 'disabled' : ''; ?> required></td></tr>
+<?php endforeach; ?>
+<?php if (!$wasteRows): ?><tr><td colspan="5">No consumed materials yet.</td></tr><?php endif; ?>
+</tbody></table></div>
+<?php if ($wasteRows && !in_array($order['status'], ['completed', 'cancelled'], true)): ?><button type="submit" class="btn btn-primary">Save material waste</button><?php endif; ?>
+</form></div></div>
+<?php endif; ?>
+
+<?php if (canViewManufacturingAudit()): ?>
 <div class="card mb-4">
     <div class="card-header d-flex justify-content-between align-items-center">
         <span>Manufacturing audit / points to check</span>
@@ -1492,6 +1551,8 @@ $isCompletedOrder = $order['status'] === 'completed';
         <?php endif; ?>
     </div>
 </div>
+
+<?php endif; ?>
 
 <div class="card">
     <div class="card-header d-flex justify-content-between align-items-center gap-2">
@@ -1518,7 +1579,7 @@ $isCompletedOrder = $order['status'] === 'completed';
                 <?php 
                     // Check permission for this specific step
                     $stepPermissionKey = 'manufacturing.view_step_' . $stepRow['step_key'];
-                    if (!hasPermission($stepPermissionKey)) {
+                    if (!canAccessManufacturingStep($stepRow['step_key'])) {
                         continue; // Skip this step if user doesn't have permission
                     }
                     $documents = $orderDocuments[$stepRow['id']] ?? []; 
@@ -1549,6 +1610,7 @@ $isCompletedOrder = $order['status'] === 'completed';
                             </div>
                             
                             <form method="post" enctype="multipart/form-data">
+<input type="hidden" name="manufacturing_csrf" value="<?= htmlspecialchars(manufacturingCsrfToken()); ?>">
                                 <input type="hidden" name="order_id" value="<?= $order['id']; ?>">
                                 <input type="hidden" name="step_key" value="<?= htmlspecialchars($stepRow['step_key']); ?>">
                                 <?php if ($isStepLocked): ?>
@@ -2555,7 +2617,7 @@ $isCompletedOrder = $order['status'] === 'completed';
                                     $isLastOpenStep = $stepRow['status'] !== 'completed'
                                         && count(array_filter($steps, fn($s) => $s['status'] !== 'completed' && (int)$s['id'] !== (int)$stepRow['id'])) === 0;
                                     ?>
-                                    <?php if ($isLastOpenStep && !$isCompletedOrder): ?>
+                                    <?php if ($isLastOpenStep && !$isCompletedOrder && hasPermission('manufacturing.orders.complete')): ?>
                                         <?php $finishedGoodsOptions = manufacturing_get_finished_goods_inventories($conn, $order); ?>
                                         <div class="col-12">
                                             <div class="border rounded p-3 bg-light">
@@ -2564,7 +2626,7 @@ $isCompletedOrder = $order['status'] === 'completed';
                                                     Completing this step completes the order and adds
                                                     <strong><?= (int)$usableOutputCount; ?></strong> ×
                                                     <strong><?= e($order['product_name'] ?? '—'); ?></strong> to the warehouse below.
-                                                    <?= (int)$damagedOutputCount; ?> damaged units will go separately to مخزن الهالك.
+                                                    Material waste is recorded separately by material and unit.
                                                 </p>
                                                 <?php if (empty($finishedGoodsOptions['inventories'])): ?>
                                                     <div class="text-danger small">
@@ -2613,7 +2675,7 @@ $isCompletedOrder = $order['status'] === 'completed';
                                                         <?php endif; ?>
                                                     </div>
                                                 </div>
-                                                <a href="<?= $document['type'] === 'pdf' ? 'view_report.php?id=' . $orderId . '&amp;step=' . urlencode($stepRow['step_key']) : manufacturing_get_document_url($document['file_path']); ?>" target="_blank" class="btn btn-sm btn-outline-primary">
+                                                <a href="<?= $document['type'] === 'pdf' ? 'view_report.php?id=' . $orderId . '&amp;step=' . urlencode($stepRow['step_key']) : 'view_report.php?id=' . $orderId . '&amp;step=' . urlencode($stepRow['step_key']) . '&amp;format=excel'; ?>" target="_blank" class="btn btn-sm btn-outline-primary">
                                                     <i class="fas fa-download"></i>
                                                 </a>
                                             </li>
