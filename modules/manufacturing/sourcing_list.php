@@ -5,7 +5,10 @@ require_once __DIR__ . '/lib.php';
 require_once __DIR__ . '/sourcing_planning.php';
 
 if (($_SESSION['login_region'] ?? 'factory') !== 'factory'
-    || !hasPermission('manufacturing.view') || !canAccessManufacturingStep('sourcing')) {
+    || !hasPermission('manufacturing.view')
+    || !hasPermission('manufacturing.view_step_sourcing')
+    || !canViewManufacturingTechnicalDetails()
+    || !hasPermission('manufacturing.formula.view_all')) {
     http_response_code(403);
     exit('Access denied.');
 }
@@ -15,6 +18,50 @@ $filters = [
     'source' => in_array($_GET['source'] ?? '', ['formula', 'packaging'], true) ? $_GET['source'] : '',
     'search' => trim((string)($_GET['search'] ?? '')),
 ];
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['unlock_formula_password'])) {
+    manufacturingValidateCsrf();
+    if (unlockFormulas($_POST['unlock_formula_password'])) {
+        setAlert('success', 'Formulas unlocked.');
+        redirect('sourcing_list.php?' . http_build_query($filters));
+        exit;
+    }
+    $unlockError = 'Incorrect password.';
+}
+
+if (!areFormulasUnlocked()) {
+    $page_title = 'Unlock Sourcing & Procurement';
+    require_once '../../includes/header.php';
+    ?>
+    <div class="row justify-content-center mt-5">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header"><h5 class="mb-0">Unlock Sourcing &amp; Procurement</h5></div>
+                <div class="card-body">
+                    <p>This list includes protected formula materials. Enter the formula password to continue.</p>
+                    <?php if (isset($unlockError)): ?>
+                        <div class="alert alert-danger" role="alert"><?= e($unlockError); ?></div>
+                    <?php endif; ?>
+                    <form method="post">
+                        <input type="hidden" name="manufacturing_csrf" value="<?= e(manufacturingCsrfToken()); ?>">
+                        <div class="mb-3">
+                            <label class="form-label" for="unlock_formula_password">Formula Password</label>
+                            <input type="password" id="unlock_formula_password" name="unlock_formula_password" class="form-control" required autofocus>
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100">Unlock</button>
+                        <?php if (isAdminUser()): ?>
+                            <a href="formula_password.php" class="btn btn-outline-secondary w-100 mt-2">Reset Formula Password</a>
+                        <?php endif; ?>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    <?php
+    require_once '../../includes/footer.php';
+    exit;
+}
+
 $canViewNames = hasPermission('manufacturing.component.name.view');
 $plan = manufacturing_sourcing_plan($filters, $canViewNames);
 $customers = $pdo->query('SELECT c.id, c.name FROM customers c LEFT JOIN factories customer_factory ON customer_factory.id = c.factory_id WHERE '
