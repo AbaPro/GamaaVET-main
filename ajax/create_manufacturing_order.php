@@ -34,6 +34,9 @@ try {
     if (!canAccessCustomer($customerId) || !canAccessProduct($productId)) {
         throw new Exception('Customer or product is outside the Factory channel.');
     }
+    if (!canAccessLocation($locationId, true)) {
+        throw new Exception('Please select an available manufacturing location.');
+    }
 
     $productStmt = $pdo->prepare("SELECT COUNT(*) FROM products p WHERE id = ? AND customer_id = ? AND type = 'final' AND " . getActiveProductSql('p'));
     $productStmt->execute([$productId, $customerId]);

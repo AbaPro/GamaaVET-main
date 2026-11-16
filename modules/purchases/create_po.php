@@ -44,13 +44,8 @@ if (isset($_GET['edit'])) {
     }
 }
 
-// Purchase-order destinations are shared locations, but CureVet belongs only
-// to its direct-sale channel and must not be exposed to the other channels.
-$locationWhere = "is_active = 1";
-if (($_SESSION['login_region'] ?? 'factory') !== 'curva') {
-    $locationWhere .= " AND LOWER(REPLACE(TRIM(name), ' ', '')) NOT IN ('curevet', 'curevetinventory')";
-}
-$locations = $pdo->query("SELECT id, name FROM locations WHERE $locationWhere ORDER BY name")
+// Use the same location visibility rules as manufacturing and inventory.
+$locations = $pdo->query("SELECT id, name FROM locations l WHERE is_active = 1 AND " . getLocationChannelScopeSql('l') . " ORDER BY name")
     ->fetchAll(PDO::FETCH_ASSOC);
 $allowedWarehouseLocations = array_column($locations, 'name', 'name');
 

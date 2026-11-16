@@ -23,7 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
     $is_active = isset($_POST['is_active']) ? 1 : 0;
     
-    if ($locationId <= 0) {
+    if (!canAccessLocation($locationId)) {
         setAlert('danger', 'Please select a location.');
         redirect('index.php');
     }

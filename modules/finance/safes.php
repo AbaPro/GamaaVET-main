@@ -30,7 +30,7 @@ $accountStmt->close();
 $allowedAccountIds = array_fill_keys(array_map('intval', array_column($accounts, 'id')), true);
 $showLocations = ($_SESSION['login_region'] ?? 'factory') === 'factory';
 $locations = $showLocations
-    ? $conn->query('SELECT id, name, address, is_active FROM locations ORDER BY is_active DESC, name')->fetch_all(MYSQLI_ASSOC)
+    ? $conn->query('SELECT id, name, address, is_active FROM locations l WHERE ' . getLocationChannelScopeSql('l') . ' ORDER BY is_active DESC, name')->fetch_all(MYSQLI_ASSOC)
     : [];
 $allowedLocationIds = array_fill_keys(array_map('intval', array_column($locations, 'id')), true);
 $currencies = financeAccountCurrencies();

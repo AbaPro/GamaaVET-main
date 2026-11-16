@@ -9,6 +9,10 @@ if (!hasPermission('locations.edit')) {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $id = sanitize($_POST['id']);
+    if (!canAccessLocation($id) || !isLocationNameAllowedInCurrentChannel($_POST['name'])) {
+        setAlert('danger', 'Location unavailable in this channel.');
+        redirect('index.php');
+    }
     $name = sanitize($_POST['name']);
     $address = sanitize($_POST['address']);
     $description = sanitize($_POST['description']);

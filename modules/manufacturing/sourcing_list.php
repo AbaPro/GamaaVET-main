@@ -66,7 +66,7 @@ $canViewNames = hasPermission('manufacturing.component.name.view');
 $plan = manufacturing_sourcing_plan($filters, $canViewNames);
 $customers = $pdo->query('SELECT c.id, c.name FROM customers c LEFT JOIN factories customer_factory ON customer_factory.id = c.factory_id WHERE '
     . getCustomerChannelScopeSql('c', 'customer_factory') . ' ORDER BY c.name')->fetchAll(PDO::FETCH_ASSOC);
-$locations = $pdo->query('SELECT id, name FROM locations WHERE is_active = 1 ORDER BY name')->fetchAll(PDO::FETCH_ASSOC);
+$locations = $pdo->query('SELECT id, name FROM locations l WHERE is_active = 1 AND ' . getLocationChannelScopeSql('l') . ' ORDER BY name')->fetchAll(PDO::FETCH_ASSOC);
 function sourcing_plan_quantity(float $value): string {
     return rtrim(rtrim(number_format($value, 7), '0'), '.');
 }

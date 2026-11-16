@@ -54,7 +54,7 @@ $productStmt->close();
 $old = $_POST;
 
 $locations = [];
-$locationsResult = $conn->query("SELECT id, name, address FROM locations WHERE is_active = 1 ORDER BY name");
+$locationsResult = $conn->query("SELECT id, name, address FROM locations l WHERE is_active = 1 AND " . getLocationChannelScopeSql('l') . " ORDER BY name");
 if ($locationsResult) {
     while ($locationRow = $locationsResult->fetch_assoc()) {
         $locations[] = $locationRow;
@@ -97,7 +97,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $productIsValid = (int)$productMatchCount === 1;
     }
 
-    if ($locationId <= 0) {
+    if (!canAccessLocation($locationId, true)) {
         setAlert('danger', 'Please select a location for this manufacturing order.');
     } elseif (!$productIsValid) {
         setAlert('danger', 'Please select a final product for this Factory customer.');
@@ -108,6 +108,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $previousStatus = $order['status'];
 
             $pdo->beginTransaction();
+            $lockedOrder = manufacturing_lock_stock_order($pdo, $orderId);
+            $previousStatus = $lockedOrder['status'];
+            $status = !empty($_POST['cancel_order']) ? 'cancelled' : $previousStatus;
+
+            // Return only the original withdrawals, before marking the order cancelled.
+            if ($status === 'cancelled' && $previousStatus !== 'cancelled') {
+                $deductedStmt = $pdo->prepare('SELECT * FROM manufacturing_sourcing_components
+                    WHERE manufacturing_order_id = ? AND product_id IS NOT NULL AND deducted_at IS NOT NULL
+                    ORDER BY product_id, id FOR UPDATE');
+                $deductedStmt->execute([$orderId]);
+                foreach ($deductedStmt->fetchAll(PDO::FETCH_ASSOC) as $component) {
+                    manufacturing_return_component_stock($pdo, $component);
+                }
+            }
 
             $updateStmt = $pdo->prepare("
                 UPDATE manufacturing_orders
@@ -116,67 +130,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ");
             $updateStmt->execute([$locationId, $productIdValue, $bottleSizeId, $batchSize, $dueDateValue, $priority, $orderNotes, $status, $orderId]);
 
-            // Restock inventory when order transitions to cancelled
-            $stockLogs = [];
-            if ($status === 'cancelled' && $previousStatus !== 'cancelled') {
-                $deductedStmt = $pdo->prepare("
-                    SELECT id, product_id, required_quantity
-                    FROM manufacturing_sourcing_components
-                    WHERE manufacturing_order_id = ? AND product_id IS NOT NULL AND deducted_at IS NOT NULL
-                ");
-                $deductedStmt->execute([$orderId]);
-                $deductedRows = $deductedStmt->fetchAll(PDO::FETCH_ASSOC);
-
-                foreach ($deductedRows as $dc) {
-                    $stockBeforeStmt = $conn->prepare("
-                        SELECT ip.inventory_id, ip.quantity
-                        FROM inventory_products ip
-                        JOIN inventories inv ON inv.id = ip.inventory_id
-                        WHERE ip.product_id = ? AND inv.location_id = ?
-                    ");
-                    $stockBeforeStmt->bind_param("ii", $dc['product_id'], $order['location_id']);
-                    $stockBeforeStmt->execute();
-                    $stockBeforeRows = $stockBeforeStmt->get_result()->fetch_all(MYSQLI_ASSOC);
-                    $stockBeforeStmt->close();
-
-                    $pdo->prepare("
-                        UPDATE inventory_products ip
-                        JOIN inventories inv ON inv.id = ip.inventory_id
-                        SET ip.quantity = ip.quantity + ?
-                        WHERE ip.product_id = ? AND inv.location_id = ?
-                    ")->execute([$dc['required_quantity'], $dc['product_id'], $order['location_id']]);
-
-                    $pdo->prepare("UPDATE manufacturing_sourcing_components SET deducted_at = NULL WHERE id = ?")->execute([$dc['id']]);
-                    foreach ($stockBeforeRows as $stockBeforeRow) {
-                        $stockLogs[] = [
-                            'inventory_id' => (int)$stockBeforeRow['inventory_id'],
-                            'product_id' => (int)$dc['product_id'],
-                            'change_quantity' => (float)$dc['required_quantity'],
-                            'quantity_before' => (float)$stockBeforeRow['quantity'],
-                            'quantity_after' => (float)$stockBeforeRow['quantity'] + (float)$dc['required_quantity'],
-                        ];
-                    }
-                }
-            }
-
             // Recalculate both sources through the same guarded path as creation/viewing.
             manufacturing_sync_sourcing($orderId);
 
             $pdo->commit();
-            foreach ($stockLogs as $stockLog) {
-                logInventoryStockChange(
-                    $stockLog['inventory_id'],
-                    $stockLog['product_id'],
-                    $stockLog['change_quantity'],
-                    $stockLog['quantity_before'],
-                    $stockLog['quantity_after'],
-                    'manufacturing_cancel',
-                    $orderId,
-                    null,
-                    null,
-                    'Manufacturing order cancelled and deducted stock restored'
-                );
-            }
             setAlert('success', 'Manufacturing order updated successfully.');
             logActivity("Updated manufacturing order ID: $orderId", ['order_id' => $orderId], 'update', 'manufacturing_order', $orderId);
             redirect('order.php?id=' . $orderId);

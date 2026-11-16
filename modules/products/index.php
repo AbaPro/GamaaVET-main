@@ -232,7 +232,7 @@ $productsTableColspan = 8 + ($showUnitColumn ? 1 : 0) + ($showSellingPriceColumn
 
 // Fetch all active inventories (1 query)
 $inventories = [];
-$invResult = $conn->query("SELECT id, name FROM inventories WHERE is_active = 1 ORDER BY name");
+$invResult = $conn->query("SELECT id, name FROM inventories i WHERE is_active = 1 AND " . getInventoryChannelScopeSql('i') . " ORDER BY name");
 if ($invResult) {
     while ($invRow = $invResult->fetch_assoc()) {
         $inventories[] = $invRow;

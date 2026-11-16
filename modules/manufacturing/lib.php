@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . "/sourcing.php";
+require_once __DIR__ . "/stock.php";
 require_once __DIR__ . "/packaging.php";
 require_once __DIR__ . "/waste.php";
 require_once __DIR__ . "/../../includes/formula_access.php";
@@ -1252,23 +1253,27 @@ function manufacturing_detect_order_audit_notes($conn, $order, $steps) {
     }
 
     $missingStmt = $conn->prepare("
-        SELECT component_name, required_quantity, unit,
+        SELECT msc.component_name, SUM(msc.required_quantity) AS required_quantity, msc.unit, p.unit AS stock_unit,
                COALESCE((
                    SELECT SUM(ip.quantity)
                    FROM inventory_products ip
                    JOIN inventories inv ON inv.id = ip.inventory_id
                    WHERE ip.product_id = msc.product_id AND inv.location_id = ?
+                     AND inv.is_active = 1 AND inv.system_key IS NULL AND " . getInventoryChannelScopeSql('inv') . "
                ), 0) AS available_qty
         FROM manufacturing_sourcing_components msc
-        WHERE msc.manufacturing_order_id = ? AND msc.product_id IS NOT NULL
-        GROUP BY msc.component_name, msc.product_id, msc.required_quantity, msc.unit
-        HAVING available_qty < required_quantity
+        LEFT JOIN products p ON p.id = msc.product_id
+        WHERE msc.manufacturing_order_id = ? AND msc.product_id IS NOT NULL AND msc.deducted_at IS NULL
+        GROUP BY msc.component_name, msc.product_id, msc.unit, p.unit
     ");
     $locationId = (int)($order['location_id'] ?? 0);
     $missingStmt->bind_param('ii', $locationId, $orderId);
     $missingStmt->execute();
     $missingResult = $missingStmt->get_result();
     while ($row = $missingResult->fetch_assoc()) {
+        $available = convertProductUnitQuantity((float)$row['available_qty'], $row['stock_unit'] ?? '', $row['unit']);
+        if ($available !== null && $available >= (float)$row['required_quantity']) continue;
+        $row['available_qty'] = $available === null ? 'unknown (check units)' : $available . ' ' . $row['unit'];
         $notes[] = [
             'severity' => 'danger',
             'title' => 'Missing material quantity',

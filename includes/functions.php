@@ -1265,7 +1265,7 @@ function getInventoryQuantitiesForProduct($product_id) {
                            FROM inventory_products ip 
                            JOIN inventories i ON ip.inventory_id = i.id 
                            LEFT JOIN locations l ON i.location_id = l.id
-                           WHERE ip.product_id = ?");
+                           WHERE ip.product_id = ? AND " . getInventoryChannelScopeSql('i'));
     $stmt->bind_param("i", $product_id);
     $stmt->execute();
     $result = $stmt->get_result();
@@ -1456,6 +1456,26 @@ function getVendorPayablesSummary() {
     ];
 }
 
+/** CureVet's legacy location has no channel column; keep it inside CureVet. */
+function getLocationChannelScopeSql($locationAlias = 'l') {
+    if (($_SESSION['login_region'] ?? 'factory') === 'curva') return '1=1';
+    return "LOWER(REPLACE(REPLACE(REPLACE(TRIM($locationAlias.name), ' ', ''), '-', ''), '_', '')) NOT IN ('curevet', 'curevetinventory')";
+}
+
+function isLocationNameAllowedInCurrentChannel($name) {
+    return ($_SESSION['login_region'] ?? 'factory') === 'curva'
+        || !in_array(preg_replace('/[\s_-]+/u', '', mb_strtolower(trim((string)$name))), ['curevet', 'curevetinventory'], true);
+}
+
+function canAccessLocation($locationId, $activeOnly = false) {
+    global $pdo;
+    if ((int)$locationId <= 0) return false;
+    $stmt = $pdo->prepare('SELECT id FROM locations l WHERE l.id = ? AND ' . getLocationChannelScopeSql('l')
+        . ($activeOnly ? ' AND l.is_active = 1' : ''));
+    $stmt->execute([(int)$locationId]);
+    return (bool)$stmt->fetchColumn();
+}
+
 function getInventoryChannelScopeSql($inventoryAlias = 'i') {
     global $conn;
 
@@ -1464,9 +1484,11 @@ function getInventoryChannelScopeSql($inventoryAlias = 'i') {
     // direct_sale value has not been backfilled yet. The matching migration
     // fixes the stored value; this fallback protects existing deployments too.
     $legacyCureVetInventory = "LOWER(REPLACE(TRIM($inventoryAlias.name), ' ', '')) IN ('curevet', 'curevetinventory')";
+    $locationScope = "NOT EXISTS (SELECT 1 FROM locations channel_location WHERE channel_location.id = $inventoryAlias.location_id AND NOT ("
+        . getLocationChannelScopeSql('channel_location') . '))';
 
     if ($loginRegion === 'factory') {
-        return "$inventoryAlias.direct_sale IS NULL AND NOT ($legacyCureVetInventory)";
+        return "$inventoryAlias.direct_sale IS NULL AND NOT ($legacyCureVetInventory) AND $locationScope";
     }
 
     $escapedRegion = $conn->real_escape_string($loginRegion);
@@ -1475,7 +1497,7 @@ function getInventoryChannelScopeSql($inventoryAlias = 'i') {
             . "($inventoryAlias.direct_sale IS NULL AND $legacyCureVetInventory))";
     }
 
-    return "$inventoryAlias.direct_sale = '$escapedRegion'";
+    return "$inventoryAlias.direct_sale = '$escapedRegion' AND NOT ($legacyCureVetInventory) AND $locationScope";
 }
 
 /**

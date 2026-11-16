@@ -12,6 +12,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $address = sanitize($_POST['address']);
     $description = sanitize($_POST['description']);
     $is_active = isset($_POST['is_active']) ? 1 : 0;
+    if (!isLocationNameAllowedInCurrentChannel($_POST['name'])) {
+        setAlert('danger', 'Location unavailable in this channel.');
+        redirect('index.php');
+    }
     
     // Check if location already exists
     $check_sql = "SELECT id FROM locations WHERE name = ?";

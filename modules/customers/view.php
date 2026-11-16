@@ -127,7 +127,7 @@ $customer_products_sql = "SELECT p.id, p.name, p.sku, p.type,
                                  l.name as location_name, 
                                  ip.quantity $customerProductPriceSelect
                           FROM products p
-                          LEFT JOIN inventory_products ip ON p.id = ip.product_id
+                          LEFT JOIN inventory_products ip ON p.id = ip.product_id AND EXISTS (SELECT 1 FROM inventories scoped_inventory WHERE scoped_inventory.id = ip.inventory_id AND " . getInventoryChannelScopeSql('scoped_inventory') . ")
                           LEFT JOIN inventories i ON ip.inventory_id = i.id
                           LEFT JOIN locations l ON i.location_id = l.id
                           WHERE p.customer_id = ?" . ((isSalesPersonUser() || ($_SESSION['login_region'] ?? 'factory') !== 'factory') ? " AND p.type = 'final'" : "") . "

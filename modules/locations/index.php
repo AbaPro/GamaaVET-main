@@ -10,6 +10,10 @@ if (!hasPermission('locations.view')) {
 // Handle delete request BEFORE headers are sent
 if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
     $id = sanitize($_GET['delete']);
+    if (!canAccessLocation($id)) {
+        setAlert('danger', 'Location unavailable in this channel.');
+        redirect('index.php');
+    }
     
     // Check if location has inventories
     $check_sql = "SELECT COUNT(*) as count FROM inventories WHERE location_id = ?";
@@ -42,7 +46,7 @@ $page_title = 'Locations Management';
 require_once '../../includes/header.php';
 
 // Fetch all locations
-$sql = "SELECT * FROM locations ORDER BY name";
+$sql = "SELECT * FROM locations l WHERE " . getLocationChannelScopeSql('l') . " ORDER BY name";
 $result = $conn->query($sql);
 ?>
 

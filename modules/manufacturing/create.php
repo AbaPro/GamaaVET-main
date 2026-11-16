@@ -28,7 +28,8 @@ if ($salesOrderId > 0 || $salesOrderItemId > 0) {
                    COALESCE((
                        SELECT SUM(ip.quantity)
                        FROM inventory_products ip
-                       WHERE ip.product_id = oi.product_id
+                       JOIN inventories si ON si.id = ip.inventory_id
+                       WHERE ip.product_id = oi.product_id AND " . getInventoryChannelScopeSql('si') . "
                    ), 0) AS current_stock
             FROM orders o
             JOIN order_items oi ON oi.order_id = o.id
@@ -68,7 +69,7 @@ if ($productResult) {
 }
 
 $locations = [];
-$locationsResult = $conn->query("SELECT id, name, address FROM locations WHERE is_active = 1 ORDER BY name");
+$locationsResult = $conn->query("SELECT id, name, address FROM locations l WHERE is_active = 1 AND " . getLocationChannelScopeSql('l') . " ORDER BY name");
 if ($locationsResult) {
     while ($locationRow = $locationsResult->fetch_assoc()) {
         $locations[] = $locationRow;
@@ -128,7 +129,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         setAlert('danger', 'Please select the customer for this manufacturing order.');
     } elseif (!$productIsValid) {
         setAlert('danger', 'Please select the final product for this manufacturing order.');
-    } elseif ($locationId <= 0) {
+    } elseif (!canAccessLocation($locationId, true)) {
         setAlert('danger', 'Please select a location for this manufacturing order.');
     } elseif (!$formulaIsValid) {
         setAlert('danger', 'Please select a formula for this manufacturing order.');

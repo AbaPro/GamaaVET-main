@@ -463,76 +463,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    // Store receipt approval status and notes; restock inventory for rejected items
-    if ($stepKey === 'receipt') {
-        $receiptStatuses = $_POST['receipt_status'] ?? [];
-        $receiptNotes = $_POST['receipt_notes'] ?? [];
-
-        if (is_array($receiptStatuses)) {
-            foreach ($receiptStatuses as $compId => $newStatus) {
-                $compId = (int)$compId;
-                $note = $receiptNotes[$compId] ?? '';
-
-                // Fetch previous status to decide if we need to restock
-                $hasDeductedAt = $conn->query("SHOW COLUMNS FROM manufacturing_sourcing_components LIKE 'deducted_at'")->num_rows > 0;
-                $prevSql = $hasDeductedAt
-                    ? "SELECT receipt_status, deducted_at, product_id, required_quantity FROM manufacturing_sourcing_components WHERE id = ? AND manufacturing_order_id = ?"
-                    : "SELECT receipt_status, product_id, required_quantity FROM manufacturing_sourcing_components WHERE id = ? AND manufacturing_order_id = ?";
-                $prevStmt = $conn->prepare($prevSql);
-                $prevStmt->bind_param("ii", $compId, $orderId);
-                $prevStmt->execute();
-                $prevComp = $prevStmt->get_result()->fetch_assoc();
-                $prevStmt->close();
-
-                $wasDeducted = $hasDeductedAt ? ($prevComp['deducted_at'] ?? null) !== null : false;
-                if ($prevComp && $newStatus === 'rejected' && $wasDeducted && $prevComp['product_id']) {
-                    $stockBeforeStmt = $conn->prepare("
-                        SELECT ip.inventory_id, ip.quantity
-                        FROM inventory_products ip
-                        JOIN inventories inv ON inv.id = ip.inventory_id
-                        WHERE ip.product_id = ? AND inv.location_id = ?
-                    ");
-                    $stockBeforeStmt->bind_param("ii", $prevComp['product_id'], $order['location_id']);
-                    $stockBeforeStmt->execute();
-                    $stockBeforeRows = $stockBeforeStmt->get_result()->fetch_all(MYSQLI_ASSOC);
-                    $stockBeforeStmt->close();
-
-                    // Restock: add the quantity back to the location's inventory
-                    $pdo->prepare("
-                        UPDATE inventory_products ip
-                        JOIN inventories inv ON inv.id = ip.inventory_id
-                        SET ip.quantity = ip.quantity + ?
-                        WHERE ip.product_id = ? AND inv.location_id = ?
-                    ")->execute([$prevComp['required_quantity'], $prevComp['product_id'], $order['location_id']]);
-
-                    if ($hasDeductedAt) {
-                        $pdo->prepare("UPDATE manufacturing_sourcing_components SET deducted_at = NULL WHERE id = ?")->execute([$compId]);
-                    }
-
-                    foreach ($stockBeforeRows as $stockBeforeRow) {
-                        logInventoryStockChange(
-                            (int)$stockBeforeRow['inventory_id'],
-                            (int)$prevComp['product_id'],
-                            (float)$prevComp['required_quantity'],
-                            (float)$stockBeforeRow['quantity'],
-                            (float)$stockBeforeRow['quantity'] + (float)$prevComp['required_quantity'],
-                            'manufacturing_receipt_reject',
-                            $orderId,
-                            null,
-                            null,
-                            'Rejected material restocked from manufacturing receipt'
-                        );
-                    }
-                }
-
-                $updateReceiptStmt = $conn->prepare("UPDATE manufacturing_sourcing_components SET receipt_status = ?, receipt_notes = ? WHERE id = ? AND manufacturing_order_id = ?");
-                $updateReceiptStmt->bind_param("ssii", $newStatus, $note, $compId, $orderId);
-                $updateReceiptStmt->execute();
-                $updateReceiptStmt->close();
-            }
-        }
-    }
-
     // Store preparation measurements for preparation step
     if ($stepKey === 'preparation') {
         $prepMeasurements = $_POST['prep_measurements'] ?? [];
@@ -799,132 +729,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $updateDeliveryStmt->close();
     }
 
-    // Special validation for sourcing step when completing
-    if ($stepKey === 'sourcing' && $statusInput === 'completed') {
-        // Check if all required quantities are available
-        // Only check products (components with product_id), skip manual components
-        $sourcingStmt = $conn->prepare("
-            SELECT msc.component_name, msc.product_id, SUM(msc.required_quantity) AS required_quantity, msc.unit,
-                   p.barcode,
-                   COALESCE((
-                       SELECT SUM(ip.quantity)
-                       FROM inventory_products ip
-                       JOIN inventories inv ON inv.id = ip.inventory_id
-                       WHERE ip.product_id = msc.product_id AND inv.location_id = ?
-                   ), 0) AS available_qty
-            FROM manufacturing_sourcing_components msc
-            LEFT JOIN products p ON p.id = msc.product_id
-            WHERE msc.manufacturing_order_id = ? AND msc.product_id IS NOT NULL
-            GROUP BY msc.component_name, msc.product_id, msc.unit, p.barcode
-        ");
-        $sourcingStmt->bind_param("ii", $order['location_id'], $orderId);
-        $sourcingStmt->execute();
-        $sourcingResult = $sourcingStmt->get_result();
-        
-        $insufficientQty = false;
-        $insufficientItems = [];
-        while ($comp = $sourcingResult->fetch_assoc()) {
-            $availableQty = $comp['available_qty'] ?? 0;
-            if ($availableQty < $comp['required_quantity']) {
-                $insufficientQty = true;
-                $insufficientItems[] = $comp['component_name'] . ' (need: ' . $comp['required_quantity'] . ' ' . $comp['unit'] . ', have: ' . $availableQty . ')';
-            }
-        }
-        $sourcingStmt->close();
-        
-        if ($insufficientQty) {
-            setAlert('danger', 'Cannot complete sourcing: Insufficient quantities in location. Missing: ' . implode(', ', $insufficientItems));
-            redirect('order.php?id=' . $orderId);
-        }
-
-        // Deduct all sourcing components from inventory (only if deducted_at column exists)
-        $hasDeductedAt = $conn->query("SHOW COLUMNS FROM manufacturing_sourcing_components LIKE 'deducted_at'")->num_rows > 0;
-
-        // Group by product_id to merge duplicate formula rows before deducting inventory.
-        $deductSql = $hasDeductedAt
-            ? "SELECT GROUP_CONCAT(msc.id) AS ids, msc.product_id, SUM(msc.required_quantity) AS required_quantity FROM manufacturing_sourcing_components msc WHERE msc.manufacturing_order_id = ? AND msc.product_id IS NOT NULL AND msc.deducted_at IS NULL GROUP BY msc.product_id"
-            : "SELECT GROUP_CONCAT(msc.id) AS ids, msc.product_id, SUM(msc.required_quantity) AS required_quantity FROM manufacturing_sourcing_components msc WHERE msc.manufacturing_order_id = ? AND msc.product_id IS NOT NULL GROUP BY msc.product_id";
-
-        $deductFetchStmt = $conn->prepare($deductSql);
-        $deductFetchStmt->bind_param("i", $orderId);
-        $deductFetchStmt->execute();
-        $deductResult = $deductFetchStmt->get_result();
-        $toDeduct = [];
-        while ($dc = $deductResult->fetch_assoc()) {
-            $toDeduct[] = $dc;
-        }
-        $deductFetchStmt->close();
-
-        foreach ($toDeduct as $dc) {
-            $stockBeforeStmt = $conn->prepare("
-                SELECT ip.inventory_id, ip.quantity
-                FROM inventory_products ip
-                JOIN inventories inv ON inv.id = ip.inventory_id
-                WHERE ip.product_id = ? AND inv.location_id = ?
-            ");
-            $stockBeforeStmt->bind_param("ii", $dc['product_id'], $order['location_id']);
-            $stockBeforeStmt->execute();
-            $stockBeforeRows = $stockBeforeStmt->get_result()->fetch_all(MYSQLI_ASSOC);
-            $stockBeforeStmt->close();
-
-            $pdo->prepare("
-                UPDATE inventory_products ip
-                JOIN inventories inv ON inv.id = ip.inventory_id
-                SET ip.quantity = ip.quantity - ?
-                WHERE ip.product_id = ? AND inv.location_id = ?
-            ")->execute([$dc['required_quantity'], $dc['product_id'], $order['location_id']]);
-
-            if ($hasDeductedAt) {
-                foreach (explode(',', $dc['ids']) as $rowId) {
-                    $pdo->prepare("UPDATE manufacturing_sourcing_components SET deducted_at = NOW() WHERE id = ?")->execute([(int)$rowId]);
-                }
-            }
-
-            foreach ($stockBeforeRows as $stockBeforeRow) {
-                logInventoryStockChange(
-                    (int)$stockBeforeRow['inventory_id'],
-                    (int)$dc['product_id'],
-                    -(float)$dc['required_quantity'],
-                    (float)$stockBeforeRow['quantity'],
-                    (float)$stockBeforeRow['quantity'] - (float)$dc['required_quantity'],
-                    'manufacturing_sourcing',
-                    $orderId,
-                    null,
-                    null,
-                    'Sourcing component deducted for manufacturing order'
-                );
-            }
-        }
-    }
-
-    // Special validation for receipt step when completing
-    if ($stepKey === 'receipt' && $statusInput === 'completed') {
-        // Check if all materials are approved
-        $receiptCheckStmt = $conn->prepare("
-            SELECT component_name, receipt_status
-            FROM manufacturing_sourcing_components
-            WHERE manufacturing_order_id = ?
-        ");
-        $receiptCheckStmt->bind_param("i", $orderId);
-        $receiptCheckStmt->execute();
-        $receiptCheckResult = $receiptCheckStmt->get_result();
-        
-        $hasUnapproved = false;
-        $unapprovedItems = [];
-        while ($comp = $receiptCheckResult->fetch_assoc()) {
-            if ($comp['receipt_status'] !== 'approved') {
-                $hasUnapproved = true;
-                $unapprovedItems[] = $comp['component_name'] . ' (' . ($comp['receipt_status'] ?? 'pending') . ')';
-            }
-        }
-        $receiptCheckStmt->close();
-        
-        if ($hasUnapproved) {
-            setAlert('danger', 'Cannot complete receipt step: All materials must be approved. Pending/Rejected: ' . implode(', ', $unapprovedItems));
-            redirect('order.php?id=' . $orderId);
-        }
-    }
-
     // Special validation for quality step when completing
     if ($stepKey === 'quality' && $statusInput === 'completed') {
         // Check if all checklist items are approved (case-insensitive and trimmed)
@@ -1021,6 +825,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $currentStepLock = $pdo->prepare('SELECT status FROM manufacturing_order_steps WHERE id = ? FOR UPDATE');
         $currentStepLock->execute([$stepRow['id']]);
         if ($currentStepLock->fetchColumn() === 'completed') throw new RuntimeException('This step is already completed.');
+
+        if ($action !== 'regenerate' && $stepKey === 'sourcing' && $statusToSave === 'completed') {
+            manufacturing_deduct_sourcing_stock($pdo, $orderId);
+        }
+        if ($action !== 'regenerate' && $stepKey === 'receipt') {
+            $receiptStatuses = $_POST['receipt_status'] ?? [];
+            $receiptNotes = $_POST['receipt_notes'] ?? [];
+            if (!is_array($receiptStatuses) || !is_array($receiptNotes)) throw new DomainException('Invalid receipt entries.');
+            manufacturing_save_receipt_stock($pdo, $orderId, $receiptStatuses, $receiptNotes);
+            if ($statusToSave === 'completed') {
+                $unapproved = $pdo->prepare("SELECT COUNT(*) FROM manufacturing_sourcing_components WHERE manufacturing_order_id = ? AND (receipt_status IS NULL OR receipt_status <> 'approved')");
+                $unapproved->execute([$orderId]);
+                if ((int)$unapproved->fetchColumn() > 0) throw new DomainException('Cannot complete receipt: all materials must be approved.');
+            }
+        }
 
         if ($stepKey === 'packaging') {
             $pdo->prepare("UPDATE manufacturing_packaging_checklist SET item_value = '' WHERE manufacturing_order_id = ? AND item_type = 'checkbox'")->execute([$orderId]);
@@ -1633,17 +1452,17 @@ $wasteStmt->execute([$orderId]); $wasteRows = $wasteStmt->fetchAll(PDO::FETCH_AS
                                         SELECT MIN(msc.id) AS id,
                                                msc.component_name, msc.product_id, SUM(msc.required_quantity) AS required_quantity,
                                                msc.unit, GROUP_CONCAT(DISTINCT msc.source) AS sources, GROUP_CONCAT(DISTINCT msc.notes SEPARATOR '; ') AS notes,
-                                               p.barcode, p.sku,
+                                               p.barcode, p.sku, p.unit AS stock_unit,
                                                COALESCE((
                                                    SELECT SUM(ip.quantity)
                                                    FROM inventory_products ip
                                                    JOIN inventories inv ON inv.id = ip.inventory_id
-                                                   WHERE ip.product_id = msc.product_id AND inv.location_id = ?
+                                                   WHERE ip.product_id = msc.product_id AND inv.location_id = ? AND inv.is_active = 1 AND inv.system_key IS NULL AND " . getInventoryChannelScopeSql('inv') . "
                                                ), 0) AS available_qty
                                         FROM manufacturing_sourcing_components msc
                                         LEFT JOIN products p ON p.id = msc.product_id
                                         WHERE msc.manufacturing_order_id = ?
-                                        GROUP BY msc.component_name, msc.product_id, msc.unit, p.barcode, p.sku
+                                        GROUP BY msc.component_name, msc.product_id, msc.unit, p.barcode, p.sku, p.unit
                                         ORDER BY MIN(CASE WHEN msc.source = 'formula' THEN 0 ELSE 1 END), MIN(msc.formula_component_index)
                                     ");
                                     $sourcingStmt->bind_param("ii", $order['location_id'], $orderId);
@@ -1671,7 +1490,7 @@ $wasteStmt->execute([$orderId]); $wasteRows = $wasteStmt->fetchAll(PDO::FETCH_AS
                                             <tbody>
                                                 <?php foreach ($sourcingComponents as $sc): ?>
                                                     <?php
-                                                    $availableQty = $sc['available_qty'] ?? 0;
+                                                    $availableQty = convertProductUnitQuantity((float)($sc['available_qty'] ?? 0), $sc['stock_unit'] ?? '', $sc['unit']);
                                                     $requiredQty  = $sc['required_quantity'];
                                                     $displayQty   = (float)$requiredQty;
                                                     $displayUnit  = $sc['unit'];
@@ -1682,9 +1501,9 @@ $wasteStmt->execute([$orderId]); $wasteRows = $wasteStmt->fetchAll(PDO::FETCH_AS
                                                         $displayQty  /= 1000;
                                                         $displayUnit  = 'L';
                                                     }
-                                                    $isValid = $availableQty >= $requiredQty;
+                                                    $isValid = $availableQty !== null && $availableQty >= $requiredQty;
                                                     $statusClass = $isValid ? 'table-success' : 'table-danger';
-                                                    $statusText = $isValid ? '✓ OK' : '✗ Insufficient';
+                                                    $statusText = $availableQty === null ? '✗ Check units' : ($isValid ? '✓ OK' : '✗ Insufficient');
                                                     ?>
                                                     <tr>
                                                         <td>
@@ -1701,7 +1520,7 @@ $wasteStmt->execute([$orderId]); $wasteRows = $wasteStmt->fetchAll(PDO::FETCH_AS
                                                         </td>
                                                         <td><?= htmlspecialchars(rtrim(rtrim(number_format($displayQty, 4), '0'), '.')); ?></td>
                                                         <td><?= htmlspecialchars($displayUnit); ?></td>
-                                                        <td><?= htmlspecialchars($availableQty); ?></td>
+                                                        <td><?= $availableQty === null ? '—' : e(fmt_qty((float)$availableQty, $sc['unit'])); ?></td>
                                                         <td class="<?= $statusClass; ?> text-center fw-bold"><?= $statusText; ?></td>
                                                         <td>
                                                             <input type="text" class="form-control form-control-sm" 

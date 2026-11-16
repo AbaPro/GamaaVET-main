@@ -63,7 +63,7 @@ $locations = [];
 $filterLocations = [];
 $locationRows = $pdo->query("SELECT DISTINCT l.id, l.name, l.address FROM locations l JOIN inventories i ON i.location_id = l.id WHERE $inventoryScope ORDER BY l.name");
 foreach ($locationRows->fetchAll(PDO::FETCH_ASSOC) as $loc) $filterLocations[$loc['id']] = $loc;
-foreach ($pdo->query('SELECT id, name, address FROM locations ORDER BY name')->fetchAll(PDO::FETCH_ASSOC) as $loc) $locations[$loc['id']] = $loc;
+foreach ($pdo->query('SELECT id, name, address FROM locations l WHERE ' . getLocationChannelScopeSql('l') . ' ORDER BY name')->fetchAll(PDO::FETCH_ASSOC) as $loc) $locations[$loc['id']] = $loc;
 $locationFilter = $_GET['location_id'] ?? '';
 if (!is_string($locationFilter) || ($locationFilter !== '' && $locationFilter !== 'shared' && (!ctype_digit($locationFilter) || !isset($filterLocations[(int)$locationFilter])))) {
     http_response_code(400); exit('Invalid location filter.');

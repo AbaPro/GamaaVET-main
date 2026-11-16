@@ -21,6 +21,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $conn->begin_transaction();
     
     try {
+        if (!canAccessInventory($inventory_id) || !canAccessProduct($final_product_id)) {
+            throw new Exception('Product or inventory unavailable in this channel.');
+        }
         // Get all components for the final product
         $components_sql = "SELECT pc.component_id, pc.quantity as required_quantity, p.name 
                            FROM product_components pc 
@@ -165,7 +168,7 @@ $final_products_sql = "SELECT id, name, sku FROM products WHERE type = 'final' O
 $final_products_result = $conn->query($final_products_sql);
 
 // Get all active inventories
-$inventories_sql = "SELECT id, name FROM inventories WHERE is_active = 1 ORDER BY name";
+$inventories_sql = "SELECT id, name FROM inventories i WHERE is_active = 1 AND " . getInventoryChannelScopeSql('i') . " ORDER BY name";
 $inventories_result = $conn->query($inventories_sql);
 ?>
 

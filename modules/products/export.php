@@ -84,7 +84,7 @@ if ($searchFilter !== null) {
 }
 
 $sql = "SELECT p.*, c1.name as category_name, c2.name as subcategory_name, cust.name as customer_name,
-               COALESCE((SELECT SUM(ip.quantity) FROM inventory_products ip JOIN inventories inv ON ip.inventory_id = inv.id WHERE ip.product_id = p.id AND inv.is_active = 1), 0) AS total_quantity
+               COALESCE((SELECT SUM(ip.quantity) FROM inventory_products ip JOIN inventories inv ON ip.inventory_id = inv.id WHERE ip.product_id = p.id AND inv.is_active = 1 AND " . getInventoryChannelScopeSql('inv') . "), 0) AS total_quantity
         FROM products p
         LEFT JOIN categories c1 ON p.category_id = c1.id
         LEFT JOIN categories c2 ON p.subcategory_id = c2.id

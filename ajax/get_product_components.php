@@ -26,6 +26,11 @@ if (!canAccessProduct($product_id)) {
     exit;
 }
 $inventory_id = isset($_GET['inventory_id']) && is_numeric($_GET['inventory_id']) ? sanitize($_GET['inventory_id']) : null;
+if ($inventory_id && !canAccessInventory($inventory_id)) {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'message' => 'Inventory unavailable in this channel.']);
+    exit;
+}
 
 // Get product components
 $components_sql = "SELECT pc.component_id, pc.quantity as required_quantity, p.name, p.sku 

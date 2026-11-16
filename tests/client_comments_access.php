@@ -132,6 +132,76 @@ try {
     accessCheck($request('modules/inventories/index.php?location_id=999999999')[0]===400,'Unknown location filter rejected');
     accessCheck($request('modules/inventories/delete_product.php?inventory_id='.$f['inventories'][0].'&product_id='.$f['products'][0])[0]===403,'GET cannot delete inventory items');
     accessCheck($request('modules/inventories/delete_product.php',['inventory_id'=>$f['inventories'][0],'product_id'=>$f['products'][0]])[0]===403,'Missing CSRF token cannot delete inventory items');
+    if (!$keep) {
+        // CureVet's location must not be offered or accepted in the Factory channel.
+        $cureLocation = $pdo->query("SELECT id FROM locations WHERE LOWER(REPLACE(TRIM(name),' ','')) = 'curevet' LIMIT 1")->fetchColumn();
+        if (!$cureLocation) {
+            $pdo->exec("INSERT INTO locations (name,is_active) VALUES ('Cure Vet',1)");
+            $cureLocation = (int)$pdo->lastInsertId();
+            $f['locations'][] = $cureLocation;
+        }
+        $grant(array_merge($basePermissions, ['manufacturing.orders.create','manufacturing.formula.view_all',
+            'manufacturing.orders.technical_details.view','manufacturing.view_step_sourcing','locations.view','products.view']));
+        foreach (['modules/manufacturing/create.php','modules/manufacturing/sourcing_list.php','modules/inventories/index.php'] as $page) {
+            [$pageStatus,$pageBody] = $request($page);
+            accessCheck($pageStatus===200 && !str_contains($pageBody,'Fatal error'), 'Factory page renders: '.$page);
+            preg_match_all('/<select\b[^>]*(?:name|id)=["\'][^"\']*location[^"\']*["\'][^>]*>.*?<\/select>/s', $pageBody, $locationSelects);
+            accessCheck(count($locationSelects[0]) > 0 && !preg_match('/<option[^>]*value=["\']'.(int)$cureLocation.'["\']/', implode('', $locationSelects[0])),
+                'CureVet location omitted from '.$page);
+        }
+        $q = $pdo->prepare('SELECT COUNT(*) FROM manufacturing_orders WHERE created_by = ?');
+        $q->execute([$f['user']]); $ordersBefore = (int)$q->fetchColumn();
+        [$ajaxStatus,$ajaxBody] = $request('ajax/create_manufacturing_order.php', ['customer_id'=>$f['customer'],
+            'product_id'=>$source['product_id'],'formula_id'=>$f['formula'],'location_id'=>$cureLocation,'batch_size'=>100]);
+        $q->execute([$f['user']]);
+        accessCheck((int)$q->fetchColumn()===$ordersBefore && (json_decode($ajaxBody,true)['success'] ?? true)===false,
+            'Forged manufacturing AJAX cannot use the CureVet location');
+        $request('modules/manufacturing/create.php', ['customer_id'=>$f['customer'],'product_id'=>$source['product_id'],
+            'formula_id'=>$f['formula'],'location_id'=>$cureLocation,'number_of_bottles'=>100]);
+        $q->execute([$f['user']]);
+        accessCheck((int)$q->fetchColumn()===$ordersBefore, 'Manufacturing form rejects the hidden CureVet location');
+        // Exercise stock changes through the actual workflow handler as well as helper tests.
+        $grant(array_merge($basePermissions, ['manufacturing.formula.view_all', 'manufacturing.orders.technical_details.view',
+            'manufacturing.view_step_sourcing', 'manufacturing.view_step_receipt']));
+        $pdo->prepare("UPDATE manufacturing_orders SET status = 'in_progress', finished_goods_added_at = NULL WHERE id = ?")->execute([$f['order']]);
+        $pdo->prepare("UPDATE manufacturing_order_steps SET status = 'pending' WHERE manufacturing_order_id = ?")->execute([$f['order']]);
+        $pdo->prepare('UPDATE inventories SET location_id = ? WHERE id = ?')->execute([$f['locations'][0], $f['inventories'][1]]);
+        $pdo->prepare('INSERT INTO inventory_products (inventory_id,product_id,quantity) VALUES (?,?,20)')->execute([$f['inventories'][1], $f['products'][0]]);
+        $pdo->prepare('UPDATE manufacturing_formulas SET components_json = ? WHERE id = ?')->execute([
+            json_encode([['product_id'=>$f['products'][0], 'name'=>'ACCESS-SECRET-INGREDIENT', 'quantity'=>30, 'unit'=>'pcs']]), $f['formula']]);
+        [$status,$body]=$request($url);
+        accessCheck($status===200 && !str_contains($body,'Fatal error'), 'Sourcing page renders with stock unit conversion');
+        preg_match('/name="manufacturing_csrf" value="([^"]+)"/', $body, $stockToken);
+        $component = $pdo->query('SELECT id FROM manufacturing_sourcing_components WHERE manufacturing_order_id = ' . $f['order'])->fetchColumn();
+        $balances = function () use ($pdo, &$f): array {
+            $q = $pdo->prepare('SELECT quantity FROM inventory_products WHERE product_id = ? AND inventory_id IN (?,?) ORDER BY inventory_id');
+            $q->execute([$f['products'][0], $f['inventories'][0], $f['inventories'][1]]);
+            return array_map('floatval', $q->fetchAll(PDO::FETCH_COLUMN));
+        };
+        $sourcePost = ['manufacturing_csrf'=>$stockToken[1], 'action'=>'update', 'step_key'=>'sourcing', 'status'=>'completed'];
+        $request($url, $sourcePost);
+        accessCheck($balances()===[0.0,10.0], 'HTTP sourcing deducts 30 total across two warehouses');
+        $request($url, $sourcePost);
+        accessCheck($balances()===[0.0,10.0], 'Repeated HTTP sourcing cannot deduct again');
+        $reject = ['manufacturing_csrf'=>$stockToken[1], 'action'=>'update', 'step_key'=>'receipt', 'status'=>'completed',
+            'receipt_status'=>[$component=>'rejected']];
+        $request($url, $reject);
+        accessCheck($balances()===[0.0,10.0], 'Failed receipt completion rolls back its proposed stock return');
+        $reject['status']='in_progress';
+        $request($url, $reject);
+        accessCheck($balances()===[20.0,20.0], 'HTTP rejection returns exact original warehouse allocations');
+        $request($url, $reject);
+        accessCheck($balances()===[20.0,20.0], 'Repeated HTTP rejection cannot return stock twice');
+        $pdo->prepare("UPDATE manufacturing_order_steps SET status = 'pending' WHERE manufacturing_order_id = ? AND step_key = 'sourcing'")->execute([$f['order']]);
+        $request($url, $sourcePost);
+        accessCheck($balances()===[0.0,10.0], 'HTTP resourcing deducts the returned material once');
+        $grant(array_merge($basePermissions, ['manufacturing.edit', 'manufacturing.orders.technical_details.view']));
+        $request('modules/manufacturing/edit.php?id='.$f['order'], ['location_id'=>$f['locations'][1],
+            'product_id'=>$source['product_id'], 'batch_size'=>100, 'priority'=>'normal', 'cancel_order'=>1]);
+        accessCheck($balances()===[20.0,20.0]
+            && $pdo->query('SELECT status FROM manufacturing_orders WHERE id = '.$f['order'])->fetchColumn()==='cancelled',
+            'HTTP cancellation restores original warehouses even when a different location is submitted');
+    }
     if ($keep) { $retained = true; file_put_contents($fixtureFile,json_encode($f));echo "Browser fixture ready.\n"; }
 } finally {
     if (!$retained && isset($f['order'])) fixtureCleanup($f);
