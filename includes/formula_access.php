@@ -60,6 +60,10 @@ function canViewManufacturingTechnicalDetails() {
     return hasPermission('manufacturing.orders.technical_details.view');
 }
 
+function canViewManufacturingMaterialNames() {
+    return hasPermission('manufacturing.component.name.view') && canViewManufacturingFormula();
+}
+
 function canViewManufacturingAudit() {
     return hasPermission('manufacturing.audit.view') && canViewManufacturingTechnicalDetails()
         && canViewManufacturingFormula();
@@ -68,7 +72,7 @@ function canViewManufacturingAudit() {
 function canAccessManufacturingStep($step) {
     if (!hasPermission('manufacturing.view_step_' . $step)) return false;
     if (in_array($step, ['sourcing', 'receipt', 'preparation'], true)) {
-        return canViewManufacturingTechnicalDetails() && canViewManufacturingFormula();
+        return canViewManufacturingTechnicalDetails();
     }
     return !in_array($step, ['quality', 'packaging'], true) || canViewManufacturingTechnicalDetails();
 }

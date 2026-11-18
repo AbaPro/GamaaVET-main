@@ -2,6 +2,7 @@
 require_once __DIR__ . "/sourcing.php";
 require_once __DIR__ . "/stock.php";
 require_once __DIR__ . "/packaging.php";
+require_once __DIR__ . "/delivery_lib.php";
 require_once __DIR__ . "/waste.php";
 require_once __DIR__ . "/../../includes/formula_access.php";
 
@@ -252,7 +253,7 @@ function manufacturing_convert_to_relative_path($fullPath) {
 
 function manufacturing_build_step_document_html($order, $orderStep, $formula, $components, $notes, $statusLabel, $conn = null, $canViewComponentName = null) {
     if (!canAccessManufacturingStep($orderStep['step_key'])) return '<p>Step details are restricted.</p>';
-    $canViewComponentName = ($canViewComponentName ?? true) && hasPermission('manufacturing.component.name.view');
+    $canViewComponentName = ($canViewComponentName ?? true) && canViewManufacturingMaterialNames();
     $orderNumber = htmlspecialchars($order['order_number'] ?? 'UNKNOWN');
     $customerName = htmlspecialchars($order['customer_name'] ?? 'Unknown provider');
     
@@ -739,6 +740,8 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
     // Delivery data
     if ($stepKey === 'delivering') {
         $orderId = $order['id'];
+        $html .= '<h4>Shipment verification / مراجعة الشحنة</h4>';
+        $html .= manufacturing_delivery_counts_html(manufacturing_delivery_counts($conn, (int)$orderId));
         $deliveryStmt = $conn->prepare("
             SELECT recipient_name, recipient_phone, delivery_datetime, customer_notes, photo_path
             FROM manufacturing_delivery_info
@@ -793,7 +796,7 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
         $deliveryStmt->close();
     }
 
-    if ($stepKey === 'sourcing' && $conn && canViewManufacturingFormula()) {
+    if ($stepKey === 'sourcing' && $conn) {
         $html .= manufacturing_sourcing_document_html((int)$order['id'], $canViewComponentName);
     } elseif (canViewManufacturingFormula()) {
         $html .= '<table><thead><tr><th>Component</th><th>Quantity / Ratio</th><th>Unit</th><th>Notes</th></tr></thead><tbody>';

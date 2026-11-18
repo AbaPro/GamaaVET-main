@@ -10,6 +10,15 @@ if (!hasPermission('manufacturing.view')) {
 
 require_once 'lib.php';
 
+// Drivers enter the grouped delivery view from the existing Manufacturing menu.
+$otherVisibleSteps = array_filter(array_keys(manufacturing_get_step_definitions()), function ($key) {
+    return $key !== 'delivering' && canAccessManufacturingStep($key);
+});
+if (canAccessManufacturingStep('delivering') && !$otherVisibleSteps && ($_GET['view'] ?? '') !== 'manufacturing') {
+    redirect('delivery.php');
+    exit;
+}
+
 $page_title = 'Manufacturing Control Center';
 require_once '../../includes/header.php';
 
@@ -125,6 +134,9 @@ if (!empty($stepIds)) {
         <p class="text-muted mb-0">Track every staged order from getting materials through preparation and delivery, with automatic Excel/PDF handoffs at each transition.</p>
     </div>
     <div class="d-flex gap-2 flex-wrap">
+        <?php if (canAccessManufacturingStep('delivering')): ?>
+        <a href="delivery.php" class="btn btn-outline-primary"><i class="fas fa-truck me-1"></i> Delivery by Sales Order</a>
+        <?php endif; ?>
         <?= activityLogLink('manufacturing_order'); ?>
         <?php if (hasPermission('manufacturing.view_step_sourcing')): ?>
         <a href="sourcing_list.php" class="btn btn-outline-primary"><i class="fas fa-boxes-stacked me-1"></i> Sourcing &amp; Procurement</a>

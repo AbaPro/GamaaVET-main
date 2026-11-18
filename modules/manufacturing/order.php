@@ -87,7 +87,7 @@ if (!is_array($formulaSampleImages)) {
 $formulaComponents = manufacturing_recalculate_components($order, $formulaComponentsRaw);
 
 $canViewFormula = hasPermission('manufacturing.formula.view_all');
-$canViewComponentName = hasPermission('manufacturing.component.name.view');
+$canViewComponentName = canViewManufacturingMaterialNames();
 
 $compProductIds = [];
 foreach ($formulaComponents as $fc) {
@@ -1406,7 +1406,7 @@ $wasteStmt->execute([$orderId]); $wasteRows = $wasteStmt->fetchAll(PDO::FETCH_AS
                     $isStepLocked = ($stepRow['status'] === 'completed');
                     $people = $stepPeople[(int)$stepRow['id']] ?? [];
                 ?>
-                <details class="border rounded mb-2" <?= $isOpen ? 'open' : ''; ?>>
+                <details id="step-<?= htmlspecialchars($stepRow['step_key']); ?>" class="border rounded mb-2" <?= $isOpen ? 'open' : ''; ?>>
                     <summary class="p-3 fw-bold cursor-pointer bg-light d-flex justify-content-between align-items-center" style="list-style: none;">
                         <div>
                             <i class="fas fa-chevron-right me-2 transition-icon"></i>
@@ -2297,6 +2297,18 @@ $wasteStmt->execute([$orderId]); $wasteRows = $wasteStmt->fetchAll(PDO::FETCH_AS
                                 <?php endif; ?>
 
                                 <?php if ($stepRow['step_key'] === 'delivering'): ?>
+                                    <div class="alert alert-light border mb-3">
+                                        <h6>Shipment verification / مراجعة الشحنة</h6>
+                                        <p class="small text-muted">Saved counts from Dispatch Prep / Packaging &amp; Labeling. Verify these against the load.</p>
+                                        <?= manufacturing_delivery_counts_html(manufacturing_delivery_counts($conn, $orderId)); ?>
+                                        <?php if (!empty($order['sales_order_id'])): ?>
+                                            <p class="small">All products for sales order #<?= (int)$order['sales_order_id']; ?>:</p>
+                                            <?php foreach (manufacturing_delivery_groups($conn, (int)$order['sales_order_id']) as $deliveryRows): ?>
+                                                <?= manufacturing_delivery_group_html($deliveryRows); ?>
+                                            <?php endforeach; ?>
+                                        <?php endif; ?>
+                                        <a href="delivery.php" class="btn btn-sm btn-outline-primary">View deliveries by sales order</a>
+                                    </div>
                                     <!-- Delivery Information -->
                                     <?php
                                     $deliveryStmt = $conn->prepare("
@@ -2515,6 +2527,12 @@ $wasteStmt->execute([$orderId]); $wasteRows = $wasteStmt->fetchAll(PDO::FETCH_AS
 <?php require_once '../../includes/footer.php'; ?>
 
 <script>
+    function openLinkedManufacturingStep() {
+        const linkedStep = document.getElementById(location.hash.slice(1));
+        if (linkedStep && linkedStep.matches('#manufacturingSteps details')) linkedStep.open = true;
+    }
+    openLinkedManufacturingStep();
+    window.addEventListener('hashchange', openLinkedManufacturingStep);
     const toggleManufacturingSteps = document.getElementById('toggleManufacturingSteps');
     if (toggleManufacturingSteps) {
         toggleManufacturingSteps.addEventListener('click', function () {

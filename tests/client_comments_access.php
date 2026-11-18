@@ -84,6 +84,11 @@ try {
     };
     $url='modules/manufacturing/order.php?id='.$f['order'];
     [$status,$html]=$request($url); accessCheck($status===200 && str_contains($html, 'Order snapshot') && !str_contains($html,'Fatal error'),'Driver order page renders');
+    accessCheck(str_contains($html, 'Shipment verification') && str_contains($html, 'Total quantity') && str_contains($html, 'Cartons'), 'Driver sees shipment quantities and cartons');
+    [$deliveryStatus,$deliveryHtml]=$request('modules/manufacturing/delivery.php?search='.urlencode($tag));
+    accessCheck($deliveryStatus===200 && str_contains($deliveryHtml, $tag) && !str_contains($deliveryHtml,'ACCESS-SECRET-'), 'Driver grouped delivery page renders without formula details');
+    accessCheck($request('modules/manufacturing/index.php')[0]===302, 'Manufacturing menu sends delivery-only users to grouped deliveries');
+    accessCheck($request('modules/manufacturing/index.php?view=manufacturing')[0]===200, 'Driver can still open the full manufacturing list explicitly');
     foreach (['ACCESS-SECRET-','Batch size:','Formula samples:','Manufacturing audit /','name="action" value="complete_order"','bottle_sizes.php','packaging_options.php'] as $secret) accessCheck(!str_contains($html,$secret),'Driver response omits '.$secret);
     preg_match('/name="manufacturing_csrf" value="([^"]+)"/',$html,$match);$token=$match[1];
     $request($url,['manufacturing_csrf'=>$token,'action'=>'complete_order','finished_goods_inventory_id'=>$f['inventories'][0]]);
@@ -106,9 +111,10 @@ try {
     accessCheck($request('modules/inventories/delete_product.php',$deleteInput)[0]!==200,'Read-only account cannot remove an item with a valid token');
     accessCheck($request('modules/inventories/bulk_delete_products.php',array_merge($deleteInput,['product_ids'=>[$f['products'][0]]]))[0]!==200,'Read-only account cannot bulk-remove items');
     accessCheck($request('modules/inventories/index.php',['inventory_request_token'=>$inventoryToken[1],'delete'=>$f['inventories'][1]])[0]===403,'Read-only account cannot delete an empty warehouse');
-    $grant(array_merge($basePermissions,['manufacturing.component.name.view','manufacturing.audit.view','manufacturing.orders.technical_details.view','manufacturing.view_step_preparation']));
+    $grant(array_merge($basePermissions,['manufacturing.formula.view_all','manufacturing.component.name.view','manufacturing.audit.view','manufacturing.orders.technical_details.view','manufacturing.view_step_sourcing','manufacturing.view_step_receipt','manufacturing.view_step_preparation']));
     [$status,$body]=$request($url);
     accessCheck(!str_contains($body,'ACCESS-SECRET-INGREDIENT') && !str_contains($body,'Manufacturing audit /'),'Names, audit and step permissions cannot bypass formula restrictions');
+    foreach (['sourcing','receipt','preparation'] as $key) accessCheck(str_contains($body, 'id="step-'.$key.'"'), 'Locked formula retains the '.$key.' workflow step');
     $grant(array_merge($basePermissions,['manufacturing.orders.create']));
     [$status,$body]=$request('ajax/get_manufacturing_formulas.php?provider_id='.$f['customer']);$lookup=json_decode($body,true);
     accessCheck($status===200 && !str_contains($body,'ACCESS-SECRET-INGREDIENT') && !str_contains($body,'sample_images') && !str_contains($body,'batch_size'),'Creator lookup does not return recipes or samples');
