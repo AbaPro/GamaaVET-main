@@ -1,6 +1,6 @@
 <?php
 session_start();
-require_once '../config/database.php';
+require_once __DIR__ . '/../includes/functions.php';
 
 /**
  * Simple message page (modern + responsive)
@@ -144,7 +144,7 @@ function touchPortalAccess(PDO $pdo, int $customerId): void
     $stmt->execute([$customerId]);
 }
 
-// The portal does not load includes/functions.php (logActivity), so it writes its audit rows directly.
+// Portal visitors have no staff user ID, so write their audit rows directly.
 function portalLogActivity(PDO $pdo, string $action, string $actionType, string $entityType, int $entityId, array $details = []): void
 {
     $details['source'] = 'customer_portal';
@@ -164,28 +164,6 @@ function portalLogActivity(PDO $pdo, string $action, string $actionType, string 
     } catch (Throwable $e) {
         error_log('portalLogActivity failed: ' . $e->getMessage());
     }
-}
-
-function normalizeEgyptWhatsappNumber(?string $phone): string
-{
-    $digits = preg_replace('/\D+/', '', (string)$phone);
-    if ($digits === '') {
-        return '';
-    }
-
-    if (strpos($digits, '00') === 0) {
-        $digits = substr($digits, 2);
-    }
-
-    if (strpos($digits, '20') === 0) {
-        return $digits;
-    }
-
-    if ($digits[0] === '0') {
-        return '20' . substr($digits, 1);
-    }
-
-    return '20' . $digits;
 }
 
 function whatsappUrl(?string $phone): ?string
