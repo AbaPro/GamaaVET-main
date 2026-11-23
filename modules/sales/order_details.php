@@ -2,6 +2,7 @@
 require_once '../../includes/auth.php';
 require_once __DIR__ . '/../finance/deletion_approval.php';
 require_once '../../config/database.php';
+require_once __DIR__ . '/../manufacturing/primary.php';
 
 // Permission check
 if (!hasPermission('sales.orders.view')) {
@@ -51,13 +52,23 @@ $stmt = $pdo->prepare("
 ");
 $stmt->execute([$order_id]);
 $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$primaryStockByProduct = [];
+if (($_SESSION['login_region'] ?? 'factory') === 'factory') {
+    foreach ($items as $item) $primaryStockByProduct[(int)$item['product_id']] = manufacturing_primary_availability($pdo, (int)$item['product_id']);
+}
 
 $manufacturedProductIds = [];
+$primaryUsedByProduct = [];
 if (($_SESSION['login_region'] ?? 'factory') === 'factory') {
     // Manufacturing data belongs exclusively to the Factory channel.
-    $mfgStmt = $pdo->prepare("SELECT product_id FROM manufacturing_orders WHERE sales_order_id = ?");
+    $mfgStmt = $pdo->prepare("SELECT mo.product_id, COALESCE(SUM(po.primary_used_quantity), 0) AS primary_used
+        FROM manufacturing_orders mo LEFT JOIN manufacturing_packaging_output po ON po.manufacturing_order_id = mo.id
+        WHERE mo.sales_order_id = ? GROUP BY mo.product_id");
     $mfgStmt->execute([$order_id]);
-    $manufacturedProductIds = array_flip($mfgStmt->fetchAll(PDO::FETCH_COLUMN));
+    foreach ($mfgStmt->fetchAll(PDO::FETCH_ASSOC) as $manufactured) {
+        $manufacturedProductIds[(int)$manufactured['product_id']] = true;
+        $primaryUsedByProduct[(int)$manufactured['product_id']] = (int)$manufactured['primary_used'];
+    }
 }
 
 $canViewOrderPrices = hasPermission('sales.orders.price.view');
@@ -437,6 +448,7 @@ require_once '../../includes/header.php';
                                         <?php if (($_SESSION['login_region'] ?? 'factory') === 'factory' && $item['type'] === 'final' && hasPermission('manufacturing.orders.create')) : ?>
                                             <?php if (isset($manufacturedProductIds[$item['product_id']])): ?>
                                                 <span class="badge bg-success"><i class="fas fa-check me-1"></i> Manufactured</span>
+                                                <div class="small mt-1">منتج اولي مستخدم: <?= (int)($primaryUsedByProduct[$item['product_id']] ?? 0); ?></div>
                                             <?php elseif ($isDelivered): ?>
                                                 <button type="button"
                                                         class="btn btn-sm btn-outline-secondary"
@@ -450,6 +462,12 @@ require_once '../../includes/header.php';
                                                    href="../manufacturing/create.php?sales_order_id=<?= (int)$order_id ?>&amp;sales_order_item_id=<?= (int)$item['id'] ?>">
                                                     <i class="fas fa-hammer me-1"></i> Manufacture
                                                 </a>
+                                                <?php if (!empty($primaryStockByProduct[$item['product_id']]['quantity'])): ?>
+                                                <?php foreach ($primaryStockByProduct[$item['product_id']]['locations'] as $primaryLocation): ?>
+                                                <div class="small mt-2"><?= htmlspecialchars($primaryLocation['location_name']); ?> — مخزن منتج اولي: <?= (int)$primaryLocation['quantity']; ?> available</div>
+                                                <a class="btn btn-sm btn-outline-success mt-1" href="../manufacturing/create.php?sales_order_id=<?= (int)$order_id; ?>&amp;sales_order_item_id=<?= (int)$item['id']; ?>&amp;location_id=<?= (int)$primaryLocation['location_id']; ?>&amp;primary_stock_quantity=<?= min((int)$primaryLocation['quantity'], (int)$item['quantity']); ?>">Use existing primary stock at this location</a>
+                                                <?php endforeach; ?>
+                                                <?php endif; ?>
                                             <?php endif; ?>
                                         <?php endif; ?>
                                     </td>

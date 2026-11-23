@@ -17,7 +17,10 @@ function fixtureCleanup(array $f): void {
         $pdo->prepare('DELETE FROM inventory_stock_logs WHERE inventory_id = ?')->execute([$id]);
         $pdo->prepare('DELETE FROM inventories WHERE id = ?')->execute([$id]);
     }
-    foreach ($f['locations'] as $id) $pdo->prepare('DELETE FROM locations WHERE id = ?')->execute([$id]);
+    foreach ($f['locations'] as $id) {
+        $pdo->prepare('DELETE FROM inventories WHERE location_id = ? AND system_key IS NOT NULL')->execute([$id]);
+        $pdo->prepare('DELETE FROM locations WHERE id = ?')->execute([$id]);
+    }
     foreach ($f['products'] as $id) $pdo->prepare('DELETE FROM products WHERE id = ?')->execute([$id]);
     $pdo->prepare("DELETE FROM activity_logs WHERE user_id = ?")->execute([$f['user']]);
     $pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$f['user']]);
@@ -201,12 +204,46 @@ try {
         $pdo->prepare("UPDATE manufacturing_order_steps SET status = 'pending' WHERE manufacturing_order_id = ? AND step_key = 'sourcing'")->execute([$f['order']]);
         $request($url, $sourcePost);
         accessCheck($balances()===[0.0,10.0], 'HTTP resourcing deducts the returned material once');
+        // Actual packaging rows share the sourced component identity and post only on completion.
+        $grant(array_merge($basePermissions, ['manufacturing.view_step_packaging', 'manufacturing.view_step_dispatch', 'manufacturing.orders.technical_details.view']));
+        $pdo->prepare("UPDATE manufacturing_order_steps SET status = 'completed' WHERE manufacturing_order_id = ? AND step_key IN ('receipt','preparation','quality')")->execute([$f['order']]);
+        $pdo->prepare('UPDATE inventory_products SET quantity = 30 WHERE inventory_id = ? AND product_id = ?')->execute([$f['inventories'][0], $f['products'][1]]);
+        $pdo->prepare("INSERT INTO manufacturing_sourcing_components
+            (manufacturing_order_id,source,formula_component_index,product_id,component_name,required_quantity,unit,receipt_status)
+            VALUES (?,'packaging',0,?,'Actual packing bottle',20,'pcs','approved')")->execute([$f['order'],$f['products'][1]]);
+        $packingComponent = (int)$pdo->lastInsertId();
+        $pdo->beginTransaction();
+        manufacturing_deduct_sourcing_stock($pdo, $f['order']);
+        $pdo->commit();
+        $packingBalance = function () use ($pdo, &$f): float {
+            $q = $pdo->prepare('SELECT quantity FROM inventory_products WHERE inventory_id = ? AND product_id = ?');
+            $q->execute([$f['inventories'][0],$f['products'][1]]);
+            return (float)$q->fetchColumn();
+        };
+        [$status,$body] = $request($url);
+        accessCheck($status===200 && str_contains($body,'data-component-id="'.$packingComponent.'"')
+            && !str_contains($body,'name="packaging_values[prints_issued]"'), 'HTTP material table uses actual linked components instead of generic rows');
+        $packingPost = ['manufacturing_csrf'=>$stockToken[1], 'action'=>'update', 'step_key'=>'packaging', 'status'=>'in_progress',
+            'packaging_values'=>['final_product_count'=>'110']];
+        $request($url, $packingPost);
+        accessCheck($packingBalance()===10.0, 'HTTP draft final count previews extra usage without moving stock');
+        $packingPost['status'] = 'completed';
+        $packingPost['packaging_values']['final_product_count'] = '90';
+        $packingPost['packaging_materials'] = [$packingComponent=>['issued'=>'20','used'=>'18','waste'=>'0']];
+        $request($url, $packingPost);
+        accessCheck($packingBalance()===12.0 && $balances()===[0.0,10.0], 'HTTP completion returns unused packaging and leaves raw ingredient stock unchanged');
+        $tracking = manufacturing_packaging_material_rows($conn, $f['order']);
+        accessCheck(count($tracking)===1 && (float)$tracking[0]['used_quantity']===18.0
+            && (float)$tracking[0]['returned_quantity']===2.0 && $tracking[0]['posted_at'], 'Dispatch and reports read the saved per-material usage and راجع');
+        $request($url, $packingPost);
+        accessCheck($packingBalance()===12.0, 'Repeated HTTP packaging completion cannot duplicate a return');
         $grant(array_merge($basePermissions, ['manufacturing.edit', 'manufacturing.orders.technical_details.view']));
         $request('modules/manufacturing/edit.php?id='.$f['order'], ['location_id'=>$f['locations'][1],
             'product_id'=>$source['product_id'], 'batch_size'=>100, 'priority'=>'normal', 'cancel_order'=>1]);
         accessCheck($balances()===[20.0,20.0]
             && $pdo->query('SELECT status FROM manufacturing_orders WHERE id = '.$f['order'])->fetchColumn()==='cancelled',
             'HTTP cancellation restores original warehouses even when a different location is submitted');
+        accessCheck($packingBalance()===30.0, 'HTTP cancellation restores only packaging still consumed after its earlier return');
     }
     if ($keep) { $retained = true; file_put_contents($fixtureFile,json_encode($f));echo "Browser fixture ready.\n"; }
 } finally {

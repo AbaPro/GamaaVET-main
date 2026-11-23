@@ -204,7 +204,7 @@ if ($mode === 'request-only' || $mode === 'no-request-permission' || $mode === '
 }
 if ($mode === 'no-source-permission') { $_SESSION['role_slug'] = 'user'; $_SESSION['permissions'] = ['finance.customer_transactions.delete', 'finance.deletions.approve']; $blocked = true; }
 if ($mode === 'no-approval-permission') { $_SESSION['role_slug'] = 'user'; $_SESSION['permissions'] = ['finance.customer_transactions.delete']; $blocked = true; }
-if ($mode === 'self-approval') { $_SESSION['user_id'] = 1; $_SESSION['role_slug'] = 'user'; $_SESSION['permissions'] = ['finance.customer_transactions.delete', 'finance.deletions.approve']; $blocked = true; }
+if ($mode === 'self-approval') { $_SESSION['user_id'] = 1; $_SESSION['role_slug'] = 'user'; $_SESSION['permissions'] = ['finance.customer_transactions.delete', 'finance.deletions.approve']; }
 if ($mode === 'admin-self-approval') $pdo->exec('UPDATE finance_deletion_requests SET requested_by = 2 WHERE id = 1');
 if ($mode === 'wrong-brand') { $pdo->exec('UPDATE customer_wallet_transactions SET customer_id = 2'); $blocked = true; }
 if ($mode === 'wrong-request-account') { $pdo->exec('UPDATE finance_deletion_requests SET account_id = 2'); $blocked = true; }

@@ -75,7 +75,7 @@ function manufacturing_preview_sourcing(array $order): array {
     }
     $components = json_decode($order['components_json'] ?? '[]', true);
     $components = manufacturing_recalculate_components($order, is_array($components) ? $components : []);
-    if (!$components) $warnings[] = 'The formula contains no raw materials.';
+    if (!$components && (int)($order['primary_stock_quantity'] ?? 0) < $bottles) $warnings[] = 'The formula contains no raw materials.';
     return [
         'option_id' => $optionId,
         'requirements' => manufacturing_sourcing_requirements($components, $packaging, $bottles),

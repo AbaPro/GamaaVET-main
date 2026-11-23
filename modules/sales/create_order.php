@@ -1,6 +1,7 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../config/database.php';
+require_once __DIR__ . '/../manufacturing/primary.php';
 
 // ?id= opens an existing order for editing; otherwise a new order is created.
 $editOrderId = (int)($_GET['id'] ?? 0);
@@ -149,6 +150,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && $isEdit) {
                 'unit_price' => $unitPrice,
                 'total_price' => $lineTotal,
                 'is_free_sample' => $isFreeSample,
+                'primary_stock_quantity' => !empty($existing['lock_reason']) && $itemId > 0
+                    ? (int)$existing['primary_stock_quantity']
+                    : manufacturing_validate_primary_choice($pdo, $productId, $item['primary_stock_quantity'] ?? '0', $quantity),
             ];
             if ($itemId > 0) $kept[$itemId] = $row; else $newItems[] = $row;
         }
@@ -185,9 +189,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && $isEdit) {
         }
 
         $priceLogs = [];
-        $updateItemStmt = $pdo->prepare("UPDATE order_items SET quantity = ?, unit_price = ?, total_price = ?, is_free_sample = ? WHERE id = ? AND order_id = ?");
+        $updateItemStmt = $pdo->prepare("UPDATE order_items SET quantity = ?, unit_price = ?, total_price = ?, is_free_sample = ?, primary_stock_quantity = ? WHERE id = ? AND order_id = ?");
         foreach ($kept as $itemId => $item) {
-            $updateItemStmt->execute([$item['quantity'], $item['unit_price'], $item['total_price'], $item['is_free_sample'], $itemId, $editOrderId]);
+            $updateItemStmt->execute([$item['quantity'], $item['unit_price'], $item['total_price'], $item['is_free_sample'], $item['primary_stock_quantity'], $itemId, $editOrderId]);
             if (!$item['is_free_sample'] && $item['unit_price'] > 0 && abs($item['unit_price'] - (float)$existingItems[$itemId]['unit_price']) >= 0.005) {
                 $priceLogs[] = [$item['product_id'], $item['unit_price'], $item['quantity'], $itemId];
             }
@@ -196,9 +200,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && $isEdit) {
         foreach (array_diff_key($existingItems, $kept) as $itemId => $removed) {
             $deleteItemStmt->execute([$itemId, $editOrderId]);
         }
-        $insertItemStmt = $pdo->prepare("INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price, is_free_sample) VALUES (?, ?, ?, ?, ?, ?)");
+        $insertItemStmt = $pdo->prepare("INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price, is_free_sample, primary_stock_quantity) VALUES (?, ?, ?, ?, ?, ?, ?)");
         foreach ($newItems as $item) {
-            $insertItemStmt->execute([$editOrderId, $item['product_id'], $item['quantity'], $item['unit_price'], $item['total_price'], $item['is_free_sample']]);
+            $insertItemStmt->execute([$editOrderId, $item['product_id'], $item['quantity'], $item['unit_price'], $item['total_price'], $item['is_free_sample'], $item['primary_stock_quantity']]);
             if (!$item['is_free_sample'] && $item['unit_price'] > 0) {
                 $priceLogs[] = [$item['product_id'], $item['unit_price'], $item['quantity'], (int)$pdo->lastInsertId()];
             }
@@ -296,7 +300,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$isEdit) {
                 'quantity' => $quantity,
                 'unit_price' => $unitPrice,
                 'total_price' => $lineTotal,
-                'is_free_sample' => $isFreeSample
+                'is_free_sample' => $isFreeSample,
+                'primary_stock_quantity' => manufacturing_validate_primary_choice($pdo, $productId, $item['primary_stock_quantity'] ?? '0', $quantity),
             ];
         }
 
@@ -367,8 +372,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$isEdit) {
 
         // Insert order items
         $stmt = $pdo->prepare("
-            INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price, is_free_sample)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price, is_free_sample, primary_stock_quantity)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         ");
 
         foreach ($orderItems as $item) {
@@ -378,7 +383,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$isEdit) {
                 $item['quantity'],
                 $item['unit_price'],
                 $item['total_price'],
-                $item['is_free_sample']
+                $item['is_free_sample'],
+                $item['primary_stock_quantity']
             ]);
             $orderItemId = (int)$pdo->lastInsertId();
             if (!$item['is_free_sample'] && (float)$item['unit_price'] > 0) {
@@ -488,6 +494,10 @@ $productSql .= " ORDER BY p.name";
 $productListStmt = $pdo->prepare($productSql);
 $productListStmt->execute($productParams);
 $products = $productListStmt->fetchAll(PDO::FETCH_ASSOC);
+$primaryStockByProduct = [];
+if ($loginRegion === 'factory') {
+    foreach ($products as $product) $primaryStockByProduct[(int)$product['id']] = (int)manufacturing_primary_availability($pdo, (int)$product['id'])['quantity'];
+}
 
 // Get main categories for product filter
 $categories = $pdo->query("SELECT id, name FROM categories WHERE parent_id IS NULL ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
@@ -623,6 +633,11 @@ require_once '../../includes/header.php';
                                         <?= htmlspecialchars($item['product_name']) ?>
                                         <?php if ($locked): ?><span class="badge bg-secondary ms-1" title="<?= e($item['lock_reason']) ?>">locked</span><?php endif; ?>
                                         <input type="hidden" name="items[e<?= (int)$item['id'] ?>][order_item_id]" value="<?= (int)$item['id'] ?>">
+                                        <?php if ($loginRegion === 'factory' && (!empty($primaryStockByProduct[$item['product_id']]) || !empty($item['primary_stock_quantity']))): ?>
+                                        <div class="small mt-2 text-primary">مخزن منتج اولي: <?= (int)($primaryStockByProduct[$item['product_id']] ?? 0); ?> available</div>
+                                        <label class="small">Use primary stock (confirm location in manufacturing)
+                                            <input type="number" min="0" step="1" class="form-control form-control-sm item-primary" name="items[e<?= (int)$item['id'] ?>][primary_stock_quantity]" value="<?= (int)$item['primary_stock_quantity']; ?>" <?= $locked ? 'readonly' : ''; ?>></label>
+                                        <?php endif; ?>
                                     </td>
                                     <td>
                                         <input type="number" class="form-control form-control-sm item-qty"
@@ -819,6 +834,7 @@ require_once '../../includes/header.php';
                                     <button type="button" class="btn btn-sm btn-primary select-product"
                                         data-id="<?= $product['id'] ?>"
                                         data-name="<?= htmlspecialchars($product['name']) ?>"
+                                        data-primary="<?= (int)($primaryStockByProduct[$product['id']] ?? 0); ?>"
                                         data-price="<?= $product['unit_price'] ?>">
                                         Select
                                     </button>
@@ -988,6 +1004,11 @@ require_once '../../includes/header.php';
             const productId = $(this).data('id');
             const productName = $(this).data('name');
             const productPrice = parseFloat($(this).data('price'));
+            const primaryAvailable = Number($(this).data('primary')) || 0;
+            const primaryPrompt = primaryAvailable > 0 ? `<div class="small text-primary mt-2">مخزن منتج اولي: ${primaryAvailable} available</div>
+                <label class="small">Use primary stock (confirm location in manufacturing)
+                <input type="number" min="0" step="1" class="form-control form-control-sm item-primary" name="items[${productId}][primary_stock_quantity]" value="0"></label>
+                <button type="button" class="btn btn-sm btn-outline-primary use-primary" data-available="${primaryAvailable}">Use available primary stock</button>` : '';
 
             const rowId = 'item_' + productId;
 
@@ -1008,6 +1029,7 @@ require_once '../../includes/header.php';
                     <td>
                         ${productName}
                         <input type="hidden" name="items[${productId}][product_id]" value="${productId}">
+                        ${primaryPrompt}
                     </td>
                     <td>
                         <input type="number" class="form-control form-control-sm item-qty" 
@@ -1041,6 +1063,10 @@ require_once '../../includes/header.php';
         });
 
         // Remove item
+        $(document).on('click', '.use-primary', function () {
+            const row = $(this).closest('tr');
+            row.find('.item-primary').val(Math.min(Number($(this).data('available')), Number(row.find('.item-qty').val()) || 0));
+        });
         $(document).on('click', '.remove-item', function() {
             $(this).closest('tr').remove();
             updateFreeSampleCounter();

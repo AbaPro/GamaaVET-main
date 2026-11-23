@@ -24,7 +24,7 @@ if ($salesOrderId > 0 || $salesOrderItemId > 0) {
     } else {
         $sourceStmt = $pdo->prepare("
             SELECT o.id, o.internal_id, o.customer_id, o.status,
-                   oi.id AS order_item_id, oi.product_id, oi.quantity,
+                   oi.id AS order_item_id, oi.product_id, oi.quantity, oi.primary_stock_quantity,
                    COALESCE((
                        SELECT SUM(ip.quantity)
                        FROM inventory_products ip
@@ -53,6 +53,10 @@ if ($salesOrderId > 0 || $salesOrderItemId > 0) {
             $old['customer_id'] = $sourceSalesOrder['customer_id'];
             $old['product_id'] = $sourceSalesOrder['product_id'];
             $old['number_of_bottles'] = max(1, (int)ceil($shortage > 0 ? $shortage : $requiredQuantity));
+            if ((int)($_GET['location_id'] ?? 0) > 0 && canAccessLocation((int)$_GET['location_id'], true)) $old['location_id'] = (int)$_GET['location_id'];
+            $availablePrimary = manufacturing_primary_availability($pdo, (int)$sourceSalesOrder['product_id'], (int)($old['location_id'] ?? 0));
+            $old['primary_stock_quantity'] = min((int)($_GET['primary_stock_quantity'] ?? $sourceSalesOrder['primary_stock_quantity']),
+                (int)$availablePrimary['quantity'], (int)$old['number_of_bottles']);
             $old['due_date'] = date('Y-m-d', strtotime('+7 days'));
         }
     }
@@ -140,6 +144,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         try {
             $pdo->beginTransaction();
+            $primaryStockQuantity = manufacturing_validate_primary_choice($pdo, $productId, $_POST['primary_stock_quantity'] ?? '0', $numberOfBottles, $locationId);
 
             if ($packagingOptionId) {
                 if ($hasPackagingProductColumn) {
@@ -200,6 +205,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $createdBy
             ]);
             $orderId = $pdo->lastInsertId();
+            $pdo->prepare('UPDATE manufacturing_orders SET primary_stock_quantity = ? WHERE id = ?')->execute([$primaryStockQuantity, $orderId]);
 
             $stepStmt = $pdo->prepare("
                 INSERT INTO manufacturing_order_steps (manufacturing_order_id, step_key, label)
@@ -401,6 +407,15 @@ foreach ($bottleSizes as $bs) {
         </div>
     </div>
 
+    <div class="alert alert-info" id="primaryStockPrompt">
+        <strong>مخزن منتج اولي</strong> — <span id="primaryStockAvailable">Select a final product to check existing primary stock.</span>
+        <div class="row g-2 mt-1 align-items-end">
+            <div class="col-sm-5"><label for="primary_stock_quantity" class="form-label">Use existing primary stock for packaging</label>
+                <input type="number" min="0" step="1" class="form-control" id="primary_stock_quantity" name="primary_stock_quantity" value="<?= (int)($old['primary_stock_quantity'] ?? 0); ?>"></div>
+            <div class="col-sm-5"><button type="button" class="btn btn-outline-primary" id="useAvailablePrimary">Use available primary stock</button></div>
+        </div>
+        <div class="small mt-2">The selected quantity uses existing primary products instead of fresh ingredients. Packaging is still required for all bottles. Availability is checked again when sourcing completes.</div>
+    </div>
     <div class="text-end">
         <button type="submit" class="btn btn-primary">
             <i class="fas fa-flask me-1"></i>
@@ -429,6 +444,27 @@ foreach ($bottleSizes as $bs) {
     let loadedPackagingOptions = [];
     let packagingRequest = null;
     let pendingPackagingSelection = <?php echo json_encode($old['packaging_option_id'] ?? ''); ?>;
+    let primaryAvailable = 0;
+    let primaryRequest = null;
+    function loadPrimaryStock(productId) {
+        if (primaryRequest) primaryRequest.abort();
+        primaryAvailable = 0;
+        const locationId = $('[name="location_id"]').val();
+        if (!locationId) { $('#primaryStockAvailable').text('Select a manufacturing location to check its primary stock.'); $('#useAvailablePrimary').prop('disabled', true); return; }
+        $('#useAvailablePrimary').prop('disabled', true);
+        $('#primaryStockAvailable').text('Checking available primary stock…');
+        if (!productId) { $('#primaryStockAvailable').text('Select a final product first.'); return; }
+        primaryRequest = $.getJSON('../../ajax/get_primary_stock.php', {product_id: productId, location_id: locationId}).done(function (response) {
+            if (String(productSelect.val()) !== String(productId) || String($('[name="location_id"]').val()) !== String(locationId)) return;
+            primaryAvailable = response.success ? Number(response.quantity) : 0;
+            $('#primaryStockAvailable').text(primaryAvailable + ' units available at the selected location.');
+            $('#useAvailablePrimary').prop('disabled', primaryAvailable <= 0);
+            $('#primary_stock_quantity').attr('max', Math.min(primaryAvailable, Number(numberOfBottlesInput.val()) || 0));
+            $('#primary_stock_quantity').val(Math.min(Number($('#primary_stock_quantity').val()) || 0, primaryAvailable, Number(numberOfBottlesInput.val()) || 0));
+        }).fail(function (_xhr, status) {
+            if (status !== 'abort') $('#primaryStockAvailable').text('Unable to check primary stock. Reselect the product to retry.');
+        });
+    }
 
     function escapeForAttr(value) {
         if (!value) return '';
@@ -527,6 +563,7 @@ foreach ($bottleSizes as $bs) {
                 productSelect.html(opts);
                 if ($.fn.select2) productSelect.trigger('change.select2');
                 loadPackagingOptions(customerId, productSelect.val());
+                loadPrimaryStock(productSelect.val());
                 pendingProductSelection = '';
             });
 
@@ -608,10 +645,14 @@ foreach ($bottleSizes as $bs) {
 
         bottleSizeSelect.on('change', updateBatchSizeDisplay);
         numberOfBottlesInput.on('input', function () { updateBatchSizeDisplay(); renderPackagingPreview(); });
+        numberOfBottlesInput.on('input', function () { $('#primary_stock_quantity').attr('max', Math.min(primaryAvailable, Number(this.value) || 0)); });
+        $('#useAvailablePrimary').on('click', function () { $('#primary_stock_quantity').val(Math.min(primaryAvailable, Number(numberOfBottlesInput.val()) || 0)); });
+        $('[name="location_id"]').on('change', function () { loadPrimaryStock(productSelect.val()); });
         packagingSelect.on('change', renderPackagingPreview);
         updateBatchSizeDisplay();
 
         customerSelect.on('change', function () {
+            $('#primary_stock_quantity').val(0);
             pendingFormulaSelection = '';
             pendingProductSelection = '';
             pendingPackagingSelection = '';
@@ -619,6 +660,8 @@ foreach ($bottleSizes as $bs) {
         });
 
         productSelect.on('change', function () {
+            $('#primary_stock_quantity').val(0);
+            loadPrimaryStock($(this).val());
             loadPackagingOptions(customerSelect.val(), $(this).val());
         });
 

@@ -74,6 +74,10 @@ $outputCounts = $outputCountsStmt->fetchAll(PDO::FETCH_KEY_PAIR);
 $usableOutputCount = isset($outputCounts['final_product_count']) && $outputCounts['final_product_count'] !== ''
     ? (float)$outputCounts['final_product_count'] : (float)($order['number_of_bottles'] ?? 0);
 $damagedOutputCount = (float)($outputCounts['breakage_count'] ?? 0);
+$packagingOutputStmt = $pdo->prepare('SELECT * FROM manufacturing_packaging_output WHERE manufacturing_order_id = ?');
+$packagingOutputStmt->execute([$orderId]);
+$packagingOutput = $packagingOutputStmt->fetch(PDO::FETCH_ASSOC);
+if ($packagingOutput) $usableOutputCount = (float)$packagingOutput['finished_quantity'];
 
 $formulaComponentsRaw = json_decode($order['components_json'] ?? '[]', true);
 if (!is_array($formulaComponentsRaw)) {
@@ -195,27 +199,9 @@ if ($packagingCheckRow['count'] == 0) {
             ['key' => 'final_product_count', 'text' => 'عدد المنتج النهائي', 'type' => 'number'],
             ['key' => 'carton_count', 'text' => 'عدد الكراتين', 'type' => 'number'],
             ['key' => 'units_per_carton', 'text' => 'وحدات/كرتونة', 'type' => 'number'],
-            ['key' => 'custom_material_name', 'text' => 'اسم المادة', 'type' => 'text'],
-            ['key' => 'prints_issued', 'text' => 'مطبوعات: مصروف', 'type' => 'number'],
-            ['key' => 'prints_used', 'text' => 'مطبوعات: مستخدم', 'type' => 'number'],
-            ['key' => 'prints_returned', 'text' => 'مطبوعات: راجع', 'type' => 'number'],
-            ['key' => 'prints_waste', 'text' => 'مطبوعات: الهالك', 'type' => 'number'],
-            ['key' => 'prints_returned_to_stock', 'text' => 'إعادة المطبوعات الراجعة للمخزن فورًا', 'type' => 'checkbox'],
             ['key' => 'breakage_recorded', 'text' => 'أي كسر تم تسجيله', 'type' => 'checkbox'],
             ['key' => 'breakage_count', 'text' => 'الكسر: العدد', 'type' => 'number'],
             ['key' => 'breakage_notes', 'text' => 'الكسر: ملاحظات', 'type' => 'text'],
-            ['key' => 'boxes_issued', 'text' => 'مصروف العلب', 'type' => 'number'],
-            ['key' => 'boxes_used', 'text' => 'العلب: مستخدم', 'type' => 'number'],
-            ['key' => 'boxes_returned', 'text' => 'العلب: راجع', 'type' => 'number'],
-            ['key' => 'boxes_waste', 'text' => 'العلب: الهالك', 'type' => 'number'],
-            ['key' => 'stickers_issued', 'text' => 'مصروف الاستيكر', 'type' => 'number'],
-            ['key' => 'stickers_used', 'text' => 'الاستيكر: مستخدم', 'type' => 'number'],
-            ['key' => 'stickers_returned', 'text' => 'الاستيكر: راجع', 'type' => 'number'],
-            ['key' => 'stickers_waste', 'text' => 'الاستيكر: الهالك', 'type' => 'number'],
-            ['key' => 'leaflets_issued', 'text' => 'مصروف نشره', 'type' => 'number'],
-            ['key' => 'leaflets_used', 'text' => 'نشره: مستخدم', 'type' => 'number'],
-            ['key' => 'leaflets_returned', 'text' => 'نشره: راجع', 'type' => 'number'],
-            ['key' => 'leaflets_waste', 'text' => 'نشره: الهالك', 'type' => 'number']
         ]
     ];
     
@@ -236,21 +222,17 @@ if ($packagingCheckRow['count'] == 0) {
     $insertPackagingStmt->close();
 }
 
-$ensureCustomMaterialStmt = $conn->prepare("
-    INSERT IGNORE INTO manufacturing_packaging_checklist
-        (manufacturing_order_id, section_name, item_key, item_text, item_type, item_value, item_order)
-    VALUES (?, 'after', 'custom_material_name', 'اسم المادة', 'text', 'مطبوعات', 263)
-");
-$ensureCustomMaterialStmt->bind_param("i", $orderId);
-$ensureCustomMaterialStmt->execute();
-$ensureCustomMaterialStmt->close();
-
 $ensurePartialCarton = $conn->prepare("INSERT IGNORE INTO manufacturing_packaging_checklist
     (manufacturing_order_id, section_name, item_key, item_text, item_type, item_order)
     VALUES (?, 'after', 'last_carton_units', 'كسور في اخر كرتونة', 'number', 12)");
 $ensurePartialCarton->bind_param('i', $orderId);
 $ensurePartialCarton->execute();
 $ensurePartialCarton->close();
+
+$ensurePrimaryUsed = $pdo->prepare("INSERT IGNORE INTO manufacturing_packaging_checklist
+    (manufacturing_order_id, section_name, item_key, item_text, item_type, item_value, item_order)
+    VALUES (?, 'after', 'primary_product_used', 'منتج اولي مستخدم', 'number', ?, 13)");
+$ensurePrimaryUsed->execute([$orderId, (int)$order['primary_stock_quantity']]);
 
 // Initialize Dispatch Prep checklist if not exists
 $checkDispatchStmt = $conn->prepare("SELECT COUNT(*) as cnt FROM manufacturing_dispatch_checklist WHERE manufacturing_order_id = ?");
@@ -265,7 +247,6 @@ if ($dispatchCount == 0) {
             ['key' => 'final_product_count', 'text' => 'عدد المنتج النهائي', 'type' => 'number'],
             ['key' => 'carton_count', 'text' => 'عدد الكراتين', 'type' => 'number'],
             ['key' => 'units_per_carton', 'text' => 'وحدات/كرتونة', 'type' => 'number'],
-            ['key' => 'custom_material_name', 'text' => 'اسم المادة', 'type' => 'text', 'value' => 'مطبوعات']
         ],
         'before_loading' => [
             ['key' => 'release_order_received', 'text' => 'تم استلام إذن صرف/أمر تسليم', 'type' => 'checkbox'],
@@ -286,17 +267,6 @@ if ($dispatchCount == 0) {
     }
     $insertDispatchStmt->close();
 }
-
-// Backfill for orders created before the dispatch custom-material field existed.
-$ensureDispatchMaterialStmt = $conn->prepare("
-    INSERT INTO manufacturing_dispatch_checklist
-        (manufacturing_order_id, section_name, item_key, item_text, item_type, item_value, item_order)
-    SELECT ?, 'details', 'custom_material_name', 'اسم المادة', 'text', 'مطبوعات', 3
-    WHERE NOT EXISTS (SELECT 1 FROM manufacturing_dispatch_checklist WHERE manufacturing_order_id = ? AND item_key = 'custom_material_name')
-");
-$ensureDispatchMaterialStmt->bind_param("ii", $orderId, $orderId);
-$ensureDispatchMaterialStmt->execute();
-$ensureDispatchMaterialStmt->close();
 
 // Initialize Delivery info record if not exists
 $checkDeliveryStmt = $conn->prepare("SELECT COUNT(*) as cnt FROM manufacturing_delivery_info WHERE manufacturing_order_id = ?");
@@ -359,10 +329,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (in_array($lock->fetchColumn(), ['completed', 'cancelled'], true)) {
                 throw new DomainException('This order is already completed or cancelled.');
             }
-            $open = $pdo->prepare("SELECT COUNT(*) FROM manufacturing_order_steps WHERE manufacturing_order_id = ? AND status <> 'completed'");
+            // Delivering may still be open: the order can be completed once Dispatch Prep is done.
+            $open = $pdo->prepare("SELECT COUNT(*) FROM manufacturing_order_steps WHERE manufacturing_order_id = ? AND step_key <> 'delivering' AND status <> 'completed'");
             $open->execute([$orderId]);
             if ((int)$open->fetchColumn() > 0) {
-                throw new DomainException('All steps must be completed first.');
+                throw new DomainException('All steps up to Dispatch Prep must be completed first.');
             }
             $pdo->prepare("UPDATE manufacturing_orders SET status = 'completed', updated_at = NOW() WHERE id = ?")->execute([$orderId]);
             $finishedGoodsLog = manufacturing_add_finished_goods($pdo, $order, $inventoryId);
@@ -821,7 +792,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdo->beginTransaction();
         $orderLock = $pdo->prepare('SELECT status FROM manufacturing_orders WHERE id = ? FOR UPDATE');
         $orderLock->execute([$orderId]);
-        if (in_array($orderLock->fetchColumn(), ['completed', 'cancelled'], true)) throw new RuntimeException('This order is locked.');
+        $lockedOrderStatus = $orderLock->fetchColumn();
+        // A completed order stays editable only for its Delivering step.
+        if ($lockedOrderStatus === 'cancelled' || ($lockedOrderStatus === 'completed' && $stepKey !== 'delivering')) {
+            throw new RuntimeException('This order is locked.');
+        }
         $currentStepLock = $pdo->prepare('SELECT status FROM manufacturing_order_steps WHERE id = ? FOR UPDATE');
         $currentStepLock->execute([$stepRow['id']]);
         if ($currentStepLock->fetchColumn() === 'completed') throw new RuntimeException('This step is already completed.');
@@ -849,8 +824,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($itemKey === 'custom_material_name' && trim((string)$value) === '') $value = 'مطبوعات';
                 $saveValue->execute([$value, $itemKey, $orderId]);
             }
-            $adjustmentNote = manufacturing_reconcile_finished_count($pdo, $orderId, (int)($packagingValues['final_product_count'] ?? 0));
-            if ($adjustmentNote) $notesInput = trim($notesInput . "\n" . $adjustmentNote);
+            $materialEntries = $_POST['packaging_materials'] ?? [];
+            if (!is_array($materialEntries)) throw new InvalidArgumentException('Invalid packaging material quantities.');
+            $count = $pdo->prepare("SELECT item_value FROM manufacturing_packaging_checklist WHERE manufacturing_order_id = ? AND item_key = 'final_product_count'");
+            $count->execute([$orderId]);
+            $finalCount = $count->fetchColumn();
+            if ($finalCount !== false && $finalCount !== '') {
+                manufacturing_validate_packaging_counts(['final_product_count' => $finalCount]);
+                manufacturing_save_packaging_material_entries($pdo, $orderId, (int)$finalCount, $materialEntries);
+            }
+            if ($action !== 'regenerate' && $statusToSave === 'completed') {
+                if ($finalCount === false || $finalCount === '') throw new DomainException('Enter the final product count before completing packaging.');
+                manufacturing_validate_packaging_counts(['final_product_count' => $finalCount]);
+                $adjustmentNote = manufacturing_reconcile_finished_count($pdo, $orderId, (int)$finalCount);
+                if ($adjustmentNote) $notesInput = trim($notesInput . "\n" . $adjustmentNote);
+            }
+        }
+
+        if ($stepKey === 'dispatch') {
+            $materialNotes = $_POST['packaging_material_notes'] ?? [];
+            if (!is_array($materialNotes)) throw new InvalidArgumentException('Invalid packaging material notes.');
+            manufacturing_save_packaging_material_notes($pdo, $orderId, $materialNotes);
         }
 
 
@@ -892,7 +886,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stepsForStatus = $orderStepsStmt->fetchAll(PDO::FETCH_ASSOC);
 
         $overallStatus = manufacturing_determine_order_status_from_steps($stepsForStatus);
-        if ($overallStatus === 'completed' && !$completesOrder) {
+        $alreadyCompleted = $lockedOrderStatus === 'completed';
+        if ($alreadyCompleted) {
+            // Completed after Dispatch Prep: delivering updates never reopen the order.
+            $overallStatus = 'completed';
+        } elseif ($overallStatus === 'completed' && !$completesOrder) {
             // Never mark completed without stocking the finished product.
             $overallStatus = 'in_progress';
         }
@@ -901,7 +899,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // Order just became completed: add the finished product to the chosen warehouse, once.
         $finishedGoodsLog = null;
-        if ($overallStatus === 'completed') {
+        if ($overallStatus === 'completed' && !$alreadyCompleted) {
             $finishedGoodsLog = manufacturing_add_finished_goods($pdo, $order, $finishedGoodsInventoryId);
         }
 
@@ -1093,14 +1091,20 @@ $isCompletedOrder = $order['status'] === 'completed';
     </div>
 </div>
 
-<?php if (!empty($steps) && $completedSteps === count($steps) && !in_array($order['status'], ['completed', 'cancelled'], true)
+<?php
+// Ready to complete once every step up to Dispatch Prep is done; Delivering can follow later.
+$productionStepsDone = !empty($steps) && isset($stepsByKey['dispatch'])
+    && count(array_filter($steps, fn($s) => $s['step_key'] !== 'delivering' && $s['status'] !== 'completed')) === 0;
+?>
+<?php if ($productionStepsDone && !in_array($order['status'], ['completed', 'cancelled'], true)
           && hasPermission('manufacturing.orders.complete')): ?>
     <?php $finishedGoodsOptions = manufacturing_get_finished_goods_inventories($conn, $order); ?>
     <div class="alert alert-warning">
         <form method="post" class="d-flex flex-wrap align-items-center gap-2 mb-0">
 <input type="hidden" name="manufacturing_csrf" value="<?= htmlspecialchars(manufacturingCsrfToken()); ?>">
             <input type="hidden" name="action" value="complete_order">
-            <span><strong>All steps are completed but the order is not.</strong>
+            <span><strong>Dispatch Prep is completed.</strong>
+                You can complete the order now (Delivering can be finished afterwards).
                 Complete it to add <?= (int)$usableOutputCount; ?> × <?= e($order['product_name'] ?? '—'); ?> to stock:</span>
             <?php if (empty($finishedGoodsOptions['inventories'])): ?>
                 <span class="text-danger">no warehouse at <?= e($order['location_name'] ?? 'this location'); ?> can receive this product.</span>
@@ -1284,6 +1288,14 @@ $isCompletedOrder = $order['status'] === 'completed';
     </div>
 </div>
 
+<?php if ($packagingOutput): ?>
+<div class="alert alert-info">Produced: <?= (int)$packagingOutput['produced_quantity']; ?> | Packaged finished products: <?= (int)$packagingOutput['finished_quantity']; ?>
+    | منتج أولي إلى مخزن منتج اولي: <?= (int)$packagingOutput['primary_quantity']; ?> | منتج اولي مستخدم: <?= (int)$packagingOutput['primary_used_quantity']; ?></div>
+<?php endif; ?>
+<?php if ((int)$order['primary_stock_quantity'] > 0): ?>
+<div class="alert alert-light border">Existing primary stock selected: <?= (int)$order['primary_stock_quantity']; ?> units from مخزن منتج اولي.
+    <?= $order['primary_stock_deducted_at'] ? 'Consumed for this order.' : 'Will be consumed when sourcing completes.'; ?></div>
+<?php endif; ?>
 <div class="card mb-4">
     <div class="card-header">Workflow timeline</div>
     <div class="card-body">
@@ -1322,23 +1334,24 @@ $isCompletedOrder = $order['status'] === 'completed';
 <?php if (hasPermission('manufacturing.waste.manage') && canViewManufacturingTechnicalDetails() && canViewManufacturingFormula()): ?>
 <?php
 $wasteStmt = $pdo->prepare("SELECT msc.id, msc.component_name, msc.source, msc.required_quantity, msc.unit,
-    COALESCE(mw.quantity, 0) AS waste_quantity, mw.posted_at
+    COALESCE(mw.quantity, 0) AS waste_quantity, mw.posted_at, t.posted_at AS tracking_posted_at
     FROM manufacturing_sourcing_components msc JOIN products p ON p.id = msc.product_id AND p.type = 'material'
     LEFT JOIN manufacturing_material_waste mw ON mw.manufacturing_order_id = msc.manufacturing_order_id AND mw.sourcing_component_id = msc.id
-    WHERE msc.manufacturing_order_id = ? AND msc.deducted_at IS NOT NULL ORDER BY msc.source, msc.id");
+    LEFT JOIN manufacturing_packaging_material_tracking t ON t.sourcing_component_id = msc.id
+    WHERE msc.manufacturing_order_id = ? AND msc.source = 'formula' AND msc.deducted_at IS NOT NULL ORDER BY msc.source, msc.id");
 $wasteStmt->execute([$orderId]); $wasteRows = $wasteStmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <div class="card mb-4">
 <div class="card-header">Material waste / هالك الخامات</div>
 <div class="card-body">
-<p class="text-muted">Record actual ingredient or packaging waste against each consumed material. These quantities are already consumed and will enter مخزن الهالك at order completion. Final-product breakage does not automatically create material waste.</p>
+<p class="text-muted">Record ingredient waste here. Packaging waste is entered in Material Tracking and goes directly to مخزن الهالك when packaging completes. Ingredient waste posts at order completion.</p>
 <form method="post">
 <input type="hidden" name="manufacturing_csrf" value="<?= htmlspecialchars(manufacturingCsrfToken()); ?>">
 <input type="hidden" name="action" value="save_material_waste">
 <div class="table-responsive"><table class="table"><thead><tr><th>Material</th><th>Source</th><th>Consumed</th><th>Unit</th><th>Actual waste</th></tr></thead><tbody>
 <?php foreach ($wasteRows as $wr): ?>
 <tr><td><?= htmlspecialchars($wr['component_name']); ?></td><td><?= htmlspecialchars($wr['source']); ?></td><td><?= htmlspecialchars($wr['required_quantity']); ?></td><td><?= htmlspecialchars($wr['unit']); ?></td>
-<td><input type="number" class="form-control" min="0" max="<?= htmlspecialchars($wr['required_quantity']); ?>" step="0.0001" name="material_waste[<?= (int)$wr['id']; ?>]" value="<?= htmlspecialchars($wr['waste_quantity']); ?>" <?= in_array($order['status'], ['completed', 'cancelled'], true) ? 'disabled' : ''; ?> required></td></tr>
+<td><input type="number" class="form-control" min="0" max="<?= htmlspecialchars($wr['required_quantity']); ?>" step="0.0001" name="material_waste[<?= (int)$wr['id']; ?>]" value="<?= htmlspecialchars($wr['waste_quantity']); ?>" <?= $wr['tracking_posted_at'] || in_array($order['status'], ['completed', 'cancelled'], true) ? 'disabled' : ''; ?> required></td></tr>
 <?php endforeach; ?>
 <?php if (!$wasteRows): ?><tr><td colspan="5">No consumed materials yet.</td></tr><?php endif; ?>
 </tbody></table></div>
@@ -1928,14 +1941,14 @@ $wasteStmt->execute([$orderId]); $wasteRows = $wasteStmt->fetchAll(PDO::FETCH_AS
                                         </div>
                                         
                                         <!-- After Packaging -->
-                                        <p class="small text-muted">A final count above the ordered quantity updates the order quantity and linked sales total at the existing unit price, with a note on both orders. عدد المنتج النهائي is usable output; الكسر: العدد is transferred separately to مخزن الهالك when the order completes.</p>
+                                        <p class="small text-muted">عدد المنتج النهائي is total usable production before packaging. Enter actual issued, used and destroyed packaging below. Completing packaging returns unused materials, transfers waste to مخزن الهالك and places unpackaged output in مخزن منتج اولي. The formula, planned bottle count and sales totals stay unchanged.</p>
                                         <h6 class="mt-4 mb-3 text-primary">بعد التعبئة</h6>
                                         <div class="row g-3 mb-3">
                                             <?php foreach ($packagingSections['after'] as $item): ?>
                                                 <?php 
                                                 // Skip items that are handled in the Material Tracking table below
                                                 $skipKeys = [
-                                                    'custom_material_name',
+                                                    'custom_material_name', 'prints_returned_to_stock',
                                                     'prints_issued', 'prints_used', 'prints_returned', 'prints_waste',
                                                     'boxes_issued', 'boxes_used', 'boxes_returned', 'boxes_waste',
                                                     'stickers_issued', 'stickers_used', 'stickers_returned', 'stickers_waste',
@@ -1950,6 +1963,7 @@ $wasteStmt->execute([$orderId]); $wasteRows = $wasteStmt->fetchAll(PDO::FETCH_AS
                                                                name="packaging_values[<?= htmlspecialchars($item['item_key']); ?>]" 
                                                                value="<?= htmlspecialchars($item['item_value'] ?? ''); ?>"
                                                                placeholder="0" min="0" step="1" <?= $item['item_key'] === 'last_carton_units' ? '' : 'required'; ?>>
+                                                        <?php if ($item['item_key'] === 'primary_product_used'): ?><div class="form-text">Actual primary products used from this location’s مخزن منتج اولي. Defaults to the selected quantity; any difference is reconciled when packaging completes.</div><?php endif; ?>
                                                     </div>
                                                 <?php elseif ($item['item_type'] === 'text'): ?>
                                                     <div class="col-md-12">
@@ -1976,75 +1990,46 @@ $wasteStmt->execute([$orderId]); $wasteRows = $wasteStmt->fetchAll(PDO::FETCH_AS
                                         <h6 class="mt-4 mb-2 text-primary">تتبع المواد (Material Tracking)</h6>
                                         <div class="alert alert-light border small py-2 mb-2" dir="rtl">
                                             <i class="fas fa-info-circle ms-1"></i>
-                                            هذا الجدول للتسجيل فقط ولا يغيّر رصيد المخزن. خامات التعبئة تُخصم من المخزن عند إكمال مرحلة التوريد.
+                                            أدخل المصروف الفعلي والمستخدم والهالك لكل مادة. الراجع هو المصروف ناقص المستخدم والهالك ويعود إلى مخزنه الأصلي.
+                                            عند إكمال التعبئة تُسجل حركات المخزن مرة واحدة ويُنقل الهالك فورًا إلى مخزن الهالك.
                                             يجب أن يكون: <strong>مصروف = مستخدم + راجع + هالك</strong>.
                                         </div>
                                         <div class="table-responsive mb-3">
                                             <table class="table table-bordered table-sm" id="materialTrackingTable">
                                                 <thead class="table-light">
                                                     <tr>
-                                                        <th style="text-align: right;">المادة <?= helpTip('اسم مادة التعبئة. يمكن تعديل اسم الصف الأول ليناسب المادة المستخدمة.'); ?></th>
+                                                        <th style="text-align: right;">المادة / الوحدة</th>
                                                         <th style="text-align: right;">مصروف <?= helpTip('الكمية التي تم صرفها من المخزن لخط التعبئة.'); ?></th>
                                                         <th style="text-align: right;">مستخدم <?= helpTip('الكمية التي دخلت فعليًا في المنتج النهائي.'); ?></th>
                                                         <th style="text-align: right;">راجع <?= helpTip('الكمية السليمة غير المستخدمة التي تعود للمخزن.'); ?></th>
-                                                        <th style="text-align: right;">الهالك <?= helpTip('الكمية التالفة أو المهدرة أثناء التعبئة.'); ?></th>
+                                                        <th style="text-align: right;">الهالك <?= helpTip('الكمية التالفة التي تنتقل إلى مخزن الهالك عند إكمال التعبئة.'); ?></th>
                                                         <th style="text-align: center; width: 90px;">المطابقة <?= helpTip('يتحقق أن المصروف = المستخدم + الراجع + الهالك.'); ?></th>
                                                     </tr>
                                                 </thead>
                                                 <tbody>
-                                                    <?php
-                                                    $materials = [
-                                                        'prints' => 'مطبوعات',
-                                                        'boxes' => 'العلب',
-                                                        'stickers' => 'الاستيكر',
-                                                        'leaflets' => 'نشره'
-                                                    ];
-                                                    $customMaterialName = 'مطبوعات';
-                                                    foreach ($packagingSections['after'] as $item) {
-                                                        if ($item['item_key'] === 'custom_material_name' && trim((string)($item['item_value'] ?? '')) !== '') {
-                                                            $customMaterialName = $item['item_value'];
-                                                        }
-                                                    }
-                                                    $materials['prints'] = $customMaterialName;
-                                                    foreach ($materials as $matKey => $matLabel):
-                                                        $issuedKey = $matKey . '_issued';
-                                                        $usedKey = $matKey . '_used';
-                                                        $returnedKey = $matKey . '_returned';
-                                                        $wasteKey = $matKey . '_waste';
-                                                        
-                                                        // Find values from packagingSections
-                                                        $issuedVal = '';
-                                                        $usedVal = '';
-                                                        $returnedVal = '';
-                                                        $wasteVal = '';
-                                                        foreach ($packagingSections['after'] as $item) {
-                                                            if ($item['item_key'] === $issuedKey) $issuedVal = $item['item_value'] ?? '';
-                                                            if ($item['item_key'] === $usedKey) $usedVal = $item['item_value'] ?? '';
-                                                            if ($item['item_key'] === $returnedKey) $returnedVal = $item['item_value'] ?? '';
-                                                            if ($item['item_key'] === $wasteKey) $wasteVal = $item['item_value'] ?? '';
-                                                        }
-                                                    ?>
-                                                        <tr>
-                                                            <td style="text-align: right;">
-                                                                <?php if ($matKey === 'prints'): ?>
-                                                                    <input type="text" class="form-control form-control-sm text-end fw-bold"
-                                                                           name="packaging_values[custom_material_name]"
-                                                                           value="<?= htmlspecialchars($matLabel); ?>"
-                                                                           placeholder="اسم المادة" required>
-                                                                <?php else: ?>
-                                                                    <strong><?= htmlspecialchars($matLabel); ?></strong>
-                                                                <?php endif; ?>
-                                                            </td>
-                                                            <td><input type="number" min="0" step="any" class="form-control form-control-sm mt-issued" name="packaging_values[<?= $issuedKey; ?>]" value="<?= htmlspecialchars($issuedVal); ?>" placeholder="0" required></td>
-                                                            <td><input type="number" min="0" step="any" class="form-control form-control-sm mt-used" name="packaging_values[<?= $usedKey; ?>]" value="<?= htmlspecialchars($usedVal); ?>" placeholder="0" required></td>
-                                                            <td><input type="number" min="0" step="any" class="form-control form-control-sm mt-returned" name="packaging_values[<?= $returnedKey; ?>]" value="<?= htmlspecialchars($returnedVal); ?>" placeholder="0" required></td>
-                                                            <td><input type="number" min="0" step="any" class="form-control form-control-sm mt-waste" name="packaging_values[<?= $wasteKey; ?>]" value="<?= htmlspecialchars($wasteVal); ?>" placeholder="0" required></td>
+                                                    <?php $packagingMaterialRows = manufacturing_packaging_material_rows($conn, $orderId); ?>
+                                                    <?php foreach ($packagingMaterialRows as $material): ?>
+                                                        <tr data-component-id="<?= (int)$material['id']; ?>" data-planned="<?= htmlspecialchars($material['planned_quantity']); ?>"
+                                                            data-bottles="<?= (int)$order['number_of_bottles']; ?>"
+                                                            data-stock-factor="<?= htmlspecialchars((string)(convertProductUnitQuantity(1, $material['unit'], $material['stock_unit']) ?? 0)); ?>"
+                                                            data-whole="<?= normalizeProductUnit($material['stock_unit']) === 'each' ? '1' : '0'; ?>"
+                                                            data-dirty="<?= $material['tracked_component'] ? '1' : '0'; ?>"
+                                                            data-posted="<?= $material['posted_at'] ? '1' : '0'; ?>">
+                                                            <td><strong><?= htmlspecialchars($canViewComponentName ? $material['component_name'] : ($material['sku'] ?: 'Hidden')); ?></strong>
+                                                                <small class="d-block text-muted"><?= htmlspecialchars($material['unit'] ?? ''); ?></small></td>
+                                                            <?php foreach (['issued', 'used', 'returned', 'waste'] as $field): ?>
+                                                            <td><input type="number" min="<?= $field === 'issued' ? htmlspecialchars($material['planned_quantity']) : '0'; ?>" step="0.0001" class="form-control form-control-sm mt-<?= $field; ?>"
+                                                                <?= $field !== 'returned' ? 'name="packaging_materials[' . (int)$material['id'] . '][' . $field . ']" required' : 'readonly'; ?>
+                                                                value="<?= htmlspecialchars((string)$material[$field . '_quantity']); ?>" <?= $material['posted_at'] ? 'readonly' : ''; ?>></td>
+                                                            <?php endforeach; ?>
                                                             <td class="text-center align-middle mt-status"></td>
                                                         </tr>
                                                     <?php endforeach; ?>
+                                                    <?php if (!$packagingMaterialRows): ?><tr><td colspan="6">No packaging materials are linked to this order. Select a packaging option and complete sourcing first.</td></tr><?php endif; ?>
                                                 </tbody>
                                             </table>
                                         </div>
+                                        <div id="packagingOutputPreview" class="alert alert-info small" aria-live="polite"></div>
                                     </div>
                                     <?php if (manufacturing_table_exists($conn, 'manufacturing_packaging_images')):
                                         $packImageStmt = $conn->prepare("SELECT file_path, original_name FROM manufacturing_packaging_images WHERE manufacturing_order_id = ? ORDER BY uploaded_at DESC");
@@ -2140,7 +2125,7 @@ $wasteStmt->execute([$orderId]); $wasteRows = $wasteStmt->fetchAll(PDO::FETCH_AS
                                         <h6 class="mt-4 mb-3 text-primary">تفاصيل الشحن (Dispatch Details)</h6>
                                         <div class="row g-3 mb-3">
                                             <?php
-                                            $finishedCounts = array_column($pkgSections['after'], 'item_value', 'item_key');
+                                            $finishedCounts = manufacturing_delivery_counts($conn, $orderId);
                                             foreach (manufacturing_packaging_count_labels() as $key => $label): ?>
                                                 <div class="col-md-3">
                                                     <label class="form-label"><?= htmlspecialchars($label); ?></label>
@@ -2148,6 +2133,8 @@ $wasteStmt->execute([$orderId]); $wasteRows = $wasteStmt->fetchAll(PDO::FETCH_AS
                                                 </div>
                                             <?php endforeach; ?>
                                             <div class="small text-muted">Counts from Packaging &amp; Labeling, including units in the last partial carton.</div>
+                                            <div class="col-md-3"><label class="form-label">منتج اولي مستخدم</label>
+                                                <input class="form-control form-control-sm" value="<?= (int)($finishedCounts['primary_product_used'] ?? 0); ?>" readonly></div>
                                         </div>
                                         
                                         <!-- Before Loading -->
@@ -2220,70 +2207,18 @@ $wasteStmt->execute([$orderId]); $wasteRows = $wasteStmt->fetchAll(PDO::FETCH_AS
                                                     </tr>
                                                 </thead>
                                                 <tbody>
-                                                    <?php
-                                                    $materials = [
-                                                        'prints' => 'مطبوعات',
-                                                        'boxes' => 'العلب',
-                                                        'stickers' => 'الاستيكر',
-                                                        'leaflets' => 'نشره'
-                                                    ];
-                                                    $customMaterialName = 'مطبوعات';
-                                                    foreach ($pkgSections['after'] as $item) {
-                                                        if ($item['item_key'] === 'custom_material_name' && trim((string)($item['item_value'] ?? '')) !== '') {
-                                                            $customMaterialName = $item['item_value'];
-                                                        }
-                                                    }
-                                                    // The dispatch step has its own editable name; it wins when set.
-                                                    foreach ($dispatchSections['details'] as $item) {
-                                                        if ($item['item_key'] === 'custom_material_name' && trim((string)($item['item_value'] ?? '')) !== '') {
-                                                            $customMaterialName = $item['item_value'];
-                                                        }
-                                                    }
-                                                    $materials['prints'] = $customMaterialName;
-                                                    foreach ($materials as $matKey => $matLabel):
-                                                        $issuedKey = $matKey . '_issued';
-                                                        $usedKey = $matKey . '_used';
-                                                        $returnedKey = $matKey . '_returned';
-                                                        $wasteKey = $matKey . '_waste';
-                                                        
-                                                        $issuedVal = ''; $issuedNote = '';
-                                                        $usedVal = ''; $usedNote = '';
-                                                        $returnedVal = ''; $returnedNote = '';
-                                                        $wasteVal = ''; $wasteNote = '';
-                                                        foreach ($pkgSections['after'] as $item) {
-                                                            if ($item['item_key'] === $issuedKey) { $issuedVal = $item['item_value'] ?? ''; $issuedNote = $item['item_notes'] ?? ''; }
-                                                            if ($item['item_key'] === $usedKey) { $usedVal = $item['item_value'] ?? ''; $usedNote = $item['item_notes'] ?? ''; }
-                                                            if ($item['item_key'] === $returnedKey) { $returnedVal = $item['item_value'] ?? ''; $returnedNote = $item['item_notes'] ?? ''; }
-                                                            if ($item['item_key'] === $wasteKey) { $wasteVal = $item['item_value'] ?? ''; $wasteNote = $item['item_notes'] ?? ''; }
-                                                        }
-                                                    ?>
+                                                    <?php foreach (manufacturing_packaging_material_rows($conn, $orderId) as $material): ?>
                                                         <tr>
-                                                            <td style="text-align: right;">
-                                                                <?php if ($matKey === 'prints'): ?>
-                                                                    <input type="text" class="form-control form-control-sm fw-bold"
-                                                                           name="dispatch_values[custom_material_name]"
-                                                                           value="<?= htmlspecialchars($customMaterialName); ?>"
-                                                                           placeholder="مطبوعات" style="text-align: right;">
-                                                                <?php else: ?>
-                                                                    <strong><?= htmlspecialchars($matLabel); ?></strong>
+                                                            <td><strong><?= htmlspecialchars($canViewComponentName ? $material['component_name'] : ($material['sku'] ?: 'Hidden')); ?></strong>
+                                                                <small class="d-block text-muted"><?= htmlspecialchars($material['unit'] ?? ''); ?></small></td>
+                                                            <?php foreach (['issued', 'used', 'returned', 'waste'] as $field): ?>
+                                                            <td>
+                                                                <div class="small fw-bold mb-1"><?= htmlspecialchars((string)($material[$field . '_quantity'] ?? '—')); ?></div>
+                                                                <?php if ($material['posted_at']): ?>
+                                                                <input type="text" class="form-control form-control-sm" name="packaging_material_notes[<?= (int)$material['id']; ?>][<?= $field; ?>]" value="<?= htmlspecialchars($material[$field . '_notes'] ?? ''); ?>" placeholder="Note...">
                                                                 <?php endif; ?>
                                                             </td>
-                                                            <td>
-                                                                <div class="small fw-bold mb-1"><?= htmlspecialchars($issuedVal ?: '0'); ?></div>
-                                                                <input type="text" class="form-control form-control-sm" name="packaging_notes[<?= $issuedKey; ?>]" value="<?= htmlspecialchars($issuedNote); ?>" placeholder="Note...">
-                                                            </td>
-                                                            <td>
-                                                                <div class="small fw-bold mb-1"><?= htmlspecialchars($usedVal ?: '0'); ?></div>
-                                                                <input type="text" class="form-control form-control-sm" name="packaging_notes[<?= $usedKey; ?>]" value="<?= htmlspecialchars($usedNote); ?>" placeholder="Note...">
-                                                            </td>
-                                                            <td>
-                                                                <div class="small fw-bold mb-1"><?= htmlspecialchars($returnedVal ?: '0'); ?></div>
-                                                                <input type="text" class="form-control form-control-sm" name="packaging_notes[<?= $returnedKey; ?>]" value="<?= htmlspecialchars($returnedNote); ?>" placeholder="Note...">
-                                                            </td>
-                                                            <td>
-                                                                <div class="small fw-bold mb-1"><?= htmlspecialchars($wasteVal ?: '0'); ?></div>
-                                                                <input type="text" class="form-control form-control-sm" name="packaging_notes[<?= $wasteKey; ?>]" value="<?= htmlspecialchars($wasteNote); ?>" placeholder="Note...">
-                                                            </td>
+                                                            <?php endforeach; ?>
                                                         </tr>
                                                     <?php endforeach; ?>
                                                 </tbody>
@@ -2547,8 +2482,30 @@ $wasteStmt->execute([$orderId]); $wasteRows = $wasteStmt->fetchAll(PDO::FETCH_AS
         });
     }
 
-    // Material tracking: show live whether issued = used + returned + waste for each row.
+    // Preview the same per-material reconciliation that the server posts on completion.
     function refreshMaterialTrackingRow(row) {
+        if (!row.dataset.planned) return;
+        if (row.dataset.posted !== '1') {
+            const count = document.querySelector('[name="packaging_values[final_product_count]"]')?.value ?? '';
+            const bottles = Number(row.dataset.bottles);
+            const planned = Number(row.dataset.planned);
+            const factor = Number(row.dataset.stockFactor);
+            if (row.dataset.dirty !== '1' && count !== '' && bottles > 0) {
+                let used = planned * Number(count) / bottles;
+                if (factor > 0) {
+                    const native = row.dataset.whole === '1' ? Math.ceil(used * factor - 1e-8) : Math.round(used * factor * 100) / 100;
+                    used = native / factor;
+                }
+                used = Math.round(used * 10000) / 10000;
+                const waste = Number(row.querySelector('.mt-waste').value);
+                row.querySelector('.mt-used').value = used;
+                row.querySelector('.mt-issued').value = Math.max(planned, Math.round((used + waste) * 10000) / 10000);
+            }
+            const issued = Number(row.querySelector('.mt-issued').value);
+            const used = Number(row.querySelector('.mt-used').value);
+            const waste = Number(row.querySelector('.mt-waste').value);
+            row.querySelector('.mt-returned').value = Math.round((issued - used - waste) * 10000) / 10000;
+        }
         const num = (selector) => parseFloat(row.querySelector(selector)?.value) || 0;
         const fields = ['.mt-issued', '.mt-used', '.mt-returned', '.mt-waste'];
         const isEmpty = fields.every((selector) => (row.querySelector(selector)?.value ?? '') === '');
@@ -2569,8 +2526,31 @@ $wasteStmt->execute([$orderId]); $wasteRows = $wasteStmt->fetchAll(PDO::FETCH_AS
     }
     document.querySelectorAll('#materialTrackingTable tbody tr').forEach((row) => {
         refreshMaterialTrackingRow(row);
-        row.addEventListener('input', () => refreshMaterialTrackingRow(row));
+        row.addEventListener('input', () => { row.dataset.dirty = '1'; refreshMaterialTrackingRow(row); refreshPackagingOutput(); });
     });
+    document.querySelector('[name="packaging_values[final_product_count]"]')?.addEventListener('input', () => {
+        document.querySelectorAll('#materialTrackingTable tbody tr').forEach(refreshMaterialTrackingRow);
+        refreshPackagingOutput();
+    });
+
+    function refreshPackagingOutput() {
+        const preview = document.getElementById('packagingOutputPreview');
+        if (!preview) return;
+        const count = document.querySelector('[name="packaging_values[final_product_count]"]')?.value ?? '';
+        if (count === '') { preview.textContent = 'Enter total production to preview finished and primary quantities.'; return; }
+        let maximum = 0, counted = false;
+        document.querySelectorAll('#materialTrackingTable tbody tr[data-planned]').forEach(row => {
+            if (row.dataset.whole !== '1' || Number(row.dataset.planned) <= 0) return;
+            counted = true;
+            maximum = Math.max(maximum, Number(row.querySelector('.mt-used').value) * Number(row.dataset.bottles) / Number(row.dataset.planned));
+        });
+        const finished = counted ? Math.min(Number(count), Math.floor(maximum + 1e-8)) : Number(count);
+        preview.textContent = 'منتج نهائي معبأ: ' + finished + ' | منتج أولي إلى مخزن منتج اولي: ' + (Number(count) - finished)
+            + ' | منتج اولي مستخدم: ' + (Number(document.querySelector('[name="packaging_values[primary_product_used]"]')?.value) || 0)
+            + ' — Based on the maximum used packaging quantity in equivalent product units.';
+    }
+    refreshPackagingOutput();
+    document.querySelector('[name="packaging_values[primary_product_used]"]')?.addEventListener('input', refreshPackagingOutput);
 
     function confirmDelete(id, orderNumber) {
         if (confirm('Request approval to delete manufacturing order #' + orderNumber + '? The order and its related data will remain until another authorized user approves deletion.')) {

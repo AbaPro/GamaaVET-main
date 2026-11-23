@@ -111,6 +111,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $lockedOrder = manufacturing_lock_stock_order($pdo, $orderId);
             $previousStatus = $lockedOrder['status'];
             $status = !empty($_POST['cancel_order']) ? 'cancelled' : $previousStatus;
+            $issued = $pdo->prepare('SELECT id FROM manufacturing_sourcing_components WHERE manufacturing_order_id = ? AND deducted_at IS NOT NULL LIMIT 1');
+            $issued->execute([$orderId]);
+            if ($status !== 'cancelled' && ($issued->fetchColumn() || !empty($lockedOrder['primary_stock_deducted_at']))
+                && ($locationId !== (int)$lockedOrder['location_id'] || $productId !== (int)$lockedOrder['product_id'])) {
+                throw new DomainException('The product and location cannot change after materials or primary stock have been issued.');
+            }
 
             // Return only the original withdrawals, before marking the order cancelled.
             if ($status === 'cancelled' && $previousStatus !== 'cancelled') {
@@ -121,7 +127,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 foreach ($deductedStmt->fetchAll(PDO::FETCH_ASSOC) as $component) {
                     manufacturing_return_component_stock($pdo, $component);
                 }
+                manufacturing_reverse_primary_stock($pdo, $lockedOrder);
             }
+
+            if ($status !== 'cancelled' && ((int)$lockedOrder['primary_stock_quantity'] > 0 || !empty($lockedOrder['primary_stock_deducted_at']))
+                && $productId !== (int)$lockedOrder['product_id']) throw new DomainException('The final product cannot change after choosing its primary stock.');
 
             $updateStmt = $pdo->prepare("
                 UPDATE manufacturing_orders

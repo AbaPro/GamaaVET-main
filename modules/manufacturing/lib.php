@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . "/sourcing.php";
+require_once __DIR__ . "/primary.php";
 require_once __DIR__ . "/stock.php";
 require_once __DIR__ . "/packaging.php";
 require_once __DIR__ . "/delivery_lib.php";
@@ -483,25 +484,17 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
                 $cartonCount = '';
                 $unitsPerCarton = '';
                 $lastCartonUnits = '';
-                $printsIssued = '';
-                $printsUsed = '';
-                $printsReturned = '';
-                $printsReturnedToStock = '';
+                $primaryProductUsed = (string)($order['primary_stock_quantity'] ?? 0);
                 $breakageRecorded = '';
                 $breakageCount = '';
                 $breakageNotes = '';
-                $customMaterialName = 'مطبوعات';
                 
                 foreach ($packagingData['after'] as $item) {
-                    if ($item['item_key'] === 'custom_material_name' && trim((string)($item['item_value'] ?? '')) !== '') $customMaterialName = $item['item_value'];
                     if ($item['item_key'] === 'final_product_count') $finalProductCount = $item['item_value'];
                     if ($item['item_key'] === 'carton_count') $cartonCount = $item['item_value'];
                     if ($item['item_key'] === 'units_per_carton') $unitsPerCarton = $item['item_value'];
-                    if ($item['item_key'] === 'last_carton_units') $lastCartonUnits = $item['item_value'];
-                    if ($item['item_key'] === 'prints_issued') $printsIssued = $item['item_value'];
-                    if ($item['item_key'] === 'prints_used') $printsUsed = $item['item_value'];
-                    if ($item['item_key'] === 'prints_returned') $printsReturned = $item['item_value'];
-                    if ($item['item_key'] === 'prints_returned_to_stock') $printsReturnedToStock = ($item['item_value'] === 'checked') ? '<strong>YES</strong>' : 'NO';
+                    if ($item['item_key'] === 'last_carton_units') $lastCartonUnits = (string)($item['item_value'] ?? '');
+                    if ($item['item_key'] === 'primary_product_used') $primaryProductUsed = (string)($item['item_value'] ?? '0');
                     if ($item['item_key'] === 'breakage_recorded') $breakageRecorded = ($item['item_value'] === 'checked') ? '<strong>YES</strong>' : 'NO';
                     if ($item['item_key'] === 'breakage_count') $breakageCount = $item['item_value'];
                     if ($item['item_key'] === 'breakage_notes') $breakageNotes = $item['item_value'];
@@ -511,54 +504,16 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
                 $html .= '<tr><td style="text-align:right;"><strong>عدد الكراتين:</strong></td><td>' . htmlspecialchars($cartonCount ?: '_____') . '</td></tr>';
                 $html .= '<tr><td style="text-align:right;"><strong>وحدات/كرتونة:</strong></td><td>' . htmlspecialchars($unitsPerCarton ?: '_____') . '</td></tr>';
                 $html .= '<tr><td><strong>كسور في اخر كرتونة:</strong></td><td>' . htmlspecialchars($lastCartonUnits === '' ? '—' : $lastCartonUnits) . '</td></tr>';
-                $html .= '<tr><td style="text-align:right;"><strong>مطابقة ' . htmlspecialchars($customMaterialName) . ':</strong></td><td>مصروف ' . htmlspecialchars($printsIssued ?: '___') . ' / مستخدم ' . htmlspecialchars($printsUsed ?: '___') . ' / راجع ' . htmlspecialchars($printsReturned ?: '___') . '</td></tr>';
-                $html .= '<tr><td style="text-align:right;"><strong>إعادة ' . htmlspecialchars($customMaterialName) . ' للمخزن:</strong></td><td>' . $printsReturnedToStock . '</td></tr>';
+                $html .= '<tr><td><strong>منتج اولي مستخدم:</strong></td><td>' . htmlspecialchars((string)$primaryProductUsed) . '</td></tr>';
                 $html .= '<tr><td style="text-align:right;"><strong>أي كسر تم تسجيله:</strong></td><td>' . $breakageRecorded . ' العدد: ' . htmlspecialchars($breakageCount ?: '___') . '</td></tr>';
                 $html .= '<tr><td style="text-align:right;"><strong>ملاحظات الكسر:</strong></td><td>' . htmlspecialchars($breakageNotes ?: '-') . '</td></tr>';
                 
                 $html .= '</tbody></table>';
                 
-                // Material Tracking Table
-                $html .= '<h5 style="direction:rtl;text-align:right;margin-top:15px;">تتبع المواد</h5>';
-                $html .= '<table style="direction:rtl;"><thead><tr style="background:#e9ecef;">';
-                $html .= '<th style="text-align:right;">المادة</th>';
-                $html .= '<th style="text-align:center;">مصروف</th>';
-                $html .= '<th style="text-align:center;">مستخدم</th>';
-                $html .= '<th style="text-align:center;">راجع</th>';
-                $html .= '<th style="text-align:center;">الهالك</th>';
-                $html .= '</tr></thead><tbody>';
-                
-                $materials = [
-                    'prints' => 'مطبوعات',
-                    'boxes' => 'العلب',
-                    'stickers' => 'الاستيكر',
-                    'leaflets' => 'نشره'
-                ];
-                $materials['prints'] = $customMaterialName;
-                
-                foreach ($materials as $matKey => $matLabel) {
-                    $issued = '';
-                    $used = '';
-                    $returned = '';
-                    $waste = '';
-                    
-                    foreach ($packagingData['after'] as $item) {
-                        if ($item['item_key'] === $matKey . '_issued') $issued = $item['item_value'];
-                        if ($item['item_key'] === $matKey . '_used') $used = $item['item_value'];
-                        if ($item['item_key'] === $matKey . '_returned') $returned = $item['item_value'];
-                        if ($item['item_key'] === $matKey . '_waste') $waste = $item['item_value'];
-                    }
-                    
-                    $html .= '<tr>';
-                    $html .= '<td style="text-align:right;"><strong>' . htmlspecialchars($matLabel) . '</strong></td>';
-                    $html .= '<td style="text-align:center;">' . htmlspecialchars($issued ?: '0') . '</td>';
-                    $html .= '<td style="text-align:center;">' . htmlspecialchars($used ?: '0') . '</td>';
-                    $html .= '<td style="text-align:center;">' . htmlspecialchars($returned ?: '0') . '</td>';
-                    $html .= '<td style="text-align:center;">' . htmlspecialchars($waste ?: '0') . '</td>';
-                    $html .= '</tr>';
-                }
-                
-                $html .= '</tbody></table>';
+                $html .= '<h5>تتبع مواد التعبئة (Packaging Material Tracking)</h5>';
+                $html .= manufacturing_packaging_material_html(manufacturing_packaging_material_rows($conn, (int)$order['id']), $canViewComponentName);
+                $html .= manufacturing_packaging_output_html($conn, (int)$order['id']);
+
             }
             
             $html .= '</div>';
@@ -614,7 +569,8 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
                 $countsStmt->execute();
                 $counts = array_column($countsStmt->get_result()->fetch_all(MYSQLI_ASSOC), 'item_value', 'item_key');
                 $countsStmt->close();
-                foreach (manufacturing_packaging_count_labels() as $key => $label) {
+                $counts = array_replace($counts, manufacturing_delivery_counts($conn, (int)$orderId));
+                foreach (manufacturing_packaging_count_labels() + ['primary_product_used' => 'منتج اولي مستخدم'] as $key => $label) {
                     $value = $counts[$key] ?? '';
                     $html .= '<tr><td width="60%">' . htmlspecialchars($label) . '</td><td width="40%">' . htmlspecialchars($value === '' ? '—' : $value) . '</td></tr>';
                 }
@@ -660,79 +616,9 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
 
             $html .= '</div>';
 
-            // Material Tracking Table (from Packaging) for Dispatch Verification
-            $packagingStmt = $conn->prepare("
-                SELECT section_name, item_key, item_text, item_value, item_notes
-                FROM manufacturing_packaging_checklist
-                WHERE manufacturing_order_id = ?
-                ORDER BY item_order
-            ");
-            $packagingStmt->bind_param("i", $orderId);
-            $packagingStmt->execute();
-            $pkgResult = $packagingStmt->get_result();
-            $pkgData = ['after' => []];
-            while ($pRow = $pkgResult->fetch_assoc()) {
-                if ($pRow['section_name'] === 'after') {
-                    $pkgData['after'][] = $pRow;
-                }
-            }
-            $packagingStmt->close();
-            
-            if (!empty($pkgData['after'])) {
-                $html .= '<div style="direction:rtl; text-align:right; margin-top:20px;">';
-                $html .= '<h5 style="color:#0d6efd;">تتبع مواد التعبئة (Packaging Material Tracking)</h5>';
-                $html .= '<table border="1" cellpadding="5" style="width:100%; border-collapse:collapse; margin-bottom:15px;">';
-                $html .= '<thead><tr style="background:#e9ecef;">';
-                $html .= '<th style="text-align:right;">المادة</th>';
-                $html .= '<th style="text-align:center;">مصروف</th>';
-                $html .= '<th style="text-align:center;">مستخدم</th>';
-                $html .= '<th style="text-align:center;">راجع</th>';
-                $html .= '<th style="text-align:center;">الهالك</th>';
-                $html .= '</tr></thead><tbody>';
-                
-                $materials = [
-                    'prints' => 'مطبوعات',
-                    'boxes' => 'العلب',
-                    'stickers' => 'الاستيكر',
-                    'leaflets' => 'نشره'
-                ];
-                $customMaterialName = 'مطبوعات';
-                foreach ($pkgData['after'] as $pi) {
-                    if ($pi['item_key'] === 'custom_material_name' && trim((string)($pi['item_value'] ?? '')) !== '') {
-                        $customMaterialName = $pi['item_value'];
-                    }
-                }
-                // The dispatch step has its own editable name; it wins when set.
-                foreach ($dispatchData['details'] as $di) {
-                    if ($di['item_key'] === 'custom_material_name' && trim((string)($di['item_value'] ?? '')) !== '') {
-                        $customMaterialName = $di['item_value'];
-                    }
-                }
-                $materials['prints'] = $customMaterialName;
-                
-                foreach ($materials as $matKey => $matLabel) {
-                    $issued = ''; $issuedNote = '';
-                    $used = ''; $usedNote = '';
-                    $returned = ''; $returnedNote = '';
-                    $waste = ''; $wasteNote = '';
-                    
-                    foreach ($pkgData['after'] as $pi) {
-                        if ($pi['item_key'] === $matKey . '_issued') { $issued = $pi['item_value']; $issuedNote = $pi['item_notes']; }
-                        if ($pi['item_key'] === $matKey . '_used') { $used = $pi['item_value']; $usedNote = $pi['item_notes']; }
-                        if ($pi['item_key'] === $matKey . '_returned') { $returned = $pi['item_value']; $returnedNote = $pi['item_notes']; }
-                        if ($pi['item_key'] === $matKey . '_waste') { $waste = $pi['item_value']; $wasteNote = $pi['item_notes']; }
-                    }
-                    
-                    $html .= '<tr>';
-                    $html .= '<td style="text-align:right;"><strong>' . htmlspecialchars($matLabel) . '</strong></td>';
-                    $html .= '<td style="text-align:center;">' . htmlspecialchars($issued ?: '0') . ($issuedNote ? '<br><small>' . htmlspecialchars($issuedNote) . '</small>' : '') . '</td>';
-                    $html .= '<td style="text-align:center;">' . htmlspecialchars($used ?: '0') . ($usedNote ? '<br><small>' . htmlspecialchars($usedNote) . '</small>' : '') . '</td>';
-                    $html .= '<td style="text-align:center;">' . htmlspecialchars($returned ?: '0') . ($returnedNote ? '<br><small>' . htmlspecialchars($returnedNote) . '</small>' : '') . '</td>';
-                    $html .= '<td style="text-align:center;">' . htmlspecialchars($waste ?: '0') . ($wasteNote ? '<br><small>' . htmlspecialchars($wasteNote) . '</small>' : '') . '</td>';
-                    $html .= '</tr>';
-                }
-                $html .= '</tbody></table></div>';
-            }
+            $html .= '<h5>تتبع مواد التعبئة (Packaging Material Tracking)</h5>';
+            $html .= manufacturing_packaging_material_html(manufacturing_packaging_material_rows($conn, (int)$orderId), $canViewComponentName);
+            $html .= manufacturing_packaging_output_html($conn, (int)$orderId);
         }
         $dispatchStmt->close();
     }
@@ -1035,8 +921,12 @@ function manufacturing_add_finished_goods(PDO $pdo, array $order, int $inventory
     // Final count is usable output; breakage is a metric, never a material stock movement.
     // Legacy orders without a recorded final count retain their ordered bottle quantity.
     $quantity = $finalCount !== '' ? (float)$finalCount : (float)($order['number_of_bottles'] ?? 0);
+    $outputStmt = $pdo->prepare('SELECT finished_quantity, primary_quantity FROM manufacturing_packaging_output WHERE manufacturing_order_id = ?');
+    $outputStmt->execute([$orderId]);
+    $packagingOutput = $outputStmt->fetch(PDO::FETCH_ASSOC);
+    if ($packagingOutput) $quantity = (float)$packagingOutput['finished_quantity'];
     $wasteQuantity = $breakage !== '' ? (float)$breakage : 0;
-    if ($productId <= 0 || $quantity < 0 || $quantity + $wasteQuantity <= 0 || $inventoryId <= 0) {
+    if ($productId <= 0 || $quantity < 0 || $quantity + $wasteQuantity + (float)($packagingOutput['primary_quantity'] ?? 0) <= 0 || $inventoryId <= 0) {
         throw new RuntimeException('The order needs a final product, a number of bottles and a warehouse before it can be completed.');
     }
     $destination = $pdo->prepare('SELECT id FROM inventories WHERE id = ? AND system_key IS NULL AND is_active = 1 AND (location_id <=> ?) FOR UPDATE');
@@ -1648,6 +1538,12 @@ function manufacturing_recalculate_components($order, $components) {
     $numberOfBottles = isset($order['number_of_bottles']) && $order['number_of_bottles'] !== null
         ? (int)$order['number_of_bottles']
         : null;
+
+    $primaryQuantity = (int)($order['primary_stock_quantity'] ?? 0);
+    if ($primaryQuantity > 0 && $numberOfBottles !== null) {
+        $numberOfBottles = max(0, $numberOfBottles - $primaryQuantity);
+        if ($numberOfBottles === 0) return [];
+    }
 
     if ($numberOfBottles !== null && $bottleSizeValue > 0) {
         // Total production in bottle's unit, then normalise to base unit

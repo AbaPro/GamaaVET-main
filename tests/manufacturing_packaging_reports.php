@@ -15,6 +15,10 @@ foreach (['-1', '1.5', 'abc', '2147483648', []] as $bad) {
         manufacturing_validate_packaging_counts(['last_carton_units' => $bad]);
         throw new RuntimeException('Invalid count accepted');
     } catch (InvalidArgumentException $ex) {}
+    try {
+        manufacturing_validate_packaging_counts(['primary_product_used' => $bad]);
+        throw new RuntimeException('Invalid primary usage accepted');
+    } catch (InvalidArgumentException $ex) {}
 }
 checkPackaging(true, 'Negative, fractional, nonnumeric, oversized and array counts rejected');
 try {
@@ -33,25 +37,18 @@ try {
     $pdo->prepare("INSERT INTO manufacturing_orders (order_number,customer_id,product_id,formula_id,number_of_bottles,batch_size,sales_order_id,notes) VALUES (?, ?, ?, ?, 100, 100, ?, 'Original manufacturing note')")
         ->execute(['TEST-PACK-' . bin2hex(random_bytes(5)), $source['customer_id'], $product, $formula, $salesId]);
     $mfgId = (int)$pdo->lastInsertId();
-    $note = manufacturing_reconcile_finished_count($pdo, $mfgId, 110);
+    foreach ([100, 110, 90] as $count) {
+        checkPackaging(manufacturing_reconcile_finished_count($pdo, $mfgId, $count) === null, 'Orders without a packaging kit do not invent material movements');
+    }
     $sales = $pdo->query("SELECT * FROM orders WHERE id = $salesId")->fetch(PDO::FETCH_ASSOC);
     $item = $pdo->query("SELECT * FROM order_items WHERE order_id = $salesId")->fetch(PDO::FETCH_ASSOC);
-    checkPackaging((int)$item['quantity'] === 110 && (float)$item['unit_price'] === 10.0 && (float)$item['total_price'] === 1100.0, 'Excess production increases quantity at the existing unit price');
-    checkPackaging((float)$sales['total_amount'] === 990.0 && (float)$sales['discount_amount'] === 160.0, 'Percentage discount recalculated; cash discount and shipping preserved');
     $mfg = $pdo->query("SELECT * FROM manufacturing_orders WHERE id = $mfgId")->fetch(PDO::FETCH_ASSOC);
-    checkPackaging(str_contains($sales['notes'], $note) && str_contains($mfg['notes'], $note) && str_contains($sales['notes'], 'Original sales note'), 'Both screens retain original notes and receive the adjustment');
-    checkPackaging(manufacturing_reconcile_finished_count($pdo, $mfgId, 110) === null && manufacturing_reconcile_finished_count($pdo, $mfgId, 90) === null, 'Repeated saves and lower counts do not add excess again or reduce the order');
-    manufacturing_reconcile_finished_count($pdo, $mfgId, 112);
-    checkPackaging((int)$pdo->query("SELECT quantity FROM order_items WHERE order_id = $salesId")->fetchColumn() === 112, 'A later increase adds only its new excess');
-    $pdo->exec('SAVEPOINT packaging_ambiguity');
-    $pdo->prepare('INSERT INTO order_items (order_id,product_id,quantity,unit_price,total_price) VALUES (?, ?, 1, 10, 10)')->execute([$salesId, $product]);
-    try {
-        manufacturing_reconcile_finished_count($pdo, $mfgId, 115);
-        throw new LogicException('Ambiguous sales lines accepted');
-    } catch (RuntimeException $ex) {
-        checkPackaging(str_contains($ex->getMessage(), 'unique paid'), 'Ambiguous sales lines rejected without guessing');
-    }
-    $pdo->exec('ROLLBACK TO SAVEPOINT packaging_ambiguity');
+    checkPackaging((int)$item['quantity'] === 100 && (float)$item['total_price'] === 1000.0
+        && (float)$sales['total_amount'] === 900.0 && (float)$sales['discount_amount'] === 150.0,
+        'Final output never changes sales quantities, prices or discounts');
+    checkPackaging((int)$mfg['number_of_bottles'] === 100 && (float)$mfg['batch_size'] === 100.0
+        && $sales['notes'] === 'Original sales note' && $mfg['notes'] === 'Original manufacturing note',
+        'Final output preserves the manufacturing plan and sales notes');
 } finally { $pdo->rollBack(); }
 
 // Report fixtures use the same mysqli connection as the report builders.
@@ -86,6 +83,14 @@ try {
     for ($i = 0; $i < 3; $i++) $conn->query("INSERT INTO manufacturing_dispatch_checklist (manufacturing_order_id,section_name,item_key,item_text,item_type,item_value) VALUES ($id,'details','custom_material_name','Repeated material','text','WEIRD-DUPLICATE')");
     $conn->query("INSERT INTO manufacturing_dispatch_checklist (manufacturing_order_id,section_name,item_key,item_text,item_type,item_value) VALUES ($id,'details','final_product_count','Old count','number','999999')");
     $conn->query("INSERT INTO manufacturing_sourcing_components (manufacturing_order_id,formula_component_index,component_name,required_quantity,unit,receipt_status) VALUES ($id,0,'SECRET-MATERIAL-REGRESSION',10,'kg','pending')");
+    $category = (int)$conn->query('SELECT id FROM categories LIMIT 1')->fetch_assoc()['id'];
+    $conn->query("INSERT INTO products (name,category_id,type,unit) VALUES ('SECRET-PACKAGING-REGRESSION',$category,'material','each')");
+    $packingProduct = $conn->insert_id;
+    $conn->query("INSERT INTO manufacturing_sourcing_components (manufacturing_order_id,source,formula_component_index,product_id,component_name,required_quantity,unit,deducted_at)
+        VALUES ($id,'packaging',0,$packingProduct,'SECRET-PACKAGING-REGRESSION',2000,'pcs',NOW())");
+    $packingComponent = $conn->insert_id;
+    $conn->query("INSERT INTO manufacturing_packaging_material_tracking (sourcing_component_id,planned_quantity,issued_quantity,used_quantity,returned_quantity,waste_quantity)
+        VALUES ($packingComponent,2000,2000,2000,0,0)");
     $img = imagecreatetruecolor(400, 200);
     imagefill($img, 0, 0, imagecolorallocate($img, 40, 130, 200));
     imagepng($img, $absoluteImage); imagedestroy($img);
@@ -99,6 +104,7 @@ try {
     $_SESSION['permissions'] = ['manufacturing.orders.technical_details.view', 'manufacturing.view_step_packaging', 'manufacturing.view_step_dispatch', 'manufacturing.view_step_delivering'];
     $html = manufacturing_build_full_report_html($conn, $id);
     checkPackaging(!str_contains($html, 'SECRET-MATERIAL-REGRESSION') && !str_contains($html, 'SECRET-FORMULA-REGRESSION'), 'Unauthorized final report and audit hide material and formula names');
+    checkPackaging(!str_contains($html, 'SECRET-PACKAGING-REGRESSION'), 'Actual packaging names stay hidden in unauthorized reports');
     checkPackaging(!str_contains($html, '999999') && !str_contains($html, 'Repeated material'), 'Dispatch report ignores stale counts and repeated custom-material rows');
     checkPackaging(substr_count($html, 'data:image/jpeg;base64,') === 3, 'Only permitted packaging, dispatch and delivery steps embed images');
     checkPackaging(substr_count($html, 'كسور في اخر كرتونة') === 3, 'Partial-carton field appears in packaging, dispatch and delivery reports');
@@ -133,6 +139,8 @@ try {
     $_SESSION['permissions'] = ['manufacturing.component.name.view', 'manufacturing.formula.view_all', 'manufacturing.orders.technical_details.view', 'manufacturing.view_step_preparation', 'manufacturing.view_step_packaging', 'manufacturing.view_step_dispatch', 'manufacturing.view_step_delivering'];
     $_SESSION['formula_unlocked'] = true; $_SESSION['formula_password_version'] = formulaPasswordVersion();
     $html = manufacturing_build_full_report_html($conn, $id);
+    checkPackaging(substr_count($html, 'SECRET-PACKAGING-REGRESSION') === 2,
+        'Packaging and dispatch reports show the same actual linked material');
     checkPackaging(str_contains($html, 'SECRET-MATERIAL-REGRESSION</td><td style="text-align:center;">10</td>'), 'Final report converts 2000 × 100ml against 100L formula to 10kg');
     require_once __DIR__ . '/../tcpdf/tcpdf.php';
     $pdf = new TCPDF(); $pdf->setPrintHeader(false); $pdf->SetFont('aealarabiya', '', 11); $pdf->AddPage();

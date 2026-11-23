@@ -56,6 +56,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect($returnUrl);
     }
     $unit = normalizeProductUnit($_POST['unit'] ?? '');
+    if ($type !== 'material') {
+        $wasteStock = $pdo->prepare("SELECT ip.inventory_id FROM inventory_products ip JOIN inventories i ON i.id=ip.inventory_id
+            WHERE ip.product_id=? AND i.system_key='manufacturing_waste' LIMIT 1");
+        $wasteStock->execute([$id]);
+        if ($wasteStock->fetchColumn()) {
+            setAlert('danger', 'A product held in مخزن الهالك must keep its material type.');
+            redirect($returnUrl);
+        }
+    }
+    $primaryLink = $pdo->prepare('SELECT final_product_id, primary_product_id FROM manufacturing_primary_products WHERE final_product_id = ? OR primary_product_id = ?');
+    $primaryLink->execute([$id, $id]);
+    $link = $primaryLink->fetch(PDO::FETCH_ASSOC);
+    if ($link && (((int)$link['primary_product_id'] === $id && ($type !== 'primary' || $unit !== 'each'))
+        || ((int)$link['final_product_id'] === $id && $type !== 'final'))) {
+        setAlert('danger', 'A linked manufacturing product must keep its product type; primary products are counted in units.');
+        redirect($returnUrl);
+    }
     if (in_array($type, ['final', 'material'], true) && $unit === null) {
         setAlert('danger', 'A unit is required for final products and raw materials.');
         redirect($returnUrl);

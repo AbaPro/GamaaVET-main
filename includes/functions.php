@@ -1198,6 +1198,8 @@ function getProductUsageReasons($productId) {
         ['packaging_option_items', 'product_id', 'packaging options'],
         ['packaging_options', 'product_id', 'packaging options'],
         ['manufacturing_orders', 'product_id', 'manufacturing orders'],
+        ['manufacturing_primary_products', 'final_product_id', 'a linked primary product'],
+        ['manufacturing_primary_products', 'primary_product_id', 'a linked manufacturing final product'],
         ['manufacturing_sourcing_components', 'product_id', 'manufacturing sourcing'],
         ['inventory_stock_logs', 'product_id', 'inventory audit history'],
         ['product_price_logs', 'product_id', 'price history'],
@@ -1744,6 +1746,7 @@ function canAddProductToInventory($inventoryId, $productId) {
               AND $inventoryScope
               AND $productScope
               AND (COALESCE(i.system_key, '') <> 'manufacturing_waste' OR p.type = 'material')
+              AND (COALESCE(i.system_key, '') <> 'manufacturing_primary' OR p.type = 'primary')
               AND " . getActiveProductSql('p') . "
             LIMIT 1";
     $stmt = $conn->prepare($sql);

@@ -113,6 +113,12 @@ function handleManufacturingDeletion($type) {
             if ($stmt->fetchColumn()) throw new DomainException('Cannot delete a record used by manufacturing orders.');
         }
         if ($type === 'order') {
+            $stockOutput = $pdo->prepare('SELECT primary_quantity, primary_used_quantity FROM manufacturing_packaging_output WHERE manufacturing_order_id = ?');
+            $stockOutput->execute([$id]);
+            $primaryOutput = $stockOutput->fetch(PDO::FETCH_ASSOC);
+            if (!empty($record['primary_stock_deducted_at']) || (int)($primaryOutput['primary_quantity'] ?? 0) > 0 || (int)($primaryOutput['primary_used_quantity'] ?? 0) > 0) {
+                throw new DomainException('This order has primary stock movements. Reconcile or cancel its stock before deleting it.');
+            }
             $stmt = $pdo->prepare('SELECT d.file_path FROM manufacturing_step_documents d JOIN manufacturing_order_steps s ON d.manufacturing_order_step_id = s.id WHERE s.manufacturing_order_id = ?');
             $stmt->execute([$id]);
             $files = $stmt->fetchAll(PDO::FETCH_COLUMN);

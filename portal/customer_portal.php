@@ -598,6 +598,146 @@ $orderableProducts = array_values(array_filter(
     static fn(array $product): bool => ($product['type'] ?? '') === 'final'
 ));
 
+/**
+ * How many units of each final product can be packed from the packaging
+ * materials currently in stock. Manufacturing deducts every material from a
+ * single location, so each location is evaluated on its own and the best one
+ * wins. Only regular factory inventories count (no waste/primary stores and
+ * no direct-sale channel), matching the sourcing stock check.
+ *
+ * @return array<int, array{ready:int|null, option:string|null, location:string|null, limiting:string|null}>
+ */
+function portalPackagingReadiness(PDO $pdo, int $customerId, array $finalProducts): array
+{
+    $result = [];
+    if (!$finalProducts) {
+        return $result;
+    }
+
+    try {
+        $optionsStmt = $pdo->prepare("
+            SELECT id, name, product_id
+            FROM packaging_options
+            WHERE customer_id = ? AND is_active = 1
+            ORDER BY product_id IS NULL, name, id
+        ");
+        $optionsStmt->execute([$customerId]);
+        $options = $optionsStmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        return $result;
+    }
+    if (!$options) {
+        return $result;
+    }
+
+    $optionIds = array_map(static fn(array $o): int => (int)$o['id'], $options);
+    $placeholders = implode(',', array_fill(0, count($optionIds), '?'));
+    $itemsStmt = $pdo->prepare("
+        SELECT poi.packaging_option_id, poi.product_id, poi.quantity, poi.unit,
+               p.name AS material_name, p.unit AS stock_unit
+        FROM packaging_option_items poi
+        JOIN products p ON p.id = poi.product_id
+        WHERE poi.packaging_option_id IN ($placeholders)
+    ");
+    $itemsStmt->execute($optionIds);
+    $itemsByOption = [];
+    $materialIds = [];
+    foreach ($itemsStmt->fetchAll(PDO::FETCH_ASSOC) as $item) {
+        $itemsByOption[(int)$item['packaging_option_id']][] = $item;
+        $materialIds[(int)$item['product_id']] = true;
+    }
+
+    // Stock per material per location (regular factory inventories only).
+    $stockByMaterial = [];
+    $locationNames = [];
+    if ($materialIds) {
+        $ids = array_keys($materialIds);
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $stockStmt = $pdo->prepare("
+            SELECT ip.product_id, inv.location_id, l.name AS location_name, SUM(ip.quantity) AS qty
+            FROM inventory_products ip
+            JOIN inventories inv ON inv.id = ip.inventory_id
+            LEFT JOIN locations l ON l.id = inv.location_id
+            WHERE ip.product_id IN ($placeholders)
+              AND inv.is_active = 1
+              AND inv.system_key IS NULL
+              AND inv.direct_sale IS NULL
+              AND LOWER(REPLACE(TRIM(inv.name), ' ', '')) NOT IN ('curevet', 'curevetinventory')
+              AND (l.id IS NULL OR LOWER(REPLACE(REPLACE(REPLACE(TRIM(l.name), ' ', ''), '-', ''), '_', '')) NOT IN ('curevet', 'curevetinventory'))
+            GROUP BY ip.product_id, inv.location_id, l.name
+        ");
+        $stockStmt->execute($ids);
+        foreach ($stockStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $locationKey = (int)($row['location_id'] ?? 0);
+            $stockByMaterial[(int)$row['product_id']][$locationKey] = (float)$row['qty'];
+            $locationNames[$locationKey] = $row['location_name'] ?? null;
+        }
+    }
+
+    foreach ($finalProducts as $product) {
+        $productId = (int)$product['id'];
+        $best = ['ready' => null, 'option' => null, 'location' => null, 'limiting' => null];
+
+        foreach ($options as $option) {
+            if ($option['product_id'] !== null && (int)$option['product_id'] !== $productId) {
+                continue;
+            }
+            $items = $itemsByOption[(int)$option['id']] ?? [];
+            if (!$items) {
+                continue;
+            }
+
+            foreach (array_keys($locationNames) as $locationKey) {
+                $ready = PHP_INT_MAX;
+                $limiting = null;
+                foreach ($items as $item) {
+                    $perUnit = (float)$item['quantity'];
+                    if ($perUnit <= 0) {
+                        continue;
+                    }
+                    $stock = $stockByMaterial[(int)$item['product_id']][$locationKey] ?? 0.0;
+                    $stockUnit = trim((string)($item['stock_unit'] ?? ''));
+                    $itemUnit = trim((string)($item['unit'] ?? ''));
+                    if ($stockUnit !== '' && $itemUnit !== '' && strcasecmp($stockUnit, $itemUnit) !== 0) {
+                        $stock = convertProductUnitQuantity($stock, $stockUnit, $itemUnit) ?? 0.0;
+                    }
+                    $possible = (int)floor(max(0.0, $stock) / $perUnit + 1e-9);
+                    if ($possible < $ready) {
+                        $ready = $possible;
+                        $limiting = (string)$item['material_name'];
+                    }
+                }
+                if ($ready === PHP_INT_MAX) {
+                    continue;
+                }
+                if ($best['ready'] === null || $ready > $best['ready']) {
+                    $best = [
+                        'ready' => $ready,
+                        'option' => (string)$option['name'],
+                        'location' => $locationNames[$locationKey],
+                        'limiting' => $limiting,
+                    ];
+                }
+            }
+
+            // No stock anywhere for this option's materials: still report 0.
+            if ($best['ready'] === null) {
+                $best = ['ready' => 0, 'option' => (string)$option['name'], 'location' => null, 'limiting' => (string)$items[0]['material_name']];
+            }
+        }
+
+        $result[$productId] = $best;
+    }
+
+    return $result;
+}
+
+$packagingReadiness = portalPackagingReadiness($pdo, $customerId, $orderableProducts);
+$readyProductsCount = count(array_filter(
+    $packagingReadiness,
+    static fn(array $r): bool => ($r['ready'] ?? 0) > 0
+));
+
 $balanceStmt = $pdo->prepare("
     SELECT SUM(total_amount - paid_amount) AS due
     FROM orders
@@ -1327,6 +1467,17 @@ if (!empty($orders)) {
             </div>
           </div>
 
+          <?php if ($orderableProducts): ?>
+            <div class="mb-5 rounded-2xl border border-emerald-100 bg-emerald-50 p-4 dark:border-emerald-900/40 dark:bg-emerald-900/20">
+              <div class="text-xs font-bold text-emerald-700 dark:text-emerald-200">منتجات جاهزة للتصنيع</div>
+              <div class="mt-1 text-2xl font-extrabold text-emerald-800 dark:text-emerald-100">
+                <?= number_format($readyProductsCount); ?>
+                <span class="text-sm font-bold text-emerald-600 dark:text-emerald-300">/ <?= number_format(count($orderableProducts)); ?></span>
+              </div>
+            </div>
+            <p class="-mt-2 mb-5 text-xs text-slate-400">عمود "جاهز للتصنيع" يوضح عدد الوحدات الممكن تعبئتها لكل منتج على حدة من مواد التعبئة المتوفرة حالياً. المنتجات التي تشترك في نفس مواد التعبئة تتقاسم نفس الكمية.</p>
+          <?php endif; ?>
+
           <?php if ($customerProducts): ?>
             <div class="mb-5 grid gap-3 md:grid-cols-[1fr_150px_170px]">
               <div class="relative">
@@ -1345,6 +1496,8 @@ if (!empty($orders)) {
                 <option value="">كل المخزون</option>
                 <option value="in-stock">متوفر</option>
                 <option value="out-of-stock">غير متوفر</option>
+                <option value="ready">جاهز للتصنيع</option>
+                <option value="not-ready">مواد التعبئة غير كافية</option>
               </select>
               <select
                 id="productSort"
@@ -1354,6 +1507,8 @@ if (!empty($orders)) {
                 <option value="name-desc">الاسم ي-أ</option>
                 <option value="stock-desc">المخزون من الأعلى</option>
                 <option value="stock-asc">المخزون من الأقل</option>
+                <option value="ready-desc">الجاهز للتصنيع من الأعلى</option>
+                <option value="ready-asc">الجاهز للتصنيع من الأقل</option>
               </select>
             </div>
             <div class="rounded-2xl border border-slate-200 overflow-x-auto dark:border-slate-800">
@@ -1363,6 +1518,7 @@ if (!empty($orders)) {
                     <th class="px-4 py-3 text-right font-bold">المنتج</th>
                     <th class="px-4 py-3 text-center font-bold">التصنيف</th>
                     <th class="px-4 py-3 text-center font-bold">المخزون</th>
+                    <th class="px-4 py-3 text-center font-bold">جاهز للتصنيع</th>
                   </tr>
                 </thead>
                 <tbody id="productsList" class="divide-y divide-slate-100 dark:divide-slate-800">
@@ -1373,12 +1529,15 @@ if (!empty($orders)) {
                           $product['sku'],
                           $product['category_name']
                       ]));
+                      $readiness = $packagingReadiness[(int)$product['id']] ?? null;
+                      $readyQty = $readiness['ready'] ?? null;
                     ?>
                     <tr
                       class="portal-product hover:bg-slate-50 dark:hover:bg-slate-950/60 transition"
                       data-name="<?= htmlspecialchars((string)$product['name'], ENT_QUOTES, 'UTF-8'); ?>"
                       data-stock="<?= htmlspecialchars((string)(float)$product['stock'], ENT_QUOTES, 'UTF-8'); ?>"
                       data-search="<?= htmlspecialchars($productSearchText, ENT_QUOTES, 'UTF-8'); ?>"
+                      data-ready="<?= $readyQty === null ? '-1' : (int)$readyQty; ?>"
                     >
                       <td class="px-4 py-3">
                         <div class="font-bold"><?= htmlspecialchars($product['name']); ?></div>
@@ -1391,6 +1550,26 @@ if (!empty($orders)) {
                         <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-extrabold <?= $product['stock'] > 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-400'; ?>">
                           <?= number_format((float)$product['stock']); ?>
                         </span>
+                      </td>
+                      <td class="px-4 py-3 text-center">
+                        <?php if ($readyQty === null): ?>
+                          <span class="text-xs text-slate-400" title="لا يوجد خيار تعبئة مسجل لهذا المنتج">-</span>
+                        <?php else: ?>
+                          <?php
+                            $readyTitle = 'خيار التعبئة: ' . $readiness['option']
+                              . ($readiness['location'] ? ' — الموقع: ' . $readiness['location'] : '')
+                              . ($readiness['limiting'] ? ' — المادة المحددة: ' . $readiness['limiting'] : '');
+                          ?>
+                          <span
+                            class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-extrabold <?= $readyQty > 0 ? 'bg-cyan-50 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-200' : 'bg-rose-50 text-rose-600 dark:bg-rose-900/30 dark:text-rose-200'; ?>"
+                            title="<?= htmlspecialchars($readyTitle, ENT_QUOTES, 'UTF-8'); ?>"
+                          >
+                            <?= number_format((int)$readyQty); ?>
+                          </span>
+                          <?php if ($readyQty <= 0 && $readiness['limiting']): ?>
+                            <div class="mt-1 text-[10px] text-rose-500">ينقص: <?= htmlspecialchars($readiness['limiting']); ?></div>
+                          <?php endif; ?>
+                        <?php endif; ?>
                       </td>
                     </tr>
                   <?php endforeach; ?>
@@ -1581,9 +1760,12 @@ if (!empty($orders)) {
       rows.forEach((row) => {
         const stock = Number(row.dataset.stock || 0);
         const matchesSearch = !query || normalizeText(row.dataset.search).includes(query);
+        const ready = Number(row.dataset.ready ?? -1);
         const matchesStock = !stockFilter
           || (stockFilter === 'in-stock' && stock > 0)
-          || (stockFilter === 'out-of-stock' && stock <= 0);
+          || (stockFilter === 'out-of-stock' && stock <= 0)
+          || (stockFilter === 'ready' && ready > 0)
+          || (stockFilter === 'not-ready' && ready === 0);
         const isVisible = matchesSearch && matchesStock;
 
         row.classList.toggle('hidden', !isVisible);

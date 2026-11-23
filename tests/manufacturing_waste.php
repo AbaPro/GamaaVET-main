@@ -12,11 +12,14 @@ $pdo->beginTransaction();
 try {
     $source = $pdo->query('SELECT customer_id, product_id, formula_id FROM manufacturing_orders WHERE product_id IS NOT NULL LIMIT 1')->fetch(PDO::FETCH_ASSOC);
     $final = (int)$source['product_id'];
-    $waste = (int)$pdo->query("SELECT id FROM inventories WHERE system_key = 'manufacturing_waste'")->fetchColumn();
+    $pdo->exec("INSERT INTO locations (name) VALUES ('TEST waste location')");
+    $location = (int)$pdo->lastInsertId();
+    $waste = (int)$pdo->query("SELECT id FROM inventories WHERE system_key = 'manufacturing_waste' AND location_id = $location")->fetchColumn();
     verifyWaste($waste > 0, 'Fixed waste warehouse exists');
     verifyWaste(!canAddProductToInventory($waste, $final), 'Manual additions and transfers cannot put final products into waste');
     $pdo->exec("INSERT INTO inventories (name,is_active) VALUES ('TEST finished output',1)");
     $normal = (int)$pdo->lastInsertId();
+    $pdo->prepare('UPDATE inventories SET location_id = ? WHERE id = ?')->execute([$location, $normal]);
     $category = $pdo->query('SELECT category_id FROM products LIMIT 1')->fetchColumn();
     $raw = [];
     foreach (['kilo', 'each'] as $unit) {
@@ -27,10 +30,11 @@ try {
         $q = $pdo->prepare('SELECT quantity FROM inventory_products WHERE inventory_id = ? AND product_id = ?');
         $q->execute([$inventory,$product]); return (float)($q->fetchColumn() ?: 0);
     };
-    $makeOrder = function ($usable, $broken, $status = 'in_progress') use ($pdo, $source) {
+    $makeOrder = function ($usable, $broken, $status = 'in_progress') use ($pdo, $source, $location) {
         $pdo->prepare('INSERT INTO manufacturing_orders (order_number,customer_id,product_id,formula_id,number_of_bottles,batch_size,status) VALUES (?, ?, ?, ?, 100, 100, ?)')
             ->execute(['TEST-WASTE-' . bin2hex(random_bytes(5)), $source['customer_id'], $source['product_id'], $source['formula_id'], $status]);
         $id = (int)$pdo->lastInsertId();
+        $pdo->prepare('UPDATE manufacturing_orders SET location_id = ? WHERE id = ?')->execute([$location, $id]);
         foreach (['final_product_count' => $usable, 'breakage_count' => $broken, 'boxes_waste' => '50'] as $key => $value) {
             $pdo->prepare("INSERT INTO manufacturing_packaging_checklist (manufacturing_order_id, section_name, item_key, item_type, item_value) VALUES (?, 'after', ?, 'number', ?)")->execute([$id,$key,$value]);
         }
@@ -70,6 +74,17 @@ try {
     $onlyBroken = $makeOrder('0','100','completed');
     manufacturing_add_finished_goods($pdo,$onlyBroken,$normal);
     verifyWaste($stock($normal,$final) === 95.0 && $stock($waste,$final) === $initialFinalWaste, 'All-broken output remains a metric without guessed material waste');
+    $invalidOutput = $makeOrder('10','0','completed');
+    try { manufacturing_add_finished_goods($pdo,$invalidOutput,$waste); throw new LogicException('Final output accepted in waste'); }
+    catch (RuntimeException $e) { verifyWaste(str_contains($e->getMessage(),'normal active warehouse'), 'Finished-goods posting explicitly rejects the waste warehouse'); }
+    $invalidMaterial = $makeOrder('10','0');
+    $invalidComponent = $consume($invalidMaterial,$final,'pcs',10,'packaging');
+    try { manufacturing_save_material_waste($pdo,$invalidMaterial['id'],[$invalidComponent=>'1']); throw new LogicException('Final SKU accepted as waste'); }
+    catch (DomainException $e) { verifyWaste(true,'A final-product SKU cannot be recorded as material waste'); }
+    $pdo->prepare("INSERT INTO manufacturing_material_waste (manufacturing_order_id,sourcing_component_id,product_id,quantity,unit,stock_quantity) VALUES (?,?,?,1,'pcs',1)")
+        ->execute([$invalidMaterial['id'],$invalidComponent,$final]);
+    try { manufacturing_post_material_waste($pdo,['id'=>$invalidMaterial['id'],'order_number'=>'TEST invalid final waste']); throw new LogicException('Malformed final-product waste posted'); }
+    catch (DomainException $e) { verifyWaste($stock($waste,$final)===$initialFinalWaste,'Posting rechecks material type and blocks a malformed final-product waste draft'); }
     $rollback = $makeOrder('90','10');
     $row = $consume($rollback,$raw[1],'pcs',100,'packaging');
     manufacturing_save_material_waste($pdo,$rollback['id'],[$row=>'10']);

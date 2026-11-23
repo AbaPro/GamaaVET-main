@@ -41,28 +41,35 @@ function manufacturing_deduct_sourcing_stock(PDO $pdo, int $orderId): void {
         ORDER BY msc.product_id, msc.id FOR UPDATE');
     $stmt->execute([$orderId]);
     $components = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($components as $component) {
+        manufacturing_withdraw_component_stock($pdo, $order, $component, manufacturing_component_stock_quantity($component));
+        $pdo->prepare('UPDATE manufacturing_sourcing_components SET deducted_at = NOW() WHERE id = ?')->execute([$component['id']]);
+    }
+    manufacturing_consume_primary_stock($pdo, $order);
+}
+
+/** Withdraw a native stock quantity using the same allocation rules in sourcing and packaging. */
+function manufacturing_withdraw_component_stock(PDO $pdo, array $order, array $component, float $quantity): void {
+    if (!$pdo->inTransaction()) throw new LogicException('Material withdrawals require a transaction.');
+    $remaining = $quantity;
     $scope = getInventoryChannelScopeSql('i');
     $stock = $pdo->prepare("SELECT ip.inventory_id, ip.quantity FROM inventory_products ip
         JOIN inventories i ON i.id = ip.inventory_id
         WHERE ip.product_id = ? AND i.location_id = ? AND i.is_active = 1 AND i.system_key IS NULL
           AND $scope AND ip.quantity > 0 ORDER BY ip.inventory_id FOR UPDATE");
     $deduct = $pdo->prepare('UPDATE inventory_products SET quantity = quantity - ? WHERE inventory_id = ? AND product_id = ?');
-    foreach ($components as $component) {
-        $remaining = manufacturing_component_stock_quantity($component);
-        $stock->execute([$component['product_id'], $order['location_id']]);
-        $warehouses = $stock->fetchAll(PDO::FETCH_ASSOC);
-        if (round(array_sum(array_column($warehouses, 'quantity')), 2) < $remaining) {
-            throw new DomainException('Cannot complete sourcing: insufficient usable material stock at this location.');
-        }
-        foreach ($warehouses as $warehouse) {
-            if ($remaining <= 0) break;
-            $take = min($remaining, (float)$warehouse['quantity']);
-            $deduct->execute([$take, $warehouse['inventory_id'], $component['product_id']]);
-            manufacturing_component_stock_log($pdo, (int)$warehouse['inventory_id'], $component, -$take,
-                (float)$warehouse['quantity'], 'manufacturing_sourcing_component');
-            $remaining = round($remaining - $take, 2);
-        }
-        $pdo->prepare('UPDATE manufacturing_sourcing_components SET deducted_at = NOW() WHERE id = ?')->execute([$component['id']]);
+    $stock->execute([$component['product_id'], $order['location_id']]);
+    $warehouses = $stock->fetchAll(PDO::FETCH_ASSOC);
+    if (round(array_sum(array_column($warehouses, 'quantity')), 2) < $remaining) {
+        throw new DomainException('Insufficient usable material stock at this location.');
+    }
+    foreach ($warehouses as $warehouse) {
+        if ($remaining <= 0) break;
+        $take = min($remaining, (float)$warehouse['quantity']);
+        $deduct->execute([$take, $warehouse['inventory_id'], $component['product_id']]);
+        manufacturing_component_stock_log($pdo, (int)$warehouse['inventory_id'], $component, -$take,
+            (float)$warehouse['quantity'], 'manufacturing_sourcing_component');
+        $remaining = round($remaining - $take, 2);
     }
 }
 

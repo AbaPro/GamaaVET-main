@@ -7,7 +7,16 @@ function manufacturing_delivery_counts($conn, int $orderId): array {
     $stmt->execute();
     $counts = array_column($stmt->get_result()->fetch_all(MYSQLI_ASSOC), 'item_value', 'item_key');
     $stmt->close();
-    return array_intersect_key($counts, manufacturing_packaging_count_labels());
+    $output = $conn->prepare('SELECT finished_quantity, primary_used_quantity FROM manufacturing_packaging_output WHERE manufacturing_order_id = ?');
+    $output->bind_param('i', $orderId);
+    $output->execute();
+    $row = $output->get_result()->fetch_assoc();
+    $output->close();
+    if ($row) {
+        $counts['final_product_count'] = (string)$row['finished_quantity'];
+        $counts['primary_product_used'] = (string)$row['primary_used_quantity'];
+    }
+    return array_intersect_key($counts, manufacturing_packaging_count_labels() + ['primary_product_used' => 'منتج اولي مستخدم']);
 }
 
 function manufacturing_delivery_counts_html(array $counts): string {
@@ -17,6 +26,7 @@ function manufacturing_delivery_counts_html(array $counts): string {
         'carton_count' => 'عدد الكراتين / Cartons',
         'units_per_carton' => 'وحدات/كرتونة / Units per carton',
         'last_carton_units' => 'كسور في اخر كرتونة / Units in last partial carton',
+        'primary_product_used' => 'منتج اولي مستخدم',
     ];
     foreach ($labels as $key => $label) {
         $value = $counts[$key] ?? '';
@@ -55,6 +65,11 @@ function manufacturing_delivery_groups($conn, int $salesOrderId = 0): array {
         while ($count = $result->fetch_assoc()) {
             $countsByOrder[$count['manufacturing_order_id']][$count['item_key']] = $count['item_value'];
         }
+        $output = $conn->query('SELECT manufacturing_order_id, finished_quantity, primary_used_quantity FROM manufacturing_packaging_output WHERE manufacturing_order_id IN (' . implode(',', $ids) . ')');
+        while ($row = $output->fetch_assoc()) {
+            $countsByOrder[$row['manufacturing_order_id']]['final_product_count'] = (string)$row['finished_quantity'];
+            $countsByOrder[$row['manufacturing_order_id']]['primary_product_used'] = (string)$row['primary_used_quantity'];
+        }
     }
     foreach ($rows as $row) {
         $customerId = (int)$row['customer_id'];
@@ -69,7 +84,8 @@ function manufacturing_delivery_groups($conn, int $salesOrderId = 0): array {
 
 function manufacturing_delivery_group_html(array $rows): string {
     $html = '<div class="table-responsive"><table class="table table-bordered align-middle"><thead><tr>'
-        . '<th>Product</th><th>Manufacturing order</th><th>Total quantity</th><th>Cartons</th><th>Units per carton</th><th>Units in last partial carton</th><th>Dispatch</th><th>Delivery</th><th>Action</th></tr></thead><tbody>';
+        . '<th>Product</th><th>Manufacturing order</th><th>Total quantity</th><th>Cartons</th><th>Units per carton</th><th>Units in last partial carton</th><th>منتج اولي مستخدم</th><th>Dispatch</th><th>Delivery</th><th>Action</th></tr></thead><tbody>';
+    $primaryUsedTotal = 0;
     $totals = ['final_product_count' => 0, 'carton_count' => 0];
     $missing = array_fill_keys(array_keys($totals), false);
     foreach ($rows as $row) {
@@ -82,10 +98,13 @@ function manufacturing_delivery_group_html(array $rows): string {
                 else $totals[$key] += (int)$value;
             }
         }
+        $primaryUsed = (int)($row['counts']['primary_product_used'] ?? 0);
+        $primaryUsedTotal += $primaryUsed;
+        $html .= '<td>' . $primaryUsed . '</td>';
         $html .= '<td>' . htmlspecialchars(ucfirst($row['dispatch_status'])) . '</td><td>' . htmlspecialchars(ucfirst($row['delivery_status'])) . '</td>'
             . '<td><a class="btn btn-sm btn-outline-primary" href="order.php?id=' . (int)$row['id'] . '#step-delivering">Delivery details</a></td></tr>';
     }
     $html .= '<tr class="table-light"><th colspan="2">Order totals</th>';
     foreach ($totals as $key => $value) $html .= '<th>' . ($missing[$key] ? 'Incomplete (recorded: ' . $value . ')' : (string)$value) . '</th>';
-    return $html . '<td colspan="5"></td></tr></tbody></table></div>';
+    return $html . '<td colspan="2"></td><th>' . $primaryUsedTotal . '</th><td colspan="3"></td></tr></tbody></table></div>';
 }

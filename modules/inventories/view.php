@@ -439,6 +439,7 @@ $ariaSort = static function (string $column) use ($sortBy, $sortDir): string {
                             <?php
                             $eligibleProductScope = getProductChannelScopeSql('p', 'c', 'f');
                             if (($inventory['system_key'] ?? '') === 'manufacturing_waste') $eligibleProductScope .= " AND p.type = 'material'";
+                            if (($inventory['system_key'] ?? '') === 'manufacturing_primary') $eligibleProductScope .= " AND p.type = 'primary'";
                             $all_products = $conn->query("SELECT p.id, p.name, p.sku, p.type, p.unit, p.customer_id
                                                           FROM products p
                                                           LEFT JOIN customers c ON c.id = p.customer_id

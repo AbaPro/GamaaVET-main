@@ -52,6 +52,9 @@ if (isset($_GET['id']) && is_numeric($_GET['id'])) {
                 if ($quantity <= 0) {
                     continue;
                 }
+                if (!canAddProductToInventory($from_inventory_id, $product_id)) {
+                    throw new Exception('Cannot reverse this transfer: the source warehouse cannot receive this product.');
+                }
 
                 // Take it back out of the destination first, refusing to go negative.
                 $destBeforeStmt = $pdo->prepare("SELECT quantity FROM inventory_products WHERE inventory_id = ? AND product_id = ? LIMIT 1");

@@ -145,7 +145,7 @@ require_once '../../includes/header.php';
                             <tr>
                                 <td><?php echo $row['id']; ?></td>
                                 <td><?php echo htmlspecialchars($row['name']); ?></td>
-                                <td><?php echo ($row['system_key'] ?? '') === 'manufacturing_waste' ? 'All manufacturing locations' : (isset($locations[$row['location_id']]) ? htmlspecialchars($locations[$row['location_id']]['name']) : 'N/A'); ?></td>
+                                <td><?php echo isset($locations[$row['location_id']]) ? htmlspecialchars($locations[$row['location_id']]['name']) : (!empty($row['system_key']) ? 'Legacy / unassigned' : 'N/A'); ?></td>
                                 <?php if ($login_region !== 'factory'): ?>
                                     <td><?php echo htmlspecialchars($row['region'] ?: 'N/A'); ?></td>
                                 <?php endif; ?>

@@ -43,7 +43,7 @@ $inventoryScope = getInventoryChannelScopeSql('i');
 $inventories = $pdo->query("
     SELECT i.id, i.name
     FROM inventories i
-    WHERE i.is_active = 1 AND $inventoryScope
+    WHERE i.is_active = 1 AND i.system_key IS NULL AND $inventoryScope
     ORDER BY i.name
 ")->fetchAll(PDO::FETCH_ASSOC);
 $allowedInventoryIds = array_fill_keys(array_map('intval', array_column($inventories, 'id')), true);
@@ -88,8 +88,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $max_qty = $item['quantity'] - ($item['received_quantity'] ?? 0);
             
             if ($received_qty > 0 && $received_qty <= $max_qty) {
-                if (!isset($allowedInventoryIds[$inventory_id])) {
-                    throw new Exception("Please select a valid inventory destination.");
+                if (!isset($allowedInventoryIds[$inventory_id]) || !canAddProductToInventory($inventory_id, (int)$item['product_id'])) {
+                    throw new Exception("The selected inventory cannot receive this product.");
                 }
                 $some_received = true;
                 $received_value += $received_qty * (float)$item['unit_price'];

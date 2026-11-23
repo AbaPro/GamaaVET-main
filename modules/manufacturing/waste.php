@@ -23,6 +23,12 @@ function manufacturing_save_material_waste(PDO $pdo, int $orderId, array $quanti
         $row = $component->fetch(PDO::FETCH_ASSOC);
         if (!$row || empty($row['deducted_at'])) throw new DomainException('Waste must reference a consumed material on this order.');
         $quantity = (float)$input;
+        $tracking = $pdo->prepare('SELECT waste_quantity FROM manufacturing_packaging_material_tracking WHERE sourcing_component_id = ?');
+        $tracking->execute([$row['id']]);
+        $postedWaste = $tracking->fetchColumn();
+        if ($postedWaste !== false && abs((float)$postedWaste - $quantity) > 0.00000001) {
+            throw new DomainException('Packaging waste is locked after packaging reconciliation.');
+        }
         if ($quantity > (float)$row['required_quantity']) throw new DomainException('Waste cannot exceed the consumed material quantity.');
         if ($quantity === 0.0) {
             $pdo->prepare('DELETE FROM manufacturing_material_waste WHERE manufacturing_order_id = ? AND sourcing_component_id = ? AND posted_at IS NULL')->execute([$orderId, $row['id']]);
@@ -39,15 +45,27 @@ function manufacturing_save_material_waste(PDO $pdo, int $orderId, array $quanti
     }
 }
 
-function manufacturing_post_material_waste(PDO $pdo, array $order): void {
+function manufacturing_post_material_waste(PDO $pdo, array $order, ?string $source = null): void {
     if (!$pdo->inTransaction()) throw new LogicException('Waste posting requires a transaction.');
     // Caller has locked the order. Material was already consumed: do not deduct it again.
-    $stmt = $pdo->prepare('SELECT * FROM manufacturing_material_waste WHERE manufacturing_order_id = ? AND posted_at IS NULL ORDER BY id FOR UPDATE');
-    $stmt->execute([$order['id']]);
+    $sql = 'SELECT * FROM manufacturing_material_waste WHERE manufacturing_order_id = ? AND posted_at IS NULL';
+    $params = [$order['id']];
+    if ($source !== null) {
+        $sql .= ' AND sourcing_component_id IN (SELECT id FROM manufacturing_sourcing_components WHERE source = ?)';
+        $params[] = $source;
+    }
+    $stmt = $pdo->prepare($sql . ' ORDER BY id FOR UPDATE');
+    $stmt->execute($params);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
     if (!$rows) return;
-    $inventory = $pdo->query("SELECT id FROM inventories WHERE system_key = 'manufacturing_waste' AND is_active = 1 AND direct_sale IS NULL FOR UPDATE")->fetchColumn();
-    if (!$inventory) throw new RuntimeException('The fixed waste inventory is missing.');
+    $location = $pdo->prepare('SELECT location_id FROM manufacturing_orders WHERE id = ?');
+    $location->execute([$order['id']]);
+    $locationId = (int)$location->fetchColumn();
+    if ($locationId <= 0) throw new DomainException('Choose the manufacturing location before posting material waste.');
+    $inventoryStmt = $pdo->prepare("SELECT id FROM inventories WHERE system_key = 'manufacturing_waste' AND location_id = ? AND is_active = 1 AND direct_sale IS NULL FOR UPDATE");
+    $inventoryStmt->execute([$locationId]);
+    $inventory = $inventoryStmt->fetchColumn();
+    if (!$inventory) throw new RuntimeException('The location waste inventory is missing or inactive.');
     foreach ($rows as $row) {
         // Revalidate source and conversion before posting; stale/malformed drafts must fail closed.
         $source = $pdo->prepare("SELECT msc.required_quantity, msc.unit, msc.deducted_at, p.unit AS stock_unit
