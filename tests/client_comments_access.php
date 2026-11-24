@@ -222,7 +222,8 @@ try {
         };
         [$status,$body] = $request($url);
         accessCheck($status===200 && str_contains($body,'data-component-id="'.$packingComponent.'"')
-            && !str_contains($body,'name="packaging_values[prints_issued]"'), 'HTTP material table uses actual linked components instead of generic rows');
+            && str_contains($body,'Actual packing bottle') && !str_contains($body,'ACCESS-SECRET-INGREDIENT')
+            && !str_contains($body,'name="packaging_values[prints_issued]"'), 'HTTP material table shows packaging material names while hiding formula ingredients');
         $packingPost = ['manufacturing_csrf'=>$stockToken[1], 'action'=>'update', 'step_key'=>'packaging', 'status'=>'in_progress',
             'packaging_values'=>['final_product_count'=>'110']];
         $request($url, $packingPost);

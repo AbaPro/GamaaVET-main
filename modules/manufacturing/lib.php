@@ -284,7 +284,7 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
     // Add Receipt Quality Check data for receipt step
     if ($stepKey === 'receipt' && $conn) {
         $receiptStmt = $conn->prepare("
-            SELECT msc.component_name, msc.required_quantity, msc.unit, msc.receipt_status, msc.receipt_notes, p.barcode
+            SELECT msc.source, msc.component_name, msc.required_quantity, msc.unit, msc.receipt_status, msc.receipt_notes, p.barcode
             FROM manufacturing_sourcing_components msc
             LEFT JOIN products p ON p.id = msc.product_id
             WHERE msc.manufacturing_order_id = ?
@@ -312,9 +312,10 @@ function manufacturing_build_step_document_html($order, $orderStep, $formula, $c
                     $statusText = '⏳ Pending';
                 }
                 
+                $showMaterialName = $canViewComponentName || ($rc['source'] ?? '') === 'packaging';
                 $html .= '<tr>';
-                $html .= '<td>' . ($canViewComponentName ? htmlspecialchars($rc['component_name']) : 'Hidden') . '</td>';
-                $html .= '<td>' . ($canViewComponentName ? htmlspecialchars($rc['barcode'] ?? '-') : 'Hidden') . '</td>';
+                $html .= '<td>' . ($showMaterialName ? htmlspecialchars($rc['component_name']) : 'Hidden') . '</td>';
+                $html .= '<td>' . ($showMaterialName ? htmlspecialchars($rc['barcode'] ?? '-') : 'Hidden') . '</td>';
                 $html .= '<td>' . htmlspecialchars($rc['required_quantity']) . '</td>';
                 $html .= '<td>' . htmlspecialchars($rc['unit']) . '</td>';
                 $html .= '<td ' . $statusClass . '>' . $statusText . '</td>';
@@ -1147,6 +1148,7 @@ function manufacturing_detect_order_audit_notes($conn, $order, $steps) {
 
     $missingStmt = $conn->prepare("
         SELECT msc.component_name, SUM(msc.required_quantity) AS required_quantity, msc.unit, p.unit AS stock_unit,
+               GROUP_CONCAT(DISTINCT msc.source) AS sources,
                COALESCE((
                    SELECT SUM(ip.quantity)
                    FROM inventory_products ip
@@ -1167,23 +1169,25 @@ function manufacturing_detect_order_audit_notes($conn, $order, $steps) {
         $available = convertProductUnitQuantity((float)$row['available_qty'], $row['stock_unit'] ?? '', $row['unit']);
         if ($available !== null && $available >= (float)$row['required_quantity']) continue;
         $row['available_qty'] = $available === null ? 'unknown (check units)' : $available . ' ' . $row['unit'];
+        $showMaterialName = canViewManufacturingMaterialNames() || str_contains($row['sources'] ?? '', 'packaging');
         $notes[] = [
             'severity' => 'danger',
             'title' => 'Missing material quantity',
-            'detail' => (hasPermission('manufacturing.component.name.view') ? $row['component_name'] : 'Hidden material') . ' needs ' . $row['required_quantity'] . ' ' . $row['unit'] . ', available ' . $row['available_qty'] . '.'
+            'detail' => ($showMaterialName ? $row['component_name'] : 'Hidden material') . ' needs ' . $row['required_quantity'] . ' ' . $row['unit'] . ', available ' . $row['available_qty'] . '.'
         ];
     }
     $missingStmt->close();
 
-    $receiptStmt = $conn->prepare("SELECT component_name, receipt_status FROM manufacturing_sourcing_components WHERE manufacturing_order_id = ? AND COALESCE(receipt_status, 'pending') <> 'approved'");
+    $receiptStmt = $conn->prepare("SELECT component_name, receipt_status, source FROM manufacturing_sourcing_components WHERE manufacturing_order_id = ? AND COALESCE(receipt_status, 'pending') <> 'approved'");
     $receiptStmt->bind_param('i', $orderId);
     $receiptStmt->execute();
     $receiptResult = $receiptStmt->get_result();
     while ($row = $receiptResult->fetch_assoc()) {
+        $showMaterialName = canViewManufacturingMaterialNames() || ($row['source'] ?? '') === 'packaging';
         $notes[] = [
             'severity' => $row['receipt_status'] === 'rejected' ? 'danger' : 'warning',
             'title' => 'Receipt item not approved',
-            'detail' => (hasPermission('manufacturing.component.name.view') ? $row['component_name'] : 'Hidden material') . ' is ' . ($row['receipt_status'] ?: 'pending') . '.'
+            'detail' => ($showMaterialName ? $row['component_name'] : 'Hidden material') . ' is ' . ($row['receipt_status'] ?: 'pending') . '.'
         ];
     }
     $receiptStmt->close();

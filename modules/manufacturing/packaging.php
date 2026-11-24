@@ -115,11 +115,11 @@ function manufacturing_save_packaging_material_entries(PDO $pdo, int $orderId, i
     }
 }
 
-function manufacturing_packaging_material_html(array $rows, bool $canViewNames): string {
+function manufacturing_packaging_material_html(array $rows, bool $canViewNames = true): string {
     if (!$rows) return '<p>No packaging materials are linked to this order.</p>';
     $html = '<table><thead><tr><th>المادة</th><th>الوحدة</th><th>مصروف</th><th>مستخدم</th><th>راجع</th><th>الهالك</th></tr></thead><tbody>';
     foreach ($rows as $row) {
-        $name = $canViewNames ? $row['component_name'] : ($row['sku'] ?: 'Hidden');
+        $name = ($row['component_name'] ?? '') !== '' ? $row['component_name'] : ($row['sku'] ?: 'Hidden');
         $html .= '<tr><td>' . htmlspecialchars($name) . '</td><td>' . htmlspecialchars($row['unit'] ?? '') . '</td>';
         foreach (['issued', 'used', 'returned', 'waste'] as $field) {
             $value = $row[$field . '_quantity'];

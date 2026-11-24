@@ -97,7 +97,7 @@ function manufacturing_sourcing_plan(array $filters = [], bool $canViewNames = t
         if (!empty($filters['source']) && $filters['source'] !== $source) continue;
         $product = $products[(int)($row['product_id'] ?? 0)] ?? null;
         $sku = $product['sku'] ?? '';
-        $name = $canViewNames ? ($product['name'] ?? $row['component_name']) : ($sku ?: 'Hidden');
+        $name = ($canViewNames || $source === 'packaging') ? ($product['name'] ?? $row['component_name']) : ($sku ?: 'Hidden');
         $barcode = $product['barcode'] ?? '';
         if ($search !== '' && mb_stripos($name . ' ' . $sku . ' ' . $barcode, $search) === false) continue;
         [$quantity, $unit] = manufacturing_planning_quantity((float)$row['required_quantity'], $row['unit'] ?? '');

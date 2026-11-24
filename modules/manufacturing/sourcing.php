@@ -169,7 +169,8 @@ function manufacturing_sourcing_document_html(int $orderId, bool $canViewCompone
     $stmt->execute([$orderId]);
     $html = '<h4>Sourcing Requirements: Formula + Packaging</h4><table><thead><tr><th>Material</th><th>Source</th><th>Required Quantity</th><th>Unit</th><th>Notes</th></tr></thead><tbody>';
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-        $name = $canViewComponentName ? $row['component_name'] : ($row['sku'] ?: 'Hidden');
+        $isPackaging = ($row['source'] ?? '') === 'packaging';
+        $name = ($canViewComponentName || $isPackaging) ? ($row['component_name'] ?: ($row['sku'] ?: 'Hidden')) : ($row['sku'] ?: 'Hidden');
         $html .= '<tr><td>' . htmlspecialchars($name) . '</td><td>' . ($row['source'] === 'packaging' ? 'Packaging' : 'Formula')
             . '</td><td>' . htmlspecialchars($row['required_quantity']) . '</td><td>' . htmlspecialchars($row['unit'] ?? '')
             . '</td><td>' . htmlspecialchars($row['notes'] ?? '') . '</td></tr>';

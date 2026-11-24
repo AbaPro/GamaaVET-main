@@ -60,7 +60,10 @@ function canViewManufacturingTechnicalDetails() {
     return hasPermission('manufacturing.orders.technical_details.view');
 }
 
-function canViewManufacturingMaterialNames() {
+function canViewManufacturingMaterialNames($source = 'formula') {
+    if ($source === 'packaging') {
+        return true;
+    }
     return hasPermission('manufacturing.component.name.view') && canViewManufacturingFormula();
 }
 

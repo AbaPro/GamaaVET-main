@@ -100,9 +100,9 @@ try {
         'Actual packaging waste posts once without deducting the already-consumed material again');
     manufacturing_save_packaging_material_notes($pdo, $order, [$ids[0] => ['returned' => 'Verified return']]);
     checkPackagingStock($load($ids[0])['returned_notes'] === 'Verified return', 'Dispatch notes reference the actual component identity');
-    checkPackagingStock(!str_contains(manufacturing_packaging_material_html([
-        ['component_name' => 'SECRET bottle', 'sku' => 'SKU-123', 'unit' => 'pcs'] + $row,
-    ], false), 'SECRET'), 'Real material report respects hidden names');
+    checkPackagingStock(str_contains(manufacturing_packaging_material_html([
+        ['component_name' => 'Visible bottle', 'sku' => 'SKU-123', 'unit' => 'pcs'] + $row,
+    ], false), 'Visible bottle'), 'Packaging material report displays packaging names even when formula names are hidden');
 
     [$order, $ids] = $makeOrder();
     $pdo->exec('SAVEPOINT shortage_packaging');

@@ -65,7 +65,8 @@ try {
     $handoff = manufacturing_sourcing_document_html($order, true);
     verify(str_contains($handoff, 'Sourcing test Bottle') && str_contains($handoff, 'Sourcing test Cap')
         && substr_count($handoff, 'Sourcing test Label') === 1, 'Handoff includes formula and packaging with no duplicate label');
-    verify(!str_contains(manufacturing_sourcing_document_html($order, false), 'Sourcing test Bottle'), 'Handoff respects hidden component names');
+    $maskedHandoff = manufacturing_sourcing_document_html($order, false);
+    verify(!str_contains($maskedHandoff, '<td>Raw</td>') && str_contains($maskedHandoff, 'Sourcing test Bottle'), 'Handoff hides formula material names while showing packaging material names');
     $labelId = $rows[2]['id'];
     $pdo->prepare("UPDATE manufacturing_sourcing_components SET notes = 'Keep supplier note' WHERE id = ?")->execute([$labelId]);
     manufacturing_sync_sourcing($order);
@@ -137,7 +138,8 @@ try {
     $filtered = manufacturing_sourcing_plan(['customer_id' => $customer, 'source' => 'packaging']);
     verify($getMaterial($filtered, $products[1]) === null && count($filtered['materials']) === 2, 'Packaging-only filter excludes raw materials');
     verify(manufacturing_sourcing_plan(['customer_id' => $customer, 'search' => 'NoSuchMaterial'])['materials'] === [], 'Unmatched material search returns an empty plan');
-    verify(manufacturing_sourcing_plan(['customer_id' => $customer, 'search' => 'Raw'], false)['materials'] === [], 'Hidden component names cannot be discovered through search');
+    verify(manufacturing_sourcing_plan(['customer_id' => $customer, 'search' => 'Raw'], false)['materials'] === [], 'Hidden formula component names cannot be discovered through search');
+    verify(count(manufacturing_sourcing_plan(['customer_id' => $customer, 'search' => 'Label'], false)['materials']) === 1, 'Packaging material names remain visible and searchable without formula name permission');
     $secondComponents[0]['unit'] = 'ml';
     $pdo->prepare('UPDATE manufacturing_formulas SET components_json = ? WHERE id = ?')->execute([json_encode($secondComponents), $secondFormula]);
     $mixed = manufacturing_sourcing_plan(['customer_id' => $customer]);

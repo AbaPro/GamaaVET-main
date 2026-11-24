@@ -104,7 +104,7 @@ try {
     $_SESSION['permissions'] = ['manufacturing.orders.technical_details.view', 'manufacturing.view_step_packaging', 'manufacturing.view_step_dispatch', 'manufacturing.view_step_delivering'];
     $html = manufacturing_build_full_report_html($conn, $id);
     checkPackaging(!str_contains($html, 'SECRET-MATERIAL-REGRESSION') && !str_contains($html, 'SECRET-FORMULA-REGRESSION'), 'Unauthorized final report and audit hide material and formula names');
-    checkPackaging(!str_contains($html, 'SECRET-PACKAGING-REGRESSION'), 'Actual packaging names stay hidden in unauthorized reports');
+    checkPackaging(substr_count($html, 'SECRET-PACKAGING-REGRESSION') === 2, 'Packaging material names remain visible in packaging and dispatch reports without formula permissions');
     checkPackaging(!str_contains($html, '999999') && !str_contains($html, 'Repeated material'), 'Dispatch report ignores stale counts and repeated custom-material rows');
     checkPackaging(substr_count($html, 'data:image/jpeg;base64,') === 3, 'Only permitted packaging, dispatch and delivery steps embed images');
     checkPackaging(substr_count($html, 'كسور في اخر كرتونة') === 3, 'Partial-carton field appears in packaging, dispatch and delivery reports');
@@ -129,11 +129,11 @@ try {
     $_SESSION['permissions'] = ['manufacturing.component.name.view', 'manufacturing.formula.view_all', 'manufacturing.orders.technical_details.view', 'manufacturing.view_step_sourcing', 'manufacturing.view_step_receipt', 'manufacturing.view_step_preparation'];
     unset($_SESSION['formula_unlocked'], $_SESSION['formula_password_version']);
     foreach (['sourcing', 'receipt', 'preparation'] as $key) checkPackaging(canAccessManufacturingStep($key), 'Locked formula does not hide the ' . $key . ' step');
-    checkPackaging(!canViewManufacturingMaterialNames(), 'Material names remain hidden until formula unlock, even with name permission');
+    checkPackaging(!canViewManufacturingMaterialNames() && canViewManufacturingMaterialNames('packaging'), 'Formula material names remain hidden until unlock while packaging material names stay visible');
     $receipt = ['step_key' => 'receipt', 'status' => 'pending', 'notes' => ''];
     $testOrder = $conn->query("SELECT mo.*, c.name AS customer_name FROM manufacturing_orders mo JOIN customers c ON c.id = mo.customer_id WHERE mo.id = $id")->fetch_assoc();
     $receiptHtml = manufacturing_build_step_document_html($testOrder, $receipt, [], [], '', 'Receipt', $conn);
-    checkPackaging(str_contains($receiptHtml, 'Quality Check Results') && !str_contains($receiptHtml, 'SECRET-MATERIAL-REGRESSION'), 'Locked receipt handoff keeps its table while hiding material names');
+    checkPackaging(str_contains($receiptHtml, 'Quality Check Results') && !str_contains($receiptHtml, 'SECRET-MATERIAL-REGRESSION') && str_contains($receiptHtml, 'SECRET-PACKAGING-REGRESSION'), 'Locked receipt handoff keeps its table, hides formula material names, and shows packaging material names');
     $_SESSION['permissions'] = [];
     checkPackaging(!canAccessManufacturingStep('preparation'), 'Step permissions still apply when removing the password gate');
     $_SESSION['permissions'] = ['manufacturing.component.name.view', 'manufacturing.formula.view_all', 'manufacturing.orders.technical_details.view', 'manufacturing.view_step_preparation', 'manufacturing.view_step_packaging', 'manufacturing.view_step_dispatch', 'manufacturing.view_step_delivering'];

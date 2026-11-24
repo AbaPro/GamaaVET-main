@@ -1520,12 +1520,13 @@ $wasteStmt->execute([$orderId]); $wasteRows = $wasteStmt->fetchAll(PDO::FETCH_AS
                                                     ?>
                                                     <tr>
                                                         <td>
-                                                            <?php if ($canViewComponentName): ?>
+                                                            <?php $isPackagingMaterial = str_contains($sc['sources'] ?? '', 'packaging'); ?>
+                                                            <?php if ($canViewComponentName || $isPackagingMaterial): ?>
                                                                 <?= htmlspecialchars($sc['component_name']); ?>
                                                             <?php else: ?>
                                                                 <span class="text-muted"><?= $sc['sku'] ? htmlspecialchars($sc['sku']) : 'Hidden'; ?></span>
                                                             <?php endif; ?>
-                                                            <div><span class="badge bg-light text-dark border"><?= str_contains($sc['sources'] ?? '', 'packaging') ? 'Packaging' : 'Formula'; ?></span></div>
+                                                            <div><span class="badge bg-light text-dark border"><?= $isPackagingMaterial ? 'Packaging' : 'Formula'; ?></span></div>
                                                         </td>
                                                         <td>
                                                             <?= $sc['sku'] ? htmlspecialchars($sc['sku']) . '<br>' : ''; ?>
@@ -1558,7 +1559,7 @@ $wasteStmt->execute([$orderId]); $wasteRows = $wasteStmt->fetchAll(PDO::FETCH_AS
                                     <!-- Receipt & Quality Check Table -->
                                     <?php
                                     $receiptStmt = $conn->prepare("
-                                        SELECT msc.id, msc.component_name, msc.product_id, msc.required_quantity, msc.unit,
+                                        SELECT msc.id, msc.source, msc.component_name, msc.product_id, msc.required_quantity, msc.unit,
                                                msc.receipt_status, msc.receipt_notes, p.barcode, p.sku
                                         FROM manufacturing_sourcing_components msc
                                         LEFT JOIN products p ON p.id = msc.product_id
@@ -1599,7 +1600,7 @@ $wasteStmt->execute([$orderId]); $wasteRows = $wasteStmt->fetchAll(PDO::FETCH_AS
                                                     ?>
                                                     <tr class="<?= $rowClass; ?>">
                                                         <td>
-                                                            <?php if ($canViewComponentName): ?>
+                                                            <?php if ($canViewComponentName || ($rc['source'] ?? '') === 'packaging'): ?>
                                                                 <?= htmlspecialchars($rc['component_name']); ?>
                                                             <?php else: ?>
                                                                 <span class="text-muted"><?= $rc['sku'] ? htmlspecialchars($rc['sku']) : 'Hidden'; ?></span>
@@ -2015,7 +2016,7 @@ $wasteStmt->execute([$orderId]); $wasteRows = $wasteStmt->fetchAll(PDO::FETCH_AS
                                                             data-whole="<?= normalizeProductUnit($material['stock_unit']) === 'each' ? '1' : '0'; ?>"
                                                             data-dirty="<?= $material['tracked_component'] ? '1' : '0'; ?>"
                                                             data-posted="<?= $material['posted_at'] ? '1' : '0'; ?>">
-                                                            <td><strong><?= htmlspecialchars($canViewComponentName ? $material['component_name'] : ($material['sku'] ?: 'Hidden')); ?></strong>
+                                                            <td><strong><?= htmlspecialchars($material['component_name'] ?: ($material['sku'] ?: 'Hidden')); ?></strong>
                                                                 <small class="d-block text-muted"><?= htmlspecialchars($material['unit'] ?? ''); ?></small></td>
                                                             <?php foreach (['issued', 'used', 'returned', 'waste'] as $field): ?>
                                                             <td><input type="number" min="<?= $field === 'issued' ? htmlspecialchars($material['planned_quantity']) : '0'; ?>" step="0.0001" class="form-control form-control-sm mt-<?= $field; ?>"
@@ -2209,7 +2210,7 @@ $wasteStmt->execute([$orderId]); $wasteRows = $wasteStmt->fetchAll(PDO::FETCH_AS
                                                 <tbody>
                                                     <?php foreach (manufacturing_packaging_material_rows($conn, $orderId) as $material): ?>
                                                         <tr>
-                                                            <td><strong><?= htmlspecialchars($canViewComponentName ? $material['component_name'] : ($material['sku'] ?: 'Hidden')); ?></strong>
+                                                            <td><strong><?= htmlspecialchars($material['component_name'] ?: ($material['sku'] ?: 'Hidden')); ?></strong>
                                                                 <small class="d-block text-muted"><?= htmlspecialchars($material['unit'] ?? ''); ?></small></td>
                                                             <?php foreach (['issued', 'used', 'returned', 'waste'] as $field): ?>
                                                             <td>
